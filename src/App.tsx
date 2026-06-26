@@ -1178,7 +1178,9 @@ export default function App() {
   const handleReset = () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(NODE_KEY);
+    localStorage.removeItem(ADDRESS_BOOK_KEY);
     setWallet(null); setScreen('setup'); setNodeStatus(null); setNodeUrl('');
+    setAddressBook([]);
   };
 
   const handleAddBookEntry = (label: string, address: string) => {
