@@ -28,16 +28,13 @@ export async function sendXch(params: SendParams): Promise<SpendBundleResult> {
   const { toAddress, amountMojo, feeMojo } = params;
 
   try {
+    // Serialize mojo values directly as integer literals to avoid JS Number
+    // precision loss (Number loses precision above ~9,007 XCH = 9007 * 1e12 mojo)
+    const body = `{"wallet_id":1,"address":${JSON.stringify(toAddress)},"amount":${amountMojo},"fee":${feeMojo},"wait_for_confirmation":false}`;
     const response = await fetch(`${PROXY_BASE}/wallet/send_transaction`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        wallet_id: 1,
-        address: toAddress,
-        amount: Number(amountMojo),
-        fee: Number(feeMojo),
-        wait_for_confirmation: false,
-      }),
+      body,
       signal: AbortSignal.timeout(30000),
     });
 
