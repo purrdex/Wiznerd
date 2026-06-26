@@ -212,7 +212,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
 
   if (selectedCat) {
-    return <CatDetailScreen token={selectedCat} onBack={() => setSelectedCat(null)} onSendSuccess={onSendSuccess}/>;
+    return <CatDetailScreen token={selectedCat} onBack={() => setSelectedCat(null)} onSendSuccess={onSendSuccess} wallet={wallet} nodeUrl={nodeUrl}/>;
   }
 
   return (
@@ -563,8 +563,9 @@ function resolveUri(uri: string): string {
   return uri;
 }
 
-function CatDetailScreen({ token, onBack, onSendSuccess }: {
+function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
   token: CatBalance; onBack: () => void; onSendSuccess: () => void;
+  wallet: WalletState; nodeUrl: string;
 }) {
   const [catWalletId, setCatWalletId] = useState<number | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(true);
@@ -595,29 +596,46 @@ function CatDetailScreen({ token, onBack, onSendSuccess }: {
   };
 
   async function handleSend() {
-    if (!isValid || catWalletId === null || sendingRef.current) return;
+    if (!isValid || sendingRef.current) return;
     sendingRef.current = true;
     setStatus('sending');
     setMessage('');
     try {
-      // Serialize bigint amounts directly to avoid Number precision loss
-      const body = `{"wallet_id":${catWalletId},"inner_address":${JSON.stringify(toAddress)},"amount":${amountMojo},"fee":${feeMojo}}`;
-      const res = await fetch(`${WALLET_PROXY}/wallet/cat_spend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal: AbortSignal.timeout(30000),
-      });
-      const data = await res.json();
-      if (data.success) {
+      if (catWalletId !== null) {
+        // Daemon path: use cat_spend for registered tokens
+        const body = `{"wallet_id":${catWalletId},"inner_address":${JSON.stringify(toAddress)},"amount":${amountMojo},"fee":${feeMojo}}`;
+        const res = await fetch(`${WALLET_PROXY}/wallet/cat_spend`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: AbortSignal.timeout(30000),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setStatus('success');
+          setMessage(`Sent ${amount} ${token.ticker}`);
+          setToAddress('');
+          setAmount('');
+          onSendSuccess();
+        } else {
+          setStatus('error');
+          setMessage(data.error || 'Transaction failed');
+        }
+      } else {
+        // Manual path: build CAT spend bundle directly (no daemon registration needed)
+        const spendCoin = token.coins.find(c => BigInt(c.amount) >= amountMojo);
+        if (!spendCoin) {
+          setStatus('error');
+          setMessage('No single coin covers this amount. Consolidate coins in the Chia GUI first.');
+          return;
+        }
+        const { sendCatManual } = await import('./lib/cat_spend');
+        await sendCatManual(nodeUrl, spendCoin, amountMojo, toAddress, wallet.addresses);
         setStatus('success');
-        setMessage(`Sent ${amount} ${token.ticker}`);
+        setMessage(`Sent ${amount} ${token.ticker} (0 fee)`);
         setToAddress('');
         setAmount('');
         onSendSuccess();
-      } else {
-        setStatus('error');
-        setMessage(data.error || 'Transaction failed');
       }
     } catch (e: any) {
       setStatus('error');
@@ -657,15 +675,15 @@ function CatDetailScreen({ token, onBack, onSendSuccess }: {
         )}
       </div>
 
+      {!loadingWallet && catWalletId === null && (
+        <div style={{background:'rgba(77,170,135,0.07)',border:'1px solid var(--accent)',
+          borderRadius:8,padding:'8px 12px',fontSize:11,color:'var(--accent)'}}>
+          Direct chain send — no wallet daemon registration required. Fee: 0 XCH.
+        </div>
+      )}
+
       {loadingWallet ? (
         <div className="balance-loading"><div className="spinner"/>Checking wallet daemon…</div>
-      ) : catWalletId === null ? (
-        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
-          borderRadius:12,padding:'14px 16px',fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-          <div style={{fontWeight:600,color:'var(--text-primary)',marginBottom:6}}>Cannot send this token</div>
-          {token.ticker} is not registered in the Chia wallet daemon. To enable sends,
-          add it in the Chia GUI under <strong>Manage tokens</strong>, then return here.
-        </div>
       ) : (
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
           <div>
@@ -680,7 +698,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess }: {
             />
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns: catWalletId !== null ? '1fr 1fr' : '1fr',gap:10}}>
             <div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
                 <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>AMOUNT ({token.ticker})</div>
@@ -700,7 +718,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess }: {
                 onChange={e => setAmount(e.target.value)}
               />
             </div>
-            <div>
+            {catWalletId !== null && <div>
               <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>FEE (XCH)</div>
               <input
                 className="address-input"
@@ -710,7 +728,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess }: {
                 value={fee}
                 onChange={e => setFee(e.target.value)}
               />
-            </div>
+            </div>}
           </div>
 
           <button

@@ -14,6 +14,8 @@ export interface CatCoin {
   amount: number;
   confirmedBlockIndex: number;
   assetId: string;
+  innerPuzzleHash: string;     // P2 puzzle hash (= hint used to discover this coin)
+  parentPuzzleReveal: string;  // hex of parent coin's outer CAT puzzle (for lineage proof)
 }
 
 export interface CatBalance {
@@ -170,7 +172,7 @@ export async function getCatBalances(nodeUrl: string, puzzleHashHexList: string[
 
   const catCoins: CatCoin[] = [];
   await Promise.allSettled(
-    hintResults.flatMap(({ coins }) =>
+    hintResults.flatMap(({ puzzleHashHex, coins }) =>
       coins.map(async (coinRecord: any) => {
         const coin = coinRecord.coin;
         const parentId = coin.parent_coin_info.startsWith('0x') ? coin.parent_coin_info.slice(2) : coin.parent_coin_info;
@@ -179,8 +181,12 @@ export async function getCatBalances(nodeUrl: string, puzzleHashHexList: string[
         const assetId = extractAssetIdFromPuzzleReveal(parentSpend.puzzleReveal);
         if (!assetId) return;
         const coinId = await calculateCoinId(coin.parent_coin_info, coin.puzzle_hash, coin.amount);
-        catCoins.push({ coinId, parentCoinInfo: coin.parent_coin_info, puzzleHash: coin.puzzle_hash,
-          amount: coin.amount, confirmedBlockIndex: coinRecord.confirmed_block_index, assetId });
+        catCoins.push({
+          coinId, parentCoinInfo: coin.parent_coin_info, puzzleHash: coin.puzzle_hash,
+          amount: coin.amount, confirmedBlockIndex: coinRecord.confirmed_block_index, assetId,
+          innerPuzzleHash: puzzleHashHex,
+          parentPuzzleReveal: parentSpend.puzzleReveal,
+        });
       })
     )
   );
