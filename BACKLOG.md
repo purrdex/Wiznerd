@@ -8,9 +8,9 @@
 - [x] QR code display on Receive screen
 
 ## v0.3.0 — History & Book
-- [ ] Transaction history screen (last 20 sends/receives)
-- [ ] Address book (save/label frequently used addresses)
-- [ ] Send screen: pick from address book
+- [x] Transaction history screen (last 20 sends/receives)
+- [x] Address book (save/label frequently used addresses)
+- [x] Send screen: pick from address book
 
 ## v0.4.0 — CAT Sends
 - [ ] Detect CAT wallet IDs from wallet daemon get_wallets
