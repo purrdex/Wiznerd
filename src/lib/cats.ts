@@ -85,7 +85,19 @@ export async function calculateCoinId(parentCoinInfo: string, puzzleHash: string
   return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', combined)));
 }
 
-let metadataCache: Record<string, TokenMetadata> = {};
+const META_CACHE_KEY = 'chia_cat_meta_cache';
+
+function loadMetadataCache(): Record<string, TokenMetadata> {
+  try { return JSON.parse(sessionStorage.getItem(META_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+let metadataCache: Record<string, TokenMetadata> = loadMetadataCache();
+
+function saveMetadataCache(): void {
+  try { sessionStorage.setItem(META_CACHE_KEY, JSON.stringify(metadataCache)); }
+  catch { /* storage full — continue without persisting */ }
+}
 
 export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> {
   if (metadataCache[assetId]) return metadataCache[assetId];
@@ -100,6 +112,7 @@ export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> 
           logoUrl: data.logo_url || data.icon_url || `${PROXY_BASE}/logo/${assetId}`,
         };
         metadataCache[assetId] = meta;
+        saveMetadataCache();
         return meta;
       }
     }
@@ -110,6 +123,7 @@ export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> 
     logoUrl: `${PROXY_BASE}/logo/${assetId}`,
   };
   metadataCache[assetId] = fallback;
+  saveMetadataCache();
   return fallback;
 }
 
