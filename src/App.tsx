@@ -563,17 +563,69 @@ function resolveUri(uri: string): string {
   return uri;
 }
 
-function CatDetailScreen({ token, onBack, onSendSuccess: _onSendSuccess }: {
+function CatDetailScreen({ token, onBack, onSendSuccess }: {
   token: CatBalance; onBack: () => void; onSendSuccess: () => void;
 }) {
   const [catWalletId, setCatWalletId] = useState<number | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(true);
+  const [toAddress, setToAddress] = useState('');
+  const [amount, setAmount] = useState('');
+  const [fee, setFee] = useState('0.00005');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const sendingRef = React.useRef(false);
 
   useEffect(() => {
     getCatWalletId(token.assetId)
       .then(id => setCatWalletId(id))
       .finally(() => setLoadingWallet(false));
   }, [token.assetId]);
+
+  const isValidAddr = isValidXchAddress(toAddress);
+  // CAT v2: 1 token = 1000 mojos
+  const amountMojo = BigInt(Math.round(parseFloat(amount || '0') * 1000));
+  const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
+  const isValid = isValidAddr && amountMojo > BigInt(0) && amountMojo <= token.totalMojo;
+
+  const handleMax = () => {
+    const whole = token.totalMojo / BigInt(1000);
+    const frac = token.totalMojo % BigInt(1000);
+    const fracStr = frac === BigInt(0) ? '' : '.' + frac.toString().padStart(3, '0').replace(/0+$/, '');
+    setAmount(`${whole}${fracStr}`);
+  };
+
+  async function handleSend() {
+    if (!isValid || catWalletId === null || sendingRef.current) return;
+    sendingRef.current = true;
+    setStatus('sending');
+    setMessage('');
+    try {
+      // Serialize bigint amounts directly to avoid Number precision loss
+      const body = `{"wallet_id":${catWalletId},"inner_address":${JSON.stringify(toAddress)},"amount":${amountMojo},"fee":${feeMojo}}`;
+      const res = await fetch(`${WALLET_PROXY}/wallet/cat_spend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(30000),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus('success');
+        setMessage(`Sent ${amount} ${token.ticker}`);
+        setToAddress('');
+        setAmount('');
+        onSendSuccess();
+      } else {
+        setStatus('error');
+        setMessage(data.error || 'Transaction failed');
+      }
+    } catch (e: any) {
+      setStatus('error');
+      setMessage(e.message);
+    } finally {
+      sendingRef.current = false;
+    }
+  }
 
   return (
     <div className="wallet-screen">
@@ -615,9 +667,80 @@ function CatDetailScreen({ token, onBack, onSendSuccess: _onSendSuccess }: {
           add it in the Chia GUI under <strong>Manage tokens</strong>, then return here.
         </div>
       ) : (
-        <div style={{padding:'12px',background:'rgba(77,170,135,0.06)',border:'1px solid var(--accent)',
-          borderRadius:12,fontSize:12,color:'var(--text-secondary)'}}>
-          Wallet daemon wallet #{catWalletId} — send form coming in next step.
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div>
+            <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>TO ADDRESS</div>
+            <input
+              className="address-input"
+              style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:12,fontFamily:'var(--font-mono)'}}
+              placeholder="xch1…"
+              value={toAddress}
+              onChange={e => setToAddress(e.target.value.trim())}
+              spellCheck={false}
+            />
+          </div>
+
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>AMOUNT ({token.ticker})</div>
+                {token.totalMojo > BigInt(0) && (
+                  <button onClick={handleMax}
+                    style={{background:'none',border:'none',color:'var(--accent)',fontSize:11,cursor:'pointer',padding:0}}>
+                    Max
+                  </button>
+                )}
+              </div>
+              <input
+                className="address-input"
+                style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}
+                placeholder="0.000"
+                type="number" min="0" step="0.001"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+              />
+            </div>
+            <div>
+              <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>FEE (XCH)</div>
+              <input
+                className="address-input"
+                style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}
+                placeholder="0.00005"
+                type="number" min="0" step="0.00001"
+                value={fee}
+                onChange={e => setFee(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleSend}
+            disabled={!isValid || status === 'sending'}
+            style={{
+              padding:'14px',
+              background: isValid && status !== 'sending' ? 'var(--accent)' : 'var(--bg-card)',
+              color: isValid && status !== 'sending' ? '#0a0b0f' : 'var(--text-dim)',
+              border:'1px solid var(--border)',borderRadius:'var(--radius)',
+              fontWeight:700,fontSize:15,
+              cursor: isValid && status !== 'sending' ? 'pointer' : 'not-allowed',
+              transition:'all 0.2s',
+            }}
+          >
+            {status === 'sending' ? '⏳ Sending…' : `➤ Send ${token.ticker}`}
+          </button>
+
+          {status === 'success' && (
+            <div style={{padding:'12px',background:'rgba(77,170,135,0.1)',
+              border:'1px solid var(--accent)',borderRadius:8,fontSize:13,color:'var(--accent)'}}>
+              ✓ {message}
+            </div>
+          )}
+          {status === 'error' && (
+            <div style={{padding:'12px',background:'rgba(220,50,50,0.1)',
+              border:'1px solid #dc3232',borderRadius:8,fontSize:13,color:'#ff6b6b'}}>
+              ✗ {message}
+            </div>
+          )}
         </div>
       )}
 
