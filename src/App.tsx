@@ -96,7 +96,7 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
   const handleConfirmNew = async () => {
     try {
       const { deriveAddresses } = await import('./lib/keys');
-      const addresses = deriveAddresses(mnemonic, 20);
+      const addresses = deriveAddresses(mnemonic, 50);
       onWalletReady({ mnemonic, addresses });
     } catch(e: any) { setError(`Failed: ${e.message}`); }
   };
@@ -108,7 +108,7 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
     if (words.length !== 24) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
     const { validateMnemonicWords, deriveAddresses } = await import('./lib/keys');
     if (!validateMnemonicWords(cleaned)) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
-    try { onWalletReady({ mnemonic: cleaned, addresses: deriveAddresses(cleaned, 20) }); }
+    try { onWalletReady({ mnemonic: cleaned, addresses: deriveAddresses(cleaned, 50) }); }
     catch (e: any) { setError(`Key derivation failed: ${e.message}`); }
   };
 
@@ -1546,7 +1546,7 @@ export default function App() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       import('./lib/keys').then(({ deriveAddresses }) => {
-        try { setWallet({ mnemonic: saved, addresses: deriveAddresses(saved, 20) }); setScreen('wallet'); }
+        try { setWallet({ mnemonic: saved, addresses: deriveAddresses(saved, 50) }); setScreen('wallet'); }
         catch { localStorage.removeItem(STORAGE_KEY); }
       });
     }
