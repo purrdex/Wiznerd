@@ -47,6 +47,26 @@ test.describe('Wiznerd Wallet', () => {
     await expect(page.locator('.error-msg')).toContainText('Invalid mnemonic');
   });
 
+  test('wallet home loads after completing creation flow', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    // Create wallet
+    await page.click('text=Create new wallet');
+    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+    // Confirm backup and open wallet
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    // Wallet home screen should appear (with or without balance data)
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    // Token section should render (empty state or with tokens)
+    await expect(page.locator('text=Home')).toBeVisible();
+    await expect(page.locator('text=Send')).toBeVisible();
+    // History tab should navigate without crash
+    await page.click('text=History');
+    await expect(page.locator('text=Transaction History')).toBeVisible();
+  });
+
   test('nav tabs are visible when wallet loaded', async ({ page }) => {
     await page.goto('/');
     const hasWallet = await page.locator('text=Total Balance').isVisible().catch(() => false);
