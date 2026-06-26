@@ -18,30 +18,13 @@ import { hmac } from '@noble/hashes/hmac.js';
 import { mnemonicToSeedSync, generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bech32m } from 'bech32';
+import { hexToBytes, bytesToHex } from './utils';
+
+export { hexToBytes, bytesToHex } from './utils';
 
 const BLS_ORDER = BigInt('0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001');
 const L = 48;
 const L_BYTES = new Uint8Array([0, L]); // I2OSP(48, 2)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-  const b = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < b.length; i++) b[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-  return b;
-}
-
-export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-export function formatMojoToXch(mojo: bigint): string {
-  const xch = Number(mojo) / 1_000_000_000_000;
-  return xch.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 6 });
-}
 
 function bigintToBytes32(n: bigint): Uint8Array {
   return hexToBytes(n.toString(16).padStart(64, '0'));
@@ -220,15 +203,6 @@ export function puzzleHashToAddress(puzzleHash: Uint8Array, prefix = 'xch'): str
 
 export function addressToPuzzleHash(address: string): Uint8Array {
   return new Uint8Array(bech32m.fromWords(bech32m.decode(address).words));
-}
-
-export function isValidXchAddress(address: string): boolean {
-  try {
-    const { prefix, words } = bech32m.decode(address);
-    return prefix === 'xch' && words.length === 52;
-  } catch {
-    return false;
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

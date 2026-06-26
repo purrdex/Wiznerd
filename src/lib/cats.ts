@@ -2,7 +2,7 @@
  * cats.ts — Chia Asset Token (CAT v2) discovery and balance
  */
 
-import { bytesToHex, hexToBytes } from './keys';
+import { bytesToHex, hexToBytes } from './utils';
 
 export const CAT_MOD_HASH = '37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a';
 const PROXY_BASE = 'http://localhost:3001';

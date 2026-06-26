@@ -1,14 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import './App.css';
-import {
-  generateNewMnemonic,
-  validateMnemonicWords,
-  deriveAddresses,
-  formatMojoToXch,
-  isValidXchAddress,
-  type DerivedAddress,
-} from './lib/keys';
+import type { DerivedAddress } from './lib/keys';
+import { formatMojoToXch, isValidXchAddress } from './lib/utils';
 import {
   checkNodeSync,
   getBalance,
@@ -94,18 +88,23 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
 
-  const handleGenerate = () => { setMnemonic(generateNewMnemonic()); setMode('new'); };
+  const handleGenerate = async () => {
+    const { generateNewMnemonic } = await import('./lib/keys');
+    setMnemonic(generateNewMnemonic()); setMode('new');
+  };
 
-  const handleConfirmNew = () => {
+  const handleConfirmNew = async () => {
     try {
+      const { deriveAddresses } = await import('./lib/keys');
       const addresses = deriveAddresses(mnemonic, 20);
       onWalletReady({ mnemonic, addresses });
     } catch(e: any) { setError(`Failed: ${e.message}`); }
   };
 
-  const handleImport = () => {
+  const handleImport = async () => {
     setError('');
     const cleaned = importInput.trim().toLowerCase().replace(/\s+/g, ' ');
+    const { validateMnemonicWords, deriveAddresses } = await import('./lib/keys');
     if (!validateMnemonicWords(cleaned)) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
     try { onWalletReady({ mnemonic: cleaned, addresses: deriveAddresses(cleaned, 20) }); }
     catch (e: any) { setError(`Key derivation failed: ${e.message}`); }
@@ -1220,8 +1219,10 @@ export default function App() {
     setNodeUrl(savedNode);
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      try { setWallet({ mnemonic: saved, addresses: deriveAddresses(saved,20) }); setScreen('wallet'); }
-      catch { localStorage.removeItem(STORAGE_KEY); }
+      import('./lib/keys').then(({ deriveAddresses }) => {
+        try { setWallet({ mnemonic: saved, addresses: deriveAddresses(saved, 20) }); setScreen('wallet'); }
+        catch { localStorage.removeItem(STORAGE_KEY); }
+      });
     }
   }, []);
 
