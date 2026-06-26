@@ -574,8 +574,21 @@ function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
     setStatus('sending');
     setMessage('');
     try {
+      // Find the NFT wallet that owns this coin
+      const walletsRes = await walletRpc('get_wallets', { include_data: true });
+      if (!walletsRes.success) throw new Error('Could not load wallets');
+      const nftWallets: any[] = (walletsRes.wallets || []).filter((w: any) => w.type === 10);
+      let ownerWalletId: number | null = null;
+      for (const w of nftWallets) {
+        const nftsRes = await walletRpc('nft_get_nfts', { wallet_id: w.id, start_index: 0, num: 200 });
+        if (nftsRes.success && (nftsRes.nft_list || []).some((n: any) => n.nft_coin_id === nft.nft_coin_id)) {
+          ownerWalletId = w.id;
+          break;
+        }
+      }
+      if (ownerWalletId === null) throw new Error('NFT not found in any wallet');
       const res = await walletRpc('nft_transfer_nft', {
-        wallet_id: 2, // wallet RPC finds the right NFT wallet
+        wallet_id: ownerWalletId,
         target_address: toAddress,
         nft_coin_id: nft.nft_coin_id,
         fee: Number(feeMojo),
