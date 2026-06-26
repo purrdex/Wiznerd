@@ -843,21 +843,44 @@ interface TxRecord {
   to_address: string;
 }
 
+const TX_PAGE_SIZE = 20;
+
 function HistoryScreen() {
   const [txs, setTxs] = useState<TxRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const pageRef = React.useRef(0);
+
+  async function fetchPage(start: number, append: boolean) {
+    const end = start + TX_PAGE_SIZE;
+    try {
+      const res = await walletRpc('get_transactions', {
+        wallet_id: 1, start, end,
+        sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
+      });
+      if (res.success && res.transactions) {
+        const batch: TxRecord[] = res.transactions;
+        setTxs(prev => append ? [...prev, ...batch] : batch);
+        setHasMore(batch.length === TX_PAGE_SIZE);
+        pageRef.current = end;
+      } else {
+        setError(res.error || 'Could not load transactions');
+      }
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
 
   useEffect(() => {
-    walletRpc('get_transactions', {
-      wallet_id: 1, start: 0, end: 20,
-      sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
-    }).then(res => {
-      if (res.success && res.transactions) setTxs(res.transactions);
-      else setError(res.error || 'Could not load transactions');
-    }).catch((e: any) => setError(e.message))
-      .finally(() => setLoading(false));
+    fetchPage(0, false).finally(() => setLoading(false));
   }, []);
+
+  const handleLoadMore = () => {
+    setLoadingMore(true);
+    fetchPage(pageRef.current, true).finally(() => setLoadingMore(false));
+  };
 
   return (
     <div className="wallet-screen">
@@ -900,6 +923,14 @@ function HistoryScreen() {
           </div>
         );
       })}
+      {!loading && hasMore && (
+        <button onClick={handleLoadMore} disabled={loadingMore}
+          style={{width:'100%',padding:'11px',background:'var(--bg-card)',
+            border:'1px solid var(--border)',borderRadius:'var(--radius)',
+            color:'var(--text-secondary)',fontSize:13,cursor:'pointer'}}>
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
+      )}
     </div>
   );
 }
