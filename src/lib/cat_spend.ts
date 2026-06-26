@@ -124,33 +124,24 @@ function sha256tree(s: SExp): Uint8Array {
   return sha256(d);
 }
 
-// ── Binary curry ─────────────────────────────────────────────────────────────
-// Builds (a (q . MOD) (c (q . A1) ... (c (q . An) 1)...))
-// Binary: ff02 ff01<MOD> ff [ff04 ff01<A1> [ff ff04 ff01<A2> ...] ff01 80] 80^(n+1)
+// ── SExp curry ───────────────────────────────────────────────────────────────
+// Builds (a (q . MOD) (c (q . A0) (c (q . A1) ... (c (q . An) 1) ...)))
+// MOD is parsed from its serialised bytes so it is embedded as a SExp tree,
+// not as a length-prefixed atom blob. Args likewise arrive as SExp values.
+// This matches Chia's Python curry() exactly: every element is a quoted SExp.
 
-function buildCurry(modHex: string, ...argHexes: string[]): Uint8Array {
-  const modEnc = encodeAtomBytes(hexToBytes(modHex));
-  const argEncs = argHexes.map(h => encodeAtomBytes(hexToBytes(h)));
-  const n = argEncs.length;
+function sexpCurry(modBytes: Uint8Array, args: SExp[]): SExp {
+  const APPLY = mkAtom(new Uint8Array([0x02]));
+  const CONS  = mkAtom(new Uint8Array([0x04]));
+  const QUOTE = mkAtom(new Uint8Array([0x01]));
 
-  const parts: Uint8Array[] = [
-    new Uint8Array([0xFF, 0x02, 0xFF, 0x01]),
-    modEnc,
-    new Uint8Array([0xFF]),
-  ];
-  for (let i = 0; i < n; i++) {
-    parts.push(new Uint8Array([0xFF, 0x04, 0xFF, 0x01]));
-    parts.push(argEncs[i]);
-    if (i < n - 1) parts.push(new Uint8Array([0xFF]));
+  const [mod] = parseSExp(modBytes, 0);
+  // Start with path-1 (the whole environment), build the c-chain right to left
+  let r: SExp = mkAtom(new Uint8Array([0x01]));
+  for (let i = args.length - 1; i >= 0; i--) {
+    r = mkList(CONS, mkCons(QUOTE, args[i]), r);
   }
-  parts.push(new Uint8Array([0xFF, 0x01, 0x80]));
-  parts.push(new Uint8Array(n + 1).fill(0x80));
-
-  const total = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
+  return mkList(APPLY, mkCons(QUOTE, mod), r);
 }
 
 // Navigate a curried puzzle to get the Nth argument (0-indexed).
@@ -224,12 +215,17 @@ export async function sendCatManual(
 
   // 2. Build P2 inner puzzle: curry(P2_MOD, syntheticPubKey)
   const synPk = syntheticPublicKey(senderAddr.publicKey);
-  const innerPuzzleBytes = buildCurry(P2_MOD_HEX, bytesToHex(synPk));
-  const innerPuzzleHex = bytesToHex(innerPuzzleBytes);
+  const innerPuzzleSExp = sexpCurry(hexToBytes(P2_MOD_HEX), [mkAtom(synPk)]);
 
   // 3. Build outer CAT puzzle: curry(CAT_MOD, MOD_HASH, assetId, innerPuzzle)
+  // innerPuzzleSExp is passed as a SExp tree (not atom-encoded) so the quoted
+  // curry arg is (q . <puzzle_sexp>), matching Chia's construct_cat_puzzle.
   const assetIdHex = coin.assetId.startsWith('0x') ? coin.assetId.slice(2) : coin.assetId;
-  const outerPuzzleBytes = buildCurry(CAT_MOD_HEX, CAT_MOD_HASH, assetIdHex, innerPuzzleHex);
+  const outerPuzzleBytes = encodeSExp(sexpCurry(hexToBytes(CAT_MOD_HEX), [
+    mkAtom(hexToBytes(CAT_MOD_HASH)),
+    mkAtom(hexToBytes(assetIdHex)),
+    innerPuzzleSExp,
+  ]));
 
   // 4. Compute change
   const coinAmount = BigInt(coin.amount);
@@ -250,11 +246,9 @@ export async function sendCatManual(
     ? coin.parentPuzzleReveal.slice(2)
     : coin.parentPuzzleReveal;
   const [parentPuzzleSExp] = parseSExp(hexToBytes(parentRevealHex), 0);
-  // CAT curry args: [0]=CAT_MOD_HASH [1]=assetId [2]=inner_puzzle_bytes
-  const innerPuzzleAtom = getCurryArg(parentPuzzleSExp, 2);
-  if (innerPuzzleAtom.t !== 0) throw new Error('Inner puzzle arg is not an atom');
-  const [parentInnerSExp] = parseSExp(innerPuzzleAtom.b, 0);
-  const parentInnerPuzzleHash = sha256tree(parentInnerSExp);
+  // CAT curry args: [0]=CAT_MOD_HASH [1]=assetId [2]=inner_puzzle (a SExp, not an atom)
+  const parentInnerPuzzle = getCurryArg(parentPuzzleSExp, 2);
+  const parentInnerPuzzleHash = sha256tree(parentInnerPuzzle);
 
   // 7. Build delegated puzzle: (q . conditions)
   const recipientPh = addressToPuzzleHash(recipientAddress);
