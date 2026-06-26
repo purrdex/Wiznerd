@@ -96,12 +96,29 @@ export function extractAssetIdFromPuzzleReveal(puzzleRevealHex: string): string 
   } catch { return null; }
 }
 
+// Minimal-length big-endian encoding matching chia_rs Coin::name() — strips leading
+// zeros but preserves a leading 0x00 if the first remaining byte has its high bit set.
+function coinAmountToBytes(amount: number): Uint8Array {
+  if (amount === 0) return new Uint8Array(0);
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setBigUint64(0, BigInt(Math.round(amount)));
+  const bytes = new Uint8Array(buf);
+  let start = 0;
+  while (start < 7 && bytes[start] === 0 && (bytes[start + 1] & 0x80) === 0) start++;
+  const result = bytes.slice(start);
+  if (result.length > 0 && (result[0] & 0x80)) {
+    const padded = new Uint8Array(result.length + 1);
+    padded.set(result, 1);
+    return padded;
+  }
+  return result;
+}
+
 export async function calculateCoinId(parentCoinInfo: string, puzzleHash: string, amount: number): Promise<string> {
   const parent = hexToBytes(parentCoinInfo.startsWith('0x') ? parentCoinInfo.slice(2) : parentCoinInfo);
   const puzzle = hexToBytes(puzzleHash.startsWith('0x') ? puzzleHash.slice(2) : puzzleHash);
-  const amountBytes = new Uint8Array(8);
-  new DataView(amountBytes.buffer).setUint32(4, amount);
-  const combined = new Uint8Array(parent.length + puzzle.length + 8);
+  const amountBytes = coinAmountToBytes(amount);
+  const combined = new Uint8Array(parent.length + puzzle.length + amountBytes.length);
   combined.set(parent); combined.set(puzzle, parent.length); combined.set(amountBytes, parent.length + puzzle.length);
   return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', combined)));
 }

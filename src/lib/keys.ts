@@ -183,6 +183,14 @@ export function syntheticPublicKey(pk: Uint8Array): Uint8Array {
     .toBytes(true);
 }
 
+export function syntheticPrivateKey(sk: Uint8Array, pk: Uint8Array): Uint8Array {
+  const combined = new Uint8Array(pk.length + DEFAULT_HIDDEN_PUZZLE_HASH.length);
+  combined.set(pk);
+  combined.set(DEFAULT_HIDDEN_PUZZLE_HASH, pk.length);
+  const offset = bytesToBigint(sha256(combined)) % BLS_ORDER;
+  return bigintToBytes32((bytesToBigint(sk) + offset) % BLS_ORDER);
+}
+
 /**
  * Compute puzzle hash for a public key
  * Matches Chia's puzzle_hash_for_pk() exactly

@@ -11,7 +11,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
 import { hexToBytes, bytesToHex } from './utils';
-import { addressToPuzzleHash, syntheticPublicKey } from './keys';
+import { addressToPuzzleHash, syntheticPublicKey, syntheticPrivateKey } from './keys';
 import type { CatCoin } from './cats';
 import type { DerivedAddress } from './keys';
 
@@ -215,6 +215,7 @@ export async function sendCatManual(
 
   // 2. Build P2 inner puzzle: curry(P2_MOD, syntheticPubKey)
   const synPk = syntheticPublicKey(senderAddr.publicKey);
+  const synSk = syntheticPrivateKey(senderAddr.privateKey, senderAddr.publicKey);
   const innerPuzzleSExp = sexpCurry(hexToBytes(P2_MOD_HEX), [mkAtom(synPk)]);
 
   // 3. Build outer CAT puzzle: curry(CAT_MOD, MOD_HASH, assetId, innerPuzzle)
@@ -310,7 +311,7 @@ export async function sendCatManual(
   sigMsg.set(coinIdBytes, 32);
   sigMsg.set(MAINNET_AGG_SIG_ME, 64);
 
-  const sig = blsAugSign(senderAddr.privateKey, sigMsg);
+  const sig = blsAugSign(synSk, sigMsg);
 
   // 11. Submit spend bundle via push_tx
   const parentCoinInfo = coin.parentCoinInfo.startsWith('0x')
