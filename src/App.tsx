@@ -460,19 +460,20 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBoo
 
 // Token avatar — colored circle with ticker initials, or actual logo
 function TokenAvatar({ ticker, logoUrl }: { ticker: string; logoUrl?: string }) {
+  const [imgFailed, setImgFailed] = useState(false);
   const colors = [
     '#4daa87', '#e07b3a', '#7b6fd8', '#d85c8a',
     '#5ca8d8', '#d8c25c', '#8ad85c', '#d85c5c'
   ];
   const color = colors[ticker.charCodeAt(0) % colors.length];
 
-  if (logoUrl) {
+  if (logoUrl && !imgFailed) {
     return (
       <img
         src={logoUrl}
         alt={ticker}
         style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        onError={() => setImgFailed(true)}
       />
     );
   }
