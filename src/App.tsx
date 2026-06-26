@@ -543,6 +543,15 @@ function resolveUri(uri: string): string {
   return uri;
 }
 
+async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const batch = items.slice(i, i + limit);
+    results.push(...await Promise.all(batch.map(fn)));
+  }
+  return results;
+}
+
 async function fetchNftMetadata(nft: NftData): Promise<NftData> {
   const dataUri = nft.data_uris?.[0] || '';
   const isVideo = dataUri.match(/\.(mp4|webm|mov|avi)(\?|$)/i) !== null;
@@ -778,7 +787,7 @@ function NFTsScreen() {
         }
 
         // Fetch metadata for each NFT in parallel
-        const withMeta = await Promise.all(allNfts.map(fetchNftMetadata));
+        const withMeta = await mapConcurrent(allNfts, 5, fetchNftMetadata);
         setNfts(withMeta);
       } catch (e: any) {
         setError(e.message);
