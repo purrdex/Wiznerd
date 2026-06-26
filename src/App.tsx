@@ -226,7 +226,6 @@ function WalletHome({ wallet, nodeUrl, refreshKey }: { wallet: WalletState; node
                 ${(Number(balance)/1_000_000_000_000*xchPrice).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
               </div>
             )}
-            {balance !== null && <div className="balance-mojo">{balance.toLocaleString()} mojo</div>}
           </>
         )}
       </div>
