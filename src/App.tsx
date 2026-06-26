@@ -1222,11 +1222,6 @@ function HistoryScreen() {
     })().finally(() => setLoading(false));
   }, []);
 
-  const handleLoadMore = () => {
-    setLoadingMore(true);
-    fetchPage(pageRef.current, true).finally(() => setLoadingMore(false));
-  };
-
   return (
     <div className="wallet-screen">
       <div className="section-label">Transaction History</div>
