@@ -30,6 +30,12 @@ interface WalletState {
   addresses: DerivedAddress[];
 }
 
+interface AddressEntry {
+  id: string;
+  label: string;
+  address: string;
+}
+
 const IconHome = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
     <path d="M3 12L12 3l9 9M5 10v9a1 1 0 001 1h4v-4h4v4h4a1 1 0 001-1v-9" strokeLinecap="round" strokeLinejoin="round"/>
@@ -344,11 +350,15 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset }:
-  { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void; onReset:()=>void }) {
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBook, onAddEntry, onRemoveEntry }:
+  { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void; onReset:()=>void;
+    addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void }) {
   const [input, setInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NodeStatus|null>(null);
+  const [newLabel, setNewLabel] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+  const [addError, setAddError] = useState('');
 
   useEffect(() => {
     setInput(nodeUrl || '');
@@ -363,6 +373,14 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset }:
       setTestResult({ url: input, label: 'Custom node', peakHeight: 0, synced: false, latencyMs: 0, trusted: false, error: e.message });
     }
     setTesting(false);
+  };
+
+  const handleAddEntry = () => {
+    setAddError('');
+    if (!newLabel.trim()) { setAddError('Label required'); return; }
+    if (!isValidXchAddress(newAddress.trim())) { setAddError('Invalid XCH address'); return; }
+    onAddEntry(newLabel.trim(), newAddress.trim());
+    setNewLabel(''); setNewAddress('');
   };
 
   return (
@@ -400,6 +418,35 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset }:
               : `✗ ${nodeStatus.error}`}
           </div>
         )}
+      </div>
+
+      <div className="section-label mt-16">Address Book</div>
+      {addressBook.length === 0 && (
+        <div style={{fontSize:12,color:'var(--text-secondary)',padding:'8px 0'}}>No saved addresses.</div>
+      )}
+      {addressBook.map(entry => (
+        <div className="address-card" key={entry.id}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',marginBottom:3}}>{entry.label}</div>
+            <div className="address-text" style={{fontSize:10}}>{entry.address}</div>
+          </div>
+          <button className="copy-btn" onClick={()=>onRemoveEntry(entry.id)}
+            style={{color:'var(--error)',borderColor:'rgba(224,92,92,0.4)',flexShrink:0}}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="node-config">
+        <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.06em'}}>ADD ADDRESS</div>
+        <input type="text" placeholder="Label (e.g. Exchange)" value={newLabel}
+          onChange={e=>{setNewLabel(e.target.value);setAddError('');}}/>
+        <input type="text" placeholder="xch1…" value={newAddress}
+          onChange={e=>{setNewAddress(e.target.value.trim());setAddError('');}}
+          style={{fontFamily:'var(--font-mono)',fontSize:11}}/>
+        {addError && <div className="error-msg">{addError}</div>}
+        <button className="btn btn-secondary" style={{padding:'10px'}} onClick={handleAddEntry}>
+          + Save Address
+        </button>
       </div>
 
       <div className="section-label mt-16">Danger Zone</div>
@@ -1039,6 +1086,7 @@ function SendScreen({ nodeUrl, onSendSuccess }: {
 
 const STORAGE_KEY = 'chia_wallet_mnemonic';
 const NODE_KEY = 'chia_node_url';
+const ADDRESS_BOOK_KEY = 'chia_address_book';
 
 export default function App() {
   const [wallet, setWallet] = useState<WalletState|null>(null);
@@ -1046,6 +1094,10 @@ export default function App() {
   const [nodeUrl, setNodeUrl] = useState<string>('');
   const [nodeStatus, setNodeStatus] = useState<NodeStatus|null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [addressBook, setAddressBook] = useState<AddressEntry[]>(() => {
+    try { return JSON.parse(localStorage.getItem(ADDRESS_BOOK_KEY) || '[]'); }
+    catch { return []; }
+  });
 
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
@@ -1086,6 +1138,18 @@ export default function App() {
     setWallet(null); setScreen('setup'); setNodeStatus(null); setNodeUrl('');
   };
 
+  const handleAddBookEntry = (label: string, address: string) => {
+    const next = [...addressBook, { id: crypto.randomUUID(), label, address }];
+    setAddressBook(next);
+    localStorage.setItem(ADDRESS_BOOK_KEY, JSON.stringify(next));
+  };
+
+  const handleRemoveBookEntry = (id: string) => {
+    const next = addressBook.filter(e => e.id !== id);
+    setAddressBook(next);
+    localStorage.setItem(ADDRESS_BOOK_KEY, JSON.stringify(next));
+  };
+
   const isWallet = wallet !== null;
 
   return (
@@ -1101,7 +1165,7 @@ export default function App() {
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onReset={handleReset}/>}
+      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onReset={handleReset} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry}/>}
 
       {isWallet && (
         <div className="bottom-nav">
