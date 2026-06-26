@@ -127,6 +127,13 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
             </div>
           ))}
         </div>
+        <button
+          onClick={() => navigator.clipboard.writeText(mnemonic)}
+          style={{background:'var(--bg-card)',border:'1px solid var(--border)',color:'var(--text-secondary)',
+            borderRadius:8,padding:'8px 16px',fontSize:12,cursor:'pointer',marginBottom:8,width:'100%'}}
+        >
+          Copy seed phrase (store in password manager, never share)
+        </button>
         {error && <div className="error-msg">{error}</div>}
         <label style={{display:'flex',alignItems:'center',gap:10,fontSize:13,color:'var(--text-secondary)',marginBottom:16,cursor:'pointer'}}>
           <input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} style={{width:16,height:16,accentColor:'var(--accent)'}}/>
@@ -178,6 +185,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
   wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void;
 }) {
   const [loading, setLoading] = useState(true);
+  const [proxyError, setProxyError] = useState('');
   const [copied, setCopied] = useState(false);
   const [xchPrice, setXchPrice] = useState(0);
   const [balance, setBalance] = useState<bigint | null>(null);
@@ -196,9 +204,12 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
       ]);
       setBalance(result.totalMojo);
       setXchPrice(xch);
+      setProxyError('');
       const cats = await getCatBalances(nodeUrl, puzzleHashes, xch);
       setCatBalances(cats);
-    } catch { /* silent */ }
+    } catch (e: any) {
+      if (balance === null) setProxyError('Cannot reach proxy. Is it running on localhost:3001?');
+    }
     finally { setLoading(false); }
   }, [nodeUrl, wallet.addresses]);
 
@@ -226,6 +237,13 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
   return (
     <div className="wallet-screen">
       {/* Balance card */}
+      {proxyError && (
+        <div style={{background:'rgba(220,50,50,0.1)',border:'1px solid #dc3232',
+          borderRadius:8,padding:'10px 14px',fontSize:12,color:'#ff6b6b',marginBottom:4}}>
+          {proxyError}
+        </div>
+      )}
+
       <div className="balance-card">
         <div className="balance-label">Total Balance</div>
         {loading && balance === null ? (
@@ -554,12 +572,26 @@ async function walletRpc(endpoint: string, body: Record<string, unknown> = {}) {
   return res.json();
 }
 
+// Module-level cache for daemon wallet list (30s TTL)
+let _catWalletCache: { wallets: any[]; ts: number } | null = null;
+
+async function getDaemonWallets(): Promise<any[]> {
+  if (_catWalletCache && Date.now() - _catWalletCache.ts < 30_000) return _catWalletCache.wallets;
+  try {
+    const res = await walletRpc('get_wallets', { include_data: true });
+    if (res.success) {
+      _catWalletCache = { wallets: res.wallets || [], ts: Date.now() };
+      return _catWalletCache.wallets;
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
 // Returns the wallet daemon wallet_id for a CAT assetId, or null if not registered
 async function getCatWalletId(assetId: string): Promise<number | null> {
   try {
-    const res = await walletRpc('get_wallets', { include_data: true });
-    if (!res.success) return null;
-    const match = (res.wallets || []).find(
+    const wallets = await getDaemonWallets();
+    const match = wallets.find(
       (w: any) => w.type === 6 && (w.data || '').toLowerCase() === assetId.toLowerCase()
     );
     return match?.id ?? null;
@@ -1222,6 +1254,7 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   const [status, setStatus] = useState<'idle' | 'sending' | 'pending' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [balance, setBalance] = useState<bigint | null>(null);
+  const [balanceError, setBalanceError] = useState('');
   const [showBook, setShowBook] = useState(false);
   const sendingRef = React.useRef(false);
   const pollTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1234,8 +1267,10 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
       signal: AbortSignal.timeout(8000),
     })
       .then(r => r.json())
-      .then(d => { if (d.success) setBalance(BigInt(d.wallet_balance.spendable_balance)); })
-      .catch(() => {});
+      .then(d => {
+        if (d.success) { setBalance(BigInt(d.wallet_balance.spendable_balance)); setBalanceError(''); }
+      })
+      .catch(() => { setBalanceError('Cannot reach proxy (localhost:3001). Is it running?'); });
   }, [status]);
 
   useEffect(() => {
@@ -1310,6 +1345,13 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   return (
     <div className="wallet-screen">
       <div className="section-label">Send XCH</div>
+
+      {balanceError && (
+        <div style={{background:'rgba(220,50,50,0.1)',border:'1px solid #dc3232',
+          borderRadius:8,padding:'10px 14px',fontSize:12,color:'#ff6b6b',marginBottom:4}}>
+          {balanceError}
+        </div>
+      )}
 
       <div className="balance-card" style={{marginBottom: 20}}>
         <div style={{fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4}}>AVAILABLE</div>
