@@ -208,6 +208,14 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
     return () => clearInterval(interval);
   }, [fetchAll, refreshKey]);
 
+  // Keep selectedCat in sync with latest balance after refreshes
+  useEffect(() => {
+    if (selectedCat) {
+      const updated = catBalances.find(c => c.assetId === selectedCat.assetId);
+      if (updated) setSelectedCat(updated);
+    }
+  }, [catBalances]);
+
   const handleCopy = () => { navigator.clipboard.writeText(primaryAddress); setCopied(true); setTimeout(()=>setCopied(false),2000); };
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
 
@@ -583,9 +591,11 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
   }, [token.assetId]);
 
   const isValidAddr = isValidXchAddress(toAddress);
-  // CAT v2: 1 token = 1000 mojos
-  const amountMojo = BigInt(Math.round(parseFloat(amount || '0') * 1000));
-  const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
+  // CAT v2: 1 token = 1000 mojos. Guard against NaN before BigInt conversion.
+  const amountFloat = parseFloat(amount || '0');
+  const feeFloat = parseFloat(fee || '0');
+  const amountMojo = BigInt(isNaN(amountFloat) ? 0 : Math.round(amountFloat * 1000));
+  const feeMojo = BigInt(isNaN(feeFloat) ? 0 : Math.round(feeFloat * 1_000_000_000_000));
   const isValid = isValidAddr && amountMojo > BigInt(0) && amountMojo <= token.totalMojo;
 
   const handleMax = () => {
@@ -824,7 +834,8 @@ function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
   };
 
   const isValidAddress = isValidXchAddress(toAddress);
-  const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
+  const feeNftF = parseFloat(fee || '0');
+  const feeMojo = BigInt(isNaN(feeNftF) ? 0 : Math.round(feeNftF * 1_000_000_000_000));
 
   async function handleTransfer() {
     if (!isValidAddress || sendingRef.current) return;
@@ -845,12 +856,13 @@ function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
         }
       }
       if (ownerWalletId === null) throw new Error('NFT not found in any wallet');
-      const res = await walletRpc('nft_transfer_nft', {
-        wallet_id: ownerWalletId,
-        target_address: toAddress,
-        nft_coin_id: nft.nft_coin_id,
-        fee: Number(feeMojo),
-      });
+      const transferBody = `{"wallet_id":${ownerWalletId},"target_address":${JSON.stringify(toAddress)},"nft_coin_id":${JSON.stringify(nft.nft_coin_id)},"fee":${feeMojo}}`;
+      const res = await fetch(`${WALLET_PROXY}/wallet/nft_transfer_nft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: transferBody,
+        signal: AbortSignal.timeout(30000),
+      }).then(r => r.json());
       if (res.success) {
         setStatus('success');
         setMessage('NFT transferred successfully!');
@@ -1231,8 +1243,10 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   }, []);
 
   const totalMojo = balance ?? BigInt(0);
-  const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
-  const amountMojo = BigInt(Math.round(parseFloat(amount || '0') * 1_000_000_000_000));
+  const feeF = parseFloat(fee || '0');
+  const amtF = parseFloat(amount || '0');
+  const feeMojo = BigInt(isNaN(feeF) ? 0 : Math.round(feeF * 1_000_000_000_000));
+  const amountMojo = BigInt(isNaN(amtF) ? 0 : Math.round(amtF * 1_000_000_000_000));
   const maxSend = totalMojo > feeMojo ? totalMojo - feeMojo : BigInt(0);
 
   const isValid = isValidXchAddress(toAddress) &&
