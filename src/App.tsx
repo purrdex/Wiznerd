@@ -174,12 +174,15 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
   );
 }
 
-function WalletHome({ wallet, nodeUrl, refreshKey }: { wallet: WalletState; nodeUrl: string; refreshKey: number }) {
+function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
+  wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [xchPrice, setXchPrice] = useState(0);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
+  const [selectedCat, setSelectedCat] = useState<CatBalance | null>(null);
   const primaryAddress = wallet.addresses[0]?.address || '';
 
   const fetchAll = useCallback(async () => {
@@ -207,6 +210,10 @@ function WalletHome({ wallet, nodeUrl, refreshKey }: { wallet: WalletState; node
 
   const handleCopy = () => { navigator.clipboard.writeText(primaryAddress); setCopied(true); setTimeout(()=>setCopied(false),2000); };
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
+
+  if (selectedCat) {
+    return <CatDetailScreen token={selectedCat} onBack={() => setSelectedCat(null)} onSendSuccess={onSendSuccess}/>;
+  }
 
   return (
     <div className="wallet-screen">
@@ -262,7 +269,8 @@ function WalletHome({ wallet, nodeUrl, refreshKey }: { wallet: WalletState; node
       {catBalances.map(token => {
         const usdValue = token.priceUsd ? formatCatUsdValue(token.totalMojo, token.priceUsd) : null;
         return (
-          <div key={token.assetId} className="token-card">
+          <div key={token.assetId} className="token-card" style={{cursor:'pointer'}}
+            onClick={() => setSelectedCat(token)}>
             <TokenAvatar ticker={token.ticker} logoUrl={token.logoUrl} />
             <div className="token-info">
               <div className="token-row">
@@ -538,9 +546,87 @@ async function walletRpc(endpoint: string, body: Record<string, unknown> = {}) {
   return res.json();
 }
 
+// Returns the wallet daemon wallet_id for a CAT assetId, or null if not registered
+async function getCatWalletId(assetId: string): Promise<number | null> {
+  try {
+    const res = await walletRpc('get_wallets', { include_data: true });
+    if (!res.success) return null;
+    const match = (res.wallets || []).find(
+      (w: any) => w.type === 6 && (w.data || '').toLowerCase() === assetId.toLowerCase()
+    );
+    return match?.id ?? null;
+  } catch { return null; }
+}
+
 function resolveUri(uri: string): string {
   if (uri.startsWith('ipfs://')) return uri.replace('ipfs://', 'https://ipfs.mintgarden.io/ipfs/');
   return uri;
+}
+
+function CatDetailScreen({ token, onBack, onSendSuccess: _onSendSuccess }: {
+  token: CatBalance; onBack: () => void; onSendSuccess: () => void;
+}) {
+  const [catWalletId, setCatWalletId] = useState<number | null>(null);
+  const [loadingWallet, setLoadingWallet] = useState(true);
+
+  useEffect(() => {
+    getCatWalletId(token.assetId)
+      .then(id => setCatWalletId(id))
+      .finally(() => setLoadingWallet(false));
+  }, [token.assetId]);
+
+  return (
+    <div className="wallet-screen">
+      <button onClick={onBack} style={{
+        background:'none',border:'none',color:'var(--accent)',
+        fontSize:13,cursor:'pointer',textAlign:'left',padding:0,marginBottom:4,
+      }}>← Back</button>
+
+      <div style={{display:'flex',alignItems:'center',gap:14,background:'var(--bg-card)',
+        border:'1px solid var(--border)',borderRadius:16,padding:'16px'}}>
+        <TokenAvatar ticker={token.ticker} logoUrl={token.logoUrl}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontWeight:700,fontSize:18,color:'var(--text-primary)'}}>{token.name}</div>
+          <div style={{fontSize:12,color:'var(--accent)',marginTop:2}}>{token.ticker}</div>
+        </div>
+      </div>
+
+      <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
+        borderRadius:12,padding:'14px 16px'}}>
+        <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.06em',marginBottom:6}}>BALANCE</div>
+        <div style={{fontSize:24,fontWeight:700,color:'var(--text-primary)'}}>
+          {formatCatAmount(token.totalMojo)}
+          <span style={{fontSize:14,color:'var(--accent)',marginLeft:6}}>{token.ticker}</span>
+        </div>
+        {token.priceUsd > 0 && (
+          <div style={{fontSize:14,color:'var(--text-secondary)',marginTop:4}}>
+            {formatCatUsdValue(token.totalMojo, token.priceUsd)}
+          </div>
+        )}
+      </div>
+
+      {loadingWallet ? (
+        <div className="balance-loading"><div className="spinner"/>Checking wallet daemon…</div>
+      ) : catWalletId === null ? (
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
+          borderRadius:12,padding:'14px 16px',fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
+          <div style={{fontWeight:600,color:'var(--text-primary)',marginBottom:6}}>Cannot send this token</div>
+          {token.ticker} is not registered in the Chia wallet daemon. To enable sends,
+          add it in the Chia GUI under <strong>Manage tokens</strong>, then return here.
+        </div>
+      ) : (
+        <div style={{padding:'12px',background:'rgba(77,170,135,0.06)',border:'1px solid var(--accent)',
+          borderRadius:12,fontSize:12,color:'var(--text-secondary)'}}>
+          Wallet daemon wallet #{catWalletId} — send form coming in next step.
+        </div>
+      )}
+
+      <div style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
+        wordBreak:'break-all',paddingTop:10,borderTop:'1px solid var(--border)'}}>
+        Asset ID: {token.assetId}
+      </div>
+    </div>
+  );
 }
 
 async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -1288,7 +1374,7 @@ export default function App() {
       </div>
 
       {!isWallet && <SetupScreen onWalletReady={handleWalletReady}/>}
-      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey}/>}
+      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
