@@ -23,7 +23,7 @@ import {
 } from './lib/cats';
 import { sendXch } from './lib/spend';
 
-type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'settings';
+type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'settings';
 
 interface WalletState {
   mnemonic: string;
@@ -57,6 +57,12 @@ const IconNFTs = () => (
     <rect x="14" y="3" width="7" height="7" rx="1" strokeLinecap="round"/>
     <rect x="3" y="14" width="7" height="7" rx="1" strokeLinecap="round"/>
     <rect x="14" y="14" width="7" height="7" rx="1" strokeLinecap="round"/>
+  </svg>
+);
+const IconHistory = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+    <circle cx="12" cy="12" r="9"/>
+    <path d="M12 7v5l3 3" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 
@@ -765,6 +771,78 @@ function NFTsScreen() {
 }
 
 
+interface TxRecord {
+  name: string;
+  type: number;
+  amount: number;
+  fee_amount: number;
+  confirmed: boolean;
+  confirmed_at_height: number;
+  created_at_time: number;
+  to_address: string;
+}
+
+function HistoryScreen() {
+  const [txs, setTxs] = useState<TxRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    walletRpc('get_transactions', {
+      wallet_id: 1, start: 0, end: 20,
+      sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
+    }).then(res => {
+      if (res.success && res.transactions) setTxs(res.transactions);
+      else setError(res.error || 'Could not load transactions');
+    }).catch((e: any) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="wallet-screen">
+      <div className="section-label">Transaction History</div>
+      {loading && <div className="balance-loading"><div className="spinner"/>Loading…</div>}
+      {!loading && error && <div className="error-msg">{error}</div>}
+      {!loading && !error && txs.length === 0 && (
+        <div className="empty-state">
+          <div style={{fontSize:36,marginBottom:12}}>🧾</div>
+          No transactions yet.
+        </div>
+      )}
+      {txs.map(tx => {
+        const isSend = tx.type === 1 || tx.type === 5;
+        const amount = formatMojoToXch(BigInt(tx.amount));
+        const date = new Date(tx.created_at_time * 1000);
+        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const addr = tx.to_address;
+        return (
+          <div key={tx.name} className="tx-row">
+            <div className={`tx-icon ${isSend ? 'tx-send' : 'tx-recv'}`}>
+              {isSend ? '↑' : '↓'}
+            </div>
+            <div className="tx-info">
+              <div className="tx-top">
+                <span className="tx-type">{isSend ? 'Sent' : 'Received'}</span>
+                <span className={`tx-amount ${isSend ? 'tx-amount-send' : 'tx-amount-recv'}`}>
+                  {isSend ? '−' : '+'}{amount} XCH
+                </span>
+              </div>
+              <div className="tx-bottom">
+                <span className="tx-date">{dateStr} · {timeStr}</span>
+                {!tx.confirmed && <span className="tx-pending">pending</span>}
+              </div>
+              {isSend && addr && (
+                <div className="tx-address">→ {addr.slice(0, 10)}…{addr.slice(-6)}</div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SendScreen({ nodeUrl, onSendSuccess }: {
   nodeUrl: string;
   onSendSuccess: () => void;
@@ -1022,6 +1100,7 @@ export default function App() {
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
+      {isWallet && screen==='history'  && <HistoryScreen/>}
       {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onReset={handleReset}/>}
 
       {isWallet && (
@@ -1030,6 +1109,7 @@ export default function App() {
           <button className={`nav-item ${screen==='nfts'?'active':''}`} onClick={()=>setScreen('nfts')}><IconNFTs/>NFTs</button>
           <button className={`nav-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/>Send</button>
           <button className={`nav-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/>Receive</button>
+          <button className={`nav-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/>History</button>
           <button className={`nav-item ${screen==='settings'?'active':''}`} onClick={()=>setScreen('settings')}><IconSettings/>Settings</button>
         </div>
       )}
