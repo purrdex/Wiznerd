@@ -1052,7 +1052,19 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
 
         <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10}}>
           <div>
-            <div style={{fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6, letterSpacing: '0.08em'}}>AMOUNT (XCH)</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <div style={{fontSize: 11, color: 'var(--text-secondary)', letterSpacing: '0.08em'}}>AMOUNT (XCH)</div>
+              {maxSend > BigInt(0) && (
+                <button onClick={() => {
+                  const whole = maxSend / BigInt(1_000_000_000_000);
+                  const frac = maxSend % BigInt(1_000_000_000_000);
+                  const fracStr = frac === BigInt(0) ? '' : '.' + frac.toString().padStart(12, '0').replace(/0+$/, '');
+                  setAmount(`${whole}${fracStr}`);
+                }} style={{background:'none',border:'none',color:'var(--accent)',fontSize:11,cursor:'pointer',padding:0}}>
+                  Max
+                </button>
+              )}
+            </div>
             <input
               className="address-input"
               style={{width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: 14}}
