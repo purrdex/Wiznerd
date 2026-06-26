@@ -18,7 +18,7 @@
 - [x] CAT token detail screen with send button
 
 ## v0.5.0 — CAT Sends (No Daemon Required)
-Build: clean (475 KB / 138 KB gzip, no warnings). Tests: 6/6 pass. Findings sorted by user impact.
+Build: clean (479 KB / 139 KB gzip, no warnings). Tests: 10/10 pass. All items complete.
 
 - [x] [FEAT] CAT sends without wallet daemon registration — build CAT spend bundles manually using the CAT outer puzzle wrapper. Research Chia CAT2 spend bundle format from chia-blockchain source. The wallet daemon cat_spend should be attempted first (for registered tokens), with manual spend bundle construction as fallback for unregistered tokens. This is the critical path item — every other wallet (Sage, MetaMask equivalent) lets users send any token without pre-registration.
 - [x] [BUG] `BigInt(NaN)` render crash in `CatDetailScreen` and `SendScreen` — if a non-numeric value reaches the amount state (paste, autofill edge case), `BigInt(Math.round(NaN))` throws a TypeError and crashes the component mid-render; guard with `isNaN()` check before the `BigInt()` call (App.tsx:586–587, 1216–1217) — S effort
@@ -33,7 +33,7 @@ Build: clean (475 KB / 138 KB gzip, no warnings). Tests: 6/6 pass. Findings sort
 - [x] [PERF] CAT coin discovery re-scans all 20 puzzle hashes on every 30 s refresh — `getCatBalances` calls `getPuzzleAndSolution` for every unspent CAT coin on every cycle; assetId lookup results could be cached by coinId in sessionStorage so only new coins are resolved (cats.ts:166–207) — M effort
 - [x] [TEST] Playwright wallet-state tests silently skip in a fresh CI environment — all tests after "setup screen" are guarded by `if (hasWallet)` with no `expect()` when the wallet is absent; a fresh runner always shows 6 passing tests even when all wallet-specific assertions never executed (tests/wallet.spec.ts) — M effort
 - [x] [TEST] No coverage for wallet creation or mnemonic import — the most security-critical paths (BIP39 validation, key derivation, address generation) have zero automated tests — M effort
-- [ ] [TEST] No test for `CatDetailScreen` — opening a token detail view, verifying the wallet daemon status check, and send form validation are entirely untested — S effort
+- [x] [TEST] No test for `CatDetailScreen` — opening a token detail view, verifying the wallet daemon status check, and send form validation are entirely untested — S effort
 
 ## v0.6.0 — Power Features
 - [ ] Multiple wallet support (switch between mnemonics)
