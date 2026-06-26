@@ -1175,6 +1175,8 @@ interface TxRecord {
   confirmed_at_height: number;
   created_at_time: number;
   to_address: string;
+  walletLabel?: string; // 'XCH' or CAT name
+  isCat?: boolean;
 }
 
 const TX_PAGE_SIZE = 20;
@@ -1182,33 +1184,40 @@ const TX_PAGE_SIZE = 20;
 function HistoryScreen() {
   const [txs, setTxs] = useState<TxRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
-  const [hasMore, setHasMore] = useState(false);
-  const pageRef = React.useRef(0);
-
-  async function fetchPage(start: number, append: boolean) {
-    const end = start + TX_PAGE_SIZE;
-    try {
-      const res = await walletRpc('get_transactions', {
-        wallet_id: 1, start, end,
-        sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
-      });
-      if (res.success && res.transactions) {
-        const batch: TxRecord[] = res.transactions;
-        setTxs(prev => append ? [...prev, ...batch] : batch);
-        setHasMore(batch.length === TX_PAGE_SIZE);
-        pageRef.current = end;
-      } else {
-        setError(res.error || 'Could not load transactions');
-      }
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
 
   useEffect(() => {
-    fetchPage(0, false).finally(() => setLoading(false));
+    (async () => {
+      try {
+        // Get all daemon wallets (XCH + registered CATs)
+        const walletsRes = await getDaemonWallets();
+        const relevantWallets = walletsRes.filter((w: any) => w.type === 1 || w.type === 6);
+
+        const allTxs = await Promise.allSettled(
+          relevantWallets.map(async (w: any) => {
+            const res = await walletRpc('get_transactions', {
+              wallet_id: w.id, start: 0, end: TX_PAGE_SIZE,
+              sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
+            });
+            if (!res.success) return [];
+            return (res.transactions || []).map((tx: TxRecord) => ({
+              ...tx,
+              walletLabel: w.type === 1 ? 'XCH' : (w.name || 'Token'),
+              isCat: w.type === 6,
+            }));
+          })
+        );
+
+        const merged: TxRecord[] = allTxs
+          .filter((r): r is PromiseFulfilledResult<TxRecord[]> => r.status === 'fulfilled')
+          .flatMap(r => r.value);
+
+        merged.sort((a, b) => b.confirmed_at_height - a.confirmed_at_height || b.created_at_time - a.created_at_time);
+        setTxs(merged.slice(0, TX_PAGE_SIZE * 2));
+      } catch (e: any) {
+        setError(e.message);
+      }
+    })().finally(() => setLoading(false));
   }, []);
 
   const handleLoadMore = () => {
@@ -1227,15 +1236,18 @@ function HistoryScreen() {
           No transactions yet.
         </div>
       )}
-      {txs.map(tx => {
+      {txs.map((tx, idx) => {
         const isSend = tx.type === 2 || tx.type === 6;
-        const amount = formatMojoToXch(BigInt(tx.amount));
+        const label = tx.walletLabel || 'XCH';
+        const amount = tx.isCat
+          ? formatCatAmount(BigInt(tx.amount))
+          : formatMojoToXch(BigInt(tx.amount));
         const date = new Date(tx.created_at_time * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         const addr = tx.to_address;
         return (
-          <div key={tx.name} className="tx-row">
+          <div key={`${tx.name}-${idx}`} className="tx-row">
             <div className={`tx-icon ${isSend ? 'tx-send' : 'tx-recv'}`}>
               {isSend ? '↑' : '↓'}
             </div>
@@ -1243,7 +1255,7 @@ function HistoryScreen() {
               <div className="tx-top">
                 <span className="tx-type">{isSend ? 'Sent' : 'Received'}</span>
                 <span className={`tx-amount ${isSend ? 'tx-amount-send' : 'tx-amount-recv'}`}>
-                  {isSend ? '−' : '+'}{amount} XCH
+                  {isSend ? '−' : '+'}{amount} {label}
                 </span>
               </div>
               <div className="tx-bottom">
@@ -1264,14 +1276,6 @@ function HistoryScreen() {
           </div>
         );
       })}
-      {!loading && hasMore && (
-        <button onClick={handleLoadMore} disabled={loadingMore}
-          style={{width:'100%',padding:'11px',background:'var(--bg-card)',
-            border:'1px solid var(--border)',borderRadius:'var(--radius)',
-            color:'var(--text-secondary)',fontSize:13,cursor:'pointer'}}>
-          {loadingMore ? 'Loading…' : 'Load more'}
-        </button>
-      )}
     </div>
   );
 }
