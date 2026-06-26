@@ -359,6 +359,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBoo
   const [newLabel, setNewLabel] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [addError, setAddError] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     setInput(nodeUrl || '');
@@ -450,10 +451,32 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBoo
       </div>
 
       <div className="section-label mt-16">Danger Zone</div>
-      <button className="btn btn-secondary" style={{borderColor:'var(--error)',color:'var(--error)'}}
-        onClick={()=>{ if(window.confirm('Remove wallet? Make sure you have your seed phrase saved.')) onReset(); }}>
-        Remove wallet
-      </button>
+      {!confirmReset ? (
+        <button className="btn btn-secondary" style={{borderColor:'var(--error)',color:'var(--error)'}}
+          onClick={() => setConfirmReset(true)}>
+          Remove wallet
+        </button>
+      ) : (
+        <div style={{background:'rgba(220,50,50,0.08)',border:'1px solid var(--error)',
+          borderRadius:'var(--radius)',padding:'16px',display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{fontSize:13,color:'var(--text-primary)',fontWeight:600}}>Remove this wallet?</div>
+          <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
+            Make sure you have your 24-word seed phrase saved. This cannot be undone.
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={() => setConfirmReset(false)}
+              style={{flex:1,padding:'10px',background:'none',border:'1px solid var(--border)',
+                borderRadius:'var(--radius-sm)',color:'var(--text-secondary)',cursor:'pointer',fontSize:13}}>
+              Cancel
+            </button>
+            <button onClick={onReset}
+              style={{flex:1,padding:'10px',background:'#dc3232',border:'none',
+                borderRadius:'var(--radius-sm)',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
