@@ -938,6 +938,13 @@ function HistoryScreen() {
               <div className="tx-bottom">
                 <span className="tx-date">{dateStr} · {timeStr}</span>
                 {!tx.confirmed && <span className="tx-pending">pending</span>}
+                {tx.confirmed && (
+                  <a href={`https://www.spacescan.io/tx/${tx.name}`} target="_blank" rel="noopener noreferrer"
+                    style={{fontSize:10,color:'var(--accent)',textDecoration:'none',marginLeft:6}}
+                    onClick={e => e.stopPropagation()}>
+                    ↗ Explorer
+                  </a>
+                )}
               </div>
               {isSend && addr && (
                 <div className="tx-address">→ {addr.slice(0, 10)}…{addr.slice(-6)}</div>
