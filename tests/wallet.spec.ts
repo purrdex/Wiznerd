@@ -10,7 +10,7 @@ test.describe('Wiznerd Wallet', () => {
   test('setup screen shows on fresh load', async ({ page }) => {
     await page.goto('/');
     // Either setup screen or wallet home should be visible
-    const hasSetup = await page.locator('text=Create Wallet').isVisible().catch(() => false);
+    const hasSetup = await page.locator('text=Create new wallet').isVisible().catch(() => false);
     const hasWallet = await page.locator('text=Total Balance').isVisible().catch(() => false);
     expect(hasSetup || hasWallet).toBeTruthy();
   });

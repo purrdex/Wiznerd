@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import './App.css';
 import {
   generateNewMnemonic,
   validateMnemonicWords,
   deriveAddresses,
   formatMojoToXch,
+  isValidXchAddress,
   type DerivedAddress,
 } from './lib/keys';
 import {
   checkNodeSync,
   getBalance,
   type NodeStatus,
-  type CoinRecord,
 } from './lib/node';
 import {
   getCatBalances,
@@ -162,7 +163,7 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
   );
 }
 
-function WalletHome({ wallet, nodeUrl }: { wallet: WalletState; nodeUrl: string }) {
+function WalletHome({ wallet, nodeUrl, refreshKey }: { wallet: WalletState; nodeUrl: string; refreshKey: number }) {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [xchPrice, setXchPrice] = useState(0);
@@ -183,7 +184,7 @@ function WalletHome({ wallet, nodeUrl }: { wallet: WalletState; nodeUrl: string 
       setXchPrice(xch);
       const cats = await getCatBalances(nodeUrl, puzzleHashes, xch);
       setCatBalances(cats);
-    } catch(e: any) { console.error('Fetch failed:', e.message); }
+    } catch { /* silent */ }
     finally { setLoading(false); }
   }, [nodeUrl, wallet.addresses]);
 
@@ -191,7 +192,7 @@ function WalletHome({ wallet, nodeUrl }: { wallet: WalletState; nodeUrl: string 
     fetchAll();
     const interval = setInterval(fetchAll, 30_000);
     return () => clearInterval(interval);
-  }, [fetchAll]);
+  }, [fetchAll, refreshKey]);
 
   const handleCopy = () => { navigator.clipboard.writeText(primaryAddress); setCopied(true); setTimeout(()=>setCopied(false),2000); };
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
@@ -273,24 +274,52 @@ function WalletHome({ wallet, nodeUrl }: { wallet: WalletState; nodeUrl: string 
 function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   const [copied, setCopied] = useState<number|null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const handleCopy = (address: string, index: number) => {
     navigator.clipboard.writeText(address); setCopied(index); setTimeout(()=>setCopied(null),2000);
   };
   const displayed = showAll ? wallet.addresses.slice(0, 20) : wallet.addresses.slice(0, 3);
+  const selectedAddress = wallet.addresses[selectedIndex]?.address || '';
+
   return (
     <div className="wallet-screen">
-      <div className="section-label">Receive addresses</div>
+      <div className="section-label">Receive</div>
+
+      {selectedAddress && (
+        <div style={{display:'flex',flexDirection:'column',alignItems:'center',
+          background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:16,
+          padding:'20px 16px',gap:12}}>
+          <div style={{background:'#f0f2f8',borderRadius:12,padding:12,display:'inline-flex'}}>
+            <QRCodeSVG value={selectedAddress} size={200} fgColor="#0a0b0f" bgColor="#f0f2f8"/>
+          </div>
+          <div style={{fontSize:10,color:'var(--text-secondary)',fontFamily:'var(--font-mono)',
+            wordBreak:'break-all',textAlign:'center',lineHeight:1.5}}>
+            {selectedAddress}
+          </div>
+          <button className={`copy-btn ${copied===selectedIndex?'copied':''}`}
+            onClick={()=>handleCopy(selectedAddress,selectedIndex)}
+            style={{fontSize:12,padding:'7px 18px'}}>
+            {copied===selectedIndex?'✓ Copied!':'Copy Address'}
+          </button>
+        </div>
+      )}
+
+      <div className="section-label" style={{marginTop:8}}>All addresses</div>
       <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-        Any of these addresses belong to your wallet.
+        Any of these addresses belong to your wallet. Tap to show QR.
       </div>
       <div className="receive-list">
         {displayed.map(addr => (
-          <div className="address-card" key={addr.index}>
+          <div className={`address-card ${selectedIndex===addr.index?'selected-address':''}`}
+            key={addr.index}
+            onClick={()=>setSelectedIndex(addr.index)}
+            style={{cursor:'pointer',border:`1px solid ${selectedIndex===addr.index?'var(--accent)':'var(--border)'}`}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:10,color:'var(--text-dim)',marginBottom:4,fontFamily:'var(--font-mono)'}}>Address #{addr.index}</div>
               <div className="address-text" style={{fontSize:10,wordBreak:'break-all'}}>{addr.address}</div>
             </div>
-            <button className={`copy-btn ${copied===addr.index?'copied':''}`} onClick={()=>handleCopy(addr.address,addr.index)}>
+            <button className={`copy-btn ${copied===addr.index?'copied':''}`}
+              onClick={e=>{e.stopPropagation();handleCopy(addr.address,addr.index);}}>
               {copied===addr.index?'✓':'Copy'}
             </button>
           </div>
@@ -474,9 +503,16 @@ function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
   const [fee, setFee] = useState('0.00005');
   const [status, setStatus] = useState<'idle'|'sending'|'success'|'error'>('idle');
   const [message, setMessage] = useState('');
+  const [nftIdCopied, setNftIdCopied] = useState(false);
   const sendingRef = React.useRef(false);
 
-  const isValidAddress = toAddress.startsWith('xch1') && toAddress.length >= 60 && /^[a-z0-9]+$/.test(toAddress);
+  const handleCopyNftId = () => {
+    navigator.clipboard.writeText(nft.nft_id);
+    setNftIdCopied(true);
+    setTimeout(() => setNftIdCopied(false), 2000);
+  };
+
+  const isValidAddress = isValidXchAddress(toAddress);
   const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
 
   async function handleTransfer() {
@@ -547,9 +583,15 @@ function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
             Royalty: {(nft.royalty_percentage / 100).toFixed(1)}%
           </div>
         )}
-        <div style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
-          wordBreak:'break-all',marginTop:4}}>
-          {nft.nft_id}
+        <div style={{display:'flex',alignItems:'flex-start',gap:8,marginTop:4}}>
+          <div style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
+            wordBreak:'break-all',flex:1}}>
+            {nft.nft_id}
+          </div>
+          <button className={`copy-btn ${nftIdCopied?'copied':''}`} onClick={handleCopyNftId}
+            style={{flexShrink:0,fontSize:10,padding:'4px 8px'}}>
+            {nftIdCopied?'✓':'Copy ID'}
+          </button>
         </div>
         <div style={{fontSize:10,color:'var(--text-dim)',marginTop:2}}>
           Block #{nft.mint_height?.toLocaleString()}
@@ -723,40 +765,64 @@ function NFTsScreen() {
 }
 
 
-function SendScreen({ nodeUrl }: {
+function SendScreen({ nodeUrl, onSendSuccess }: {
   nodeUrl: string;
+  onSendSuccess: () => void;
 }) {
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('');
   const [fee, setFee] = useState('0.00005');
-  const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'pending' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [balance, setBalance] = useState<bigint | null>(null);
   const sendingRef = React.useRef(false);
+  const pollTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Fetch balance from wallet RPC
     fetch('http://localhost:3001/wallet/get_wallet_balance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wallet_id: 1 }),
+      signal: AbortSignal.timeout(8000),
     })
       .then(r => r.json())
       .then(d => { if (d.success) setBalance(BigInt(d.wallet_balance.spendable_balance)); })
       .catch(() => {});
-  }, [status]); // refresh after send
+  }, [status]);
+
+  useEffect(() => {
+    return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current); };
+  }, []);
 
   const totalMojo = balance ?? BigInt(0);
   const feeMojo = BigInt(Math.round(parseFloat(fee || '0') * 1_000_000_000_000));
   const amountMojo = BigInt(Math.round(parseFloat(amount || '0') * 1_000_000_000_000));
   const maxSend = totalMojo > feeMojo ? totalMojo - feeMojo : BigInt(0);
 
-  const isValid = toAddress.startsWith('xch1') &&
-    toAddress.length >= 60 &&
-    toAddress.length <= 70 &&
-    /^[a-z0-9]+$/.test(toAddress) &&
+  const isValid = isValidXchAddress(toAddress) &&
     amountMojo > BigInt(0) &&
     amountMojo <= maxSend;
+
+  function pollConfirmation(txId: string, attempts = 0) {
+    if (attempts >= 24) {
+      setStatus('success');
+      setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH`);
+      onSendSuccess();
+      return;
+    }
+    pollTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await walletRpc('get_transaction', { transaction_id: txId });
+        if (res.success && res.transaction?.confirmed) {
+          setStatus('success');
+          setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH — confirmed at block #${res.transaction.confirmed_at_height?.toLocaleString()}`);
+          onSendSuccess();
+          return;
+        }
+      } catch { /* keep polling */ }
+      pollConfirmation(txId, attempts + 1);
+    }, 5000);
+  }
 
   async function handleSend() {
     if (!isValid || !nodeUrl || sendingRef.current) return;
@@ -764,17 +830,19 @@ function SendScreen({ nodeUrl }: {
     setStatus('sending');
     setMessage('');
     try {
-      const result = await sendXch({
-        toAddress,
-        amountMojo,
-        feeMojo,
-        nodeUrl,
-      });
+      const result = await sendXch({ toAddress, amountMojo, feeMojo, nodeUrl });
       if (result.success) {
-        setStatus('success');
-        setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH — TX: ${result.txId?.slice(0, 16)}…`);
         setToAddress('');
         setAmount('');
+        if (result.txId && result.txId !== 'submitted') {
+          setStatus('pending');
+          setMessage(result.txId);
+          pollConfirmation(result.txId);
+        } else {
+          setStatus('success');
+          setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH`);
+          onSendSuccess();
+        }
       } else {
         setStatus('error');
         setMessage(result.error || 'Transaction failed');
@@ -786,6 +854,8 @@ function SendScreen({ nodeUrl }: {
       sendingRef.current = false;
     }
   }
+
+  const isBusy = status === 'sending' || status === 'pending';
 
   return (
     <div className="wallet-screen">
@@ -848,23 +918,29 @@ function SendScreen({ nodeUrl }: {
 
         <button
           onClick={handleSend}
-          disabled={!isValid || status === 'sending' || !nodeUrl}
+          disabled={!isValid || isBusy || !nodeUrl}
           style={{
             marginTop: 4,
             padding: '14px',
-            background: isValid && status !== 'sending' ? 'var(--accent)' : 'var(--bg-card)',
-            color: isValid && status !== 'sending' ? '#0a0b0f' : 'var(--text-dim)',
+            background: isValid && !isBusy ? 'var(--accent)' : 'var(--bg-card)',
+            color: isValid && !isBusy ? '#0a0b0f' : 'var(--text-dim)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius)',
             fontWeight: 700,
             fontSize: 15,
-            cursor: isValid && status !== 'sending' ? 'pointer' : 'not-allowed',
+            cursor: isValid && !isBusy ? 'pointer' : 'not-allowed',
             transition: 'all 0.2s',
           }}
         >
           {status === 'sending' ? '⏳ Sending…' : '➤ Send XCH'}
         </button>
 
+        {status === 'pending' && (
+          <div style={{padding: '12px', background: 'rgba(77,170,135,0.06)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 10}}>
+            <div className="spinner" style={{borderTopColor: 'var(--accent)'}}/>
+            Pending confirmation…
+          </div>
+        )}
         {status === 'success' && (
           <div style={{padding: '12px', background: 'rgba(77,170,135,0.1)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)'}}>
             ✓ {message}
@@ -891,6 +967,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('setup');
   const [nodeUrl, setNodeUrl] = useState<string>('');
   const [nodeStatus, setNodeStatus] = useState<NodeStatus|null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
@@ -929,7 +1006,6 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(NODE_KEY);
     setWallet(null); setScreen('setup'); setNodeStatus(null); setNodeUrl('');
-    setCoins([]); setBalance(null);
   };
 
   const isWallet = wallet !== null;
@@ -942,9 +1018,9 @@ export default function App() {
       </div>
 
       {!isWallet && <SetupScreen onWalletReady={handleWalletReady}/>}
-      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} />}
+      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
-      {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl}/>}
+      {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onReset={handleReset}/>}
 

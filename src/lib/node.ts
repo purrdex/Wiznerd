@@ -11,6 +11,7 @@ export interface NodeConfig {
 }
 
 export interface BlockchainState {
+  peak?: { height: number };
   peak_height: number;
   sync: {
     sync_mode: boolean;

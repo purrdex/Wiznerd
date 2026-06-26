@@ -1,11 +1,11 @@
 # Wiznerd Wallet Backlog
 
 ## v0.2.0 — Polish & Core UX
-- [ ] Balance refreshes on home screen after successful XCH send
-- [ ] Address validation using bech32m checksum (not just length)
-- [ ] Show transaction pending state after send (spinner until confirmed)
-- [ ] Copy NFT ID button on detail view
-- [ ] QR code display on Receive screen
+- [x] Balance refreshes on home screen after successful XCH send
+- [x] Address validation using bech32m checksum (not just length)
+- [x] Show transaction pending state after send (spinner until confirmed)
+- [x] Copy NFT ID button on detail view
+- [x] QR code display on Receive screen
 
 ## v0.3.0 — History & Book
 - [ ] Transaction history screen (last 20 sends/receives)

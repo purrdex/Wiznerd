@@ -71,8 +71,8 @@ function hkdfModR(ikm: Uint8Array): Uint8Array {
 
   while (sk === BigInt(0)) {
     const prk = hmacSha256(salt, ikmZ);
-    let T = new Uint8Array(0);
-    let okm = new Uint8Array(0);
+    let T: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+    let okm: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
     let counter = 1;
     while (okm.length < L) {
       T = hmacSha256(prk, T, L_BYTES, new Uint8Array([counter++]));
@@ -222,6 +222,15 @@ export function addressToPuzzleHash(address: string): Uint8Array {
   return new Uint8Array(bech32m.fromWords(bech32m.decode(address).words));
 }
 
+export function isValidXchAddress(address: string): boolean {
+  try {
+    const { prefix, words } = bech32m.decode(address);
+    return prefix === 'xch' && words.length === 52;
+  } catch {
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Mnemonic helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,14 +270,14 @@ export function deriveAddresses(
   const masterPk = bls.G1.Point.BASE.multiply(bytesToBigint(masterSk)).toBytes(true);
 
   // Derive intermediate key m/12381/8444/2 (all unhardened)
-  let current = { sk: masterSk, pk: masterPk };
+  let current: { sk: Uint8Array<ArrayBufferLike>; pk: Uint8Array<ArrayBufferLike> } = { sk: masterSk, pk: masterPk };
   for (const step of [12381, 8444, 2]) {
     current = deriveChildUnhardened(current.sk, current.pk, step);
   }
 
   const addresses: DerivedAddress[] = [];
   for (let i = 0; i < count; i++) {
-    const { sk, pk } = deriveChildUnhardened(current.sk, current.pk, i);
+    const { sk, pk } = deriveChildUnhardened(current.sk as Uint8Array<ArrayBufferLike>, current.pk as Uint8Array<ArrayBufferLike>, i);
     const puzzleHash = puzzleHashFromPk(pk);
     const puzzleHashHex = bytesToHex(puzzleHash);
     const address = puzzleHashToAddress(puzzleHash, prefix);

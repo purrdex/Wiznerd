@@ -85,10 +85,6 @@ export async function calculateCoinId(parentCoinInfo: string, puzzleHash: string
   return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', combined)));
 }
 
-// ─── Known tokens (instant resolution, no network call) ─────────────────────
-// No hardcoded tokens needed — Dexie token list resolves names/tickers dynamically
-const KNOWN_CATS: Record<string, TokenMetadata> = {};
-
 let metadataCache: Record<string, TokenMetadata> = {};
 
 export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> {
