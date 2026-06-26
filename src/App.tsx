@@ -857,7 +857,7 @@ function HistoryScreen() {
         </div>
       )}
       {txs.map(tx => {
-        const isSend = tx.type === 1 || tx.type === 5;
+        const isSend = tx.type === 2 || tx.type === 6;
         const amount = formatMojoToXch(BigInt(tx.amount));
         const date = new Date(tx.created_at_time * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
