@@ -59,11 +59,30 @@ export async function getCatCoinsByHint(nodeUrl: string, puzzleHashHexList: stri
     .map(r => r.value).filter(r => r.coins.length > 0);
 }
 
+const PUZZLE_CACHE_KEY = 'chia_puzzle_cache';
+
+function loadPuzzleCache(): Record<string, { puzzleReveal: string; solution: string }> {
+  try { return JSON.parse(sessionStorage.getItem(PUZZLE_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+let puzzleCache = loadPuzzleCache();
+
+function savePuzzleCache(): void {
+  try { sessionStorage.setItem(PUZZLE_CACHE_KEY, JSON.stringify(puzzleCache)); }
+  catch { /* storage full */ }
+}
+
 export async function getPuzzleAndSolution(nodeUrl: string, coinId: string, height: number): Promise<{ puzzleReveal: string; solution: string } | null> {
+  const key = coinId.startsWith('0x') ? coinId.slice(2) : coinId;
+  if (puzzleCache[key]) return puzzleCache[key];
   try {
     const data = await rpc<{ coin_solution: any }>(nodeUrl, 'get_puzzle_and_solution',
-      { coin_id: coinId.startsWith('0x') ? coinId : `0x${coinId}`, height });
-    return { puzzleReveal: data.coin_solution.puzzle_reveal, solution: data.coin_solution.solution };
+      { coin_id: `0x${key}`, height });
+    const result = { puzzleReveal: data.coin_solution.puzzle_reveal, solution: data.coin_solution.solution };
+    puzzleCache[key] = result;
+    savePuzzleCache();
+    return result;
   } catch { return null; }
 }
 

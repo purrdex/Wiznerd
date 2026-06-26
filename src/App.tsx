@@ -104,6 +104,8 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
   const handleImport = async () => {
     setError('');
     const cleaned = importInput.trim().toLowerCase().replace(/\s+/g, ' ');
+    const words = cleaned.split(' ').filter(Boolean);
+    if (words.length !== 24) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
     const { validateMnemonicWords, deriveAddresses } = await import('./lib/keys');
     if (!validateMnemonicWords(cleaned)) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
     try { onWalletReady({ mnemonic: cleaned, addresses: deriveAddresses(cleaned, 20) }); }
