@@ -614,6 +614,11 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
   const [fee, setFee] = useState('0.00005');
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [showBook, setShowBook] = useState(false);
+  const addressBook: AddressEntry[] = React.useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('chia_address_book') || '[]'); }
+    catch { return []; }
+  }, []);
   const sendingRef = React.useRef(false);
 
   useEffect(() => {
@@ -729,7 +734,15 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
       ) : (
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
           <div>
-            <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>TO ADDRESS</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>TO ADDRESS</div>
+              {addressBook.length > 0 && (
+                <button onClick={()=>setShowBook(b=>!b)}
+                  style={{background:'none',border:'none',color:'var(--accent)',fontSize:11,cursor:'pointer',padding:0}}>
+                  {showBook ? 'Hide book' : '📋 Address book'}
+                </button>
+              )}
+            </div>
             <input
               className="address-input"
               style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:12,fontFamily:'var(--font-mono)'}}
@@ -738,6 +751,26 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
               onChange={e => setToAddress(e.target.value.trim())}
               spellCheck={false}
             />
+            {showBook && addressBook.length > 0 && (
+              <div style={{marginTop:6,display:'flex',flexDirection:'column',gap:4}}>
+                {addressBook.map(entry => (
+                  <button key={entry.id}
+                    onClick={()=>{ setToAddress(entry.address); setShowBook(false); }}
+                    style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                      background:'var(--bg-input)',border:'1px solid var(--border)',
+                      borderRadius:'var(--radius-sm)',padding:'8px 12px',cursor:'pointer',
+                      textAlign:'left',gap:8}}>
+                    <span style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',flexShrink:0}}>
+                      {entry.label}
+                    </span>
+                    <span style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
+                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {entry.address.slice(0,10)}…{entry.address.slice(-6)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{display:'grid',gridTemplateColumns: catWalletId !== null ? '1fr 1fr' : '1fr',gap:10}}>
