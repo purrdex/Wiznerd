@@ -19,11 +19,12 @@ import {
   formatCatUsdValue,
   loadCustomAssetIds,
   saveCustomAssetIds,
+  getTokenMetadata,
   type CatBalance,
 } from './lib/cats';
 import { sendXch } from './lib/spend';
 
-type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'settings';
+type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'settings' | 'offers';
 
 interface WalletState {
   mnemonic: string;
@@ -87,6 +88,11 @@ const IconHistory = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
     <circle cx="12" cy="12" r="9"/>
     <path d="M12 7v5l3 3" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const IconTrade = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+    <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 
@@ -1542,6 +1548,165 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
   );
 }
 
+function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
+  const [offerStr, setOfferStr] = useState('');
+  const [summary, setSummary] = useState<any>(null);
+  const [summaryError, setSummaryError] = useState('');
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [fee, setFee] = useState('0.00005');
+  const [status, setStatus] = useState<'idle'|'submitting'|'success'|'error'>('idle');
+  const [resultMsg, setResultMsg] = useState('');
+  const [summaryMeta, setSummaryMeta] = useState<Record<string, {name:string;ticker:string}>>({});
+
+  const knownAssets = React.useMemo(() => {
+    const m: Record<string, {name:string;ticker:string}> = {};
+    for (const b of catBalances) m[b.assetId.toLowerCase()] = { name: b.name, ticker: b.ticker };
+    return m;
+  }, [catBalances]);
+
+  function isXchKey(key: string) {
+    return key === '1' || key.toLowerCase() === 'xch' || key === '0' || key.toLowerCase() === '0000000000000000000000000000000000000000000000000000000000000000';
+  }
+
+  function describeAsset(key: string, amt: number | bigint): string {
+    const amount = BigInt(amt);
+    if (isXchKey(key)) return `${formatMojoToXch(amount)} XCH`;
+    const lkey = key.toLowerCase();
+    const known = knownAssets[lkey] || summaryMeta[lkey];
+    const ticker = known?.ticker ?? lkey.slice(0, 6).toUpperCase();
+    return `${formatCatAmount(amount)} ${ticker}`;
+  }
+
+  async function handleDecode() {
+    const str = offerStr.trim();
+    if (!str.startsWith('offer1')) { setSummaryError('Invalid offer — must start with "offer1"'); return; }
+    setLoadingSummary(true); setSummaryError(''); setSummary(null);
+    try {
+      const res = await walletRpc('get_offer_summary', { offer: str });
+      if (!res.success) throw new Error(res.error || 'Failed to decode offer');
+      setSummary(res.summary);
+      const meta: Record<string, {name:string;ticker:string}> = {};
+      const infos = res.summary?.infos ?? {};
+      for (const key of [...Object.keys(res.summary?.offered ?? {}), ...Object.keys(res.summary?.requested ?? {})]) {
+        if (!isXchKey(key) && /^[0-9a-f]{64}$/i.test(key) && !knownAssets[key.toLowerCase()]) {
+          const info = infos[key];
+          if (info?.also_known_as) {
+            meta[key.toLowerCase()] = { name: info.also_known_as, ticker: info.also_known_as.slice(0, 6).toUpperCase() };
+          } else {
+            const m = await getTokenMetadata(key.toLowerCase());
+            meta[key.toLowerCase()] = { name: m.name, ticker: m.ticker };
+          }
+        }
+      }
+      setSummaryMeta(meta);
+    } catch (e: any) { setSummaryError(e.message); }
+    finally { setLoadingSummary(false); }
+  }
+
+  async function handleTake() {
+    if (!summary || status === 'submitting') return;
+    setStatus('submitting'); setResultMsg('');
+    const feeF = parseFloat(fee || '0');
+    const feeMojo = BigInt(isNaN(feeF) ? 0 : Math.round(feeF * 1_000_000_000_000));
+    try {
+      const res = await walletRpc('take_offer', { offer: offerStr.trim(), fee: Number(feeMojo) });
+      if (res.success) { setStatus('success'); setResultMsg('Offer accepted! Transaction submitted to the network.'); }
+      else { setStatus('error'); setResultMsg(res.error || 'Failed to accept offer'); }
+    } catch (e: any) { setStatus('error'); setResultMsg(e.message); }
+  }
+
+  const offered = Object.entries(summary?.offered ?? {});
+  const requested = Object.entries(summary?.requested ?? {});
+
+  return (
+    <div className="wallet-screen">
+      <div className="section-label">Take Offer</div>
+      <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
+        Paste a Chia offer string to review and accept it. Trades settle atomically on-chain — no counterparty risk.
+        Requires wallet daemon.
+      </div>
+
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div>
+          <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>OFFER STRING</div>
+          <textarea rows={4} placeholder="offer1…" value={offerStr}
+            onChange={e => { setOfferStr(e.target.value.trim()); setSummary(null); setSummaryError(''); setStatus('idle'); setResultMsg(''); }}
+            style={{width:'100%',background:'var(--bg-input)',border:'1px solid var(--border)',
+              borderRadius:'var(--radius-sm)',color:'var(--text-primary)',fontSize:10,
+              fontFamily:'var(--font-mono)',padding:'10px 12px',resize:'vertical',lineHeight:1.5}}
+            spellCheck={false}
+          />
+        </div>
+
+        {summaryError && <div className="error-msg">{summaryError}</div>}
+
+        {!summary && status !== 'success' && (
+          <button className="btn btn-secondary" onClick={handleDecode}
+            disabled={!offerStr.trim() || loadingSummary}>
+            {loadingSummary ? <><div className="spinner" style={{display:'inline-block',marginRight:6}}/>Decoding…</> : 'Decode Offer'}
+          </button>
+        )}
+
+        {summary && status !== 'success' && (
+          <>
+            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
+              borderRadius:'var(--radius)',padding:'16px',display:'flex',flexDirection:'column',gap:12}}>
+              <div>
+                <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>YOU GIVE</div>
+                {requested.map(([key, amt]) => (
+                  <div key={key} style={{fontSize:18,fontWeight:700,color:'var(--error)'}}>
+                    −{describeAsset(key, amt as any)}
+                  </div>
+                ))}
+                {requested.length === 0 && <div style={{fontSize:13,color:'var(--text-dim)'}}>Nothing (maker gifts)</div>}
+              </div>
+              <div style={{borderTop:'1px solid var(--border)',paddingTop:12}}>
+                <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>YOU RECEIVE</div>
+                {offered.map(([key, amt]) => (
+                  <div key={key} style={{fontSize:18,fontWeight:700,color:'var(--accent)'}}>
+                    +{describeAsset(key, amt as any)}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>FEE (XCH)</div>
+              <input className="address-input" type="number" min="0" step="0.00001"
+                value={fee} onChange={e => setFee(e.target.value)}
+                style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}/>
+            </div>
+
+            {status === 'error' && (
+              <div style={{padding:'10px 12px',background:'rgba(220,50,50,0.1)',
+                border:'1px solid #dc3232',borderRadius:8,fontSize:12,color:'#ff6b6b'}}>
+                ✗ {resultMsg}
+              </div>
+            )}
+
+            <button onClick={handleTake} disabled={status === 'submitting'} style={{
+              padding:'14px',fontWeight:700,fontSize:15,
+              background: status === 'submitting' ? 'var(--bg-card)' : 'var(--accent)',
+              color: status === 'submitting' ? 'var(--text-dim)' : '#0a0b0f',
+              border:'1px solid var(--border)',borderRadius:'var(--radius)',
+              cursor: status === 'submitting' ? 'not-allowed' : 'pointer',transition:'all 0.2s',
+            }}>
+              {status === 'submitting' ? '⏳ Submitting…' : 'Accept Offer'}
+            </button>
+          </>
+        )}
+
+        {status === 'success' && (
+          <div style={{padding:'14px',background:'rgba(77,170,135,0.1)',
+            border:'1px solid var(--accent)',borderRadius:12,fontSize:13,color:'var(--accent)'}}>
+            ✓ {resultMsg}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   nodeUrl: string;
   onSendSuccess: () => void;
@@ -1985,6 +2150,7 @@ export default function App() {
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
+      {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
       {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme}/>}
 
       {isWallet && screen !== 'setup' && (
@@ -1994,6 +2160,7 @@ export default function App() {
           <button className={`nav-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/>Send</button>
           <button className={`nav-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/>Receive</button>
           <button className={`nav-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/>History</button>
+          <button className={`nav-item ${screen==='offers'?'active':''}`} onClick={()=>setScreen('offers')}><IconTrade/>Trade</button>
           <button className={`nav-item ${screen==='settings'?'active':''}`} onClick={()=>setScreen('settings')}><IconSettings/>Settings</button>
         </div>
       )}
