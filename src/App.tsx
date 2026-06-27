@@ -24,6 +24,14 @@ import {
   type CatBalance,
 } from './lib/cats';
 import { sendXch } from './lib/spend';
+import {
+  VAULT_SALT_KEY,
+  getOrCreateSalt,
+  generateAndStoreSalt,
+  deriveKey,
+  encryptMnemonic,
+  decryptMnemonic,
+} from './lib/crypto';
 
 type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'settings' | 'offers';
 
@@ -35,7 +43,8 @@ interface WalletState {
 interface WalletEntry {
   id: string;
   name: string;
-  mnemonic: string;
+  mnemonic?: string;          // legacy plaintext (migration only)
+  encryptedMnemonic?: string; // v1: AES-256-GCM JSON blob
 }
 
 interface AddressEntry {
@@ -115,8 +124,12 @@ function NodeBadge({ status }: { status: NodeStatus | null }) {
   return <div className="node-badge error"><div className="node-dot"/>Offline</div>;
 }
 
-function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletState) => void; onCancel?: () => void }) {
-  const [mode, setMode] = useState<'choose'|'new'|'verify'|'import'>('choose');
+function SetupScreen({ onWalletReady, onCancel, existingKey }: {
+  onWalletReady: (mnemonic: string, key: CryptoKey) => Promise<void>;
+  onCancel?: () => void;
+  existingKey?: CryptoKey | null;
+}) {
+  const [mode, setMode] = useState<'choose'|'new'|'verify'|'import'|'password'>('choose');
   const [mnemonic, setMnemonic] = useState('');
   const [importInput, setImportInput] = useState('');
   const [error, setError] = useState('');
@@ -124,6 +137,10 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
   const [quizIndices, setQuizIndices] = useState<number[]>([]);
   const [quizAnswers, setQuizAnswers] = useState(['', '', '']);
   const [quizError, setQuizError] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
 
   const handleGenerate = async () => {
     const { generateNewMnemonic } = await import('./lib/keys');
@@ -153,11 +170,12 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
       setQuizError(`Word #${quizIndices[wrong] + 1} is incorrect. Check your backup.`);
       return;
     }
-    try {
-      const { deriveAddresses } = await import('./lib/keys');
-      const addresses = deriveAddresses(mnemonic, 50);
-      onWalletReady({ mnemonic, addresses });
-    } catch(e: any) { setQuizError(`Failed: ${e.message}`); }
+    if (existingKey) {
+      try { await onWalletReady(mnemonic, existingKey); }
+      catch (e: any) { setQuizError(`Failed: ${e.message}`); }
+    } else {
+      setMode('password');
+    }
   };
 
   const handleImport = async () => {
@@ -165,10 +183,28 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
     const cleaned = importInput.trim().toLowerCase().replace(/\s+/g, ' ');
     const words = cleaned.split(' ').filter(Boolean);
     if (words.length !== 24) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
-    const { validateMnemonicWords, deriveAddresses } = await import('./lib/keys');
+    const { validateMnemonicWords } = await import('./lib/keys');
     if (!validateMnemonicWords(cleaned)) { setError('Invalid mnemonic. Check for typos — must be 24 valid BIP39 words.'); return; }
-    try { onWalletReady({ mnemonic: cleaned, addresses: deriveAddresses(cleaned, 50) }); }
-    catch (e: any) { setError(`Key derivation failed: ${e.message}`); }
+    setMnemonic(cleaned);
+    if (existingKey) {
+      try { await onWalletReady(cleaned, existingKey); }
+      catch (e: any) { setError(`Key derivation failed: ${e.message}`); }
+    } else {
+      setMode('password');
+    }
+  };
+
+  const handleCreatePassword = async () => {
+    if (newPassword.length < 8) { setPasswordError('Password must be at least 8 characters'); return; }
+    if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
+    setPasswordBusy(true);
+    try {
+      const saltB64 = getOrCreateSalt();
+      const key = await deriveKey(newPassword, saltB64);
+      await onWalletReady(mnemonic, key);
+    } catch (e: any) {
+      setPasswordError(`Failed: ${e.message}`);
+    } finally { setPasswordBusy(false); }
   };
 
   if (mode === 'new') {
@@ -273,6 +309,41 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
     );
   }
 
+  if (mode === 'password') {
+    return (
+      <div className="setup-screen">
+        <div className="setup-hero">
+          <h1>Create <span className="accent">password</span></h1>
+          <p>Your seed phrase will be encrypted with this password. You'll need it every time you open the wallet.</p>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <input
+            type="password"
+            placeholder="New password (min 8 chars)"
+            value={newPassword}
+            onChange={e=>{setNewPassword(e.target.value);setPasswordError('');}}
+            autoComplete="new-password"
+            style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
+              borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
+          />
+          <input
+            type="password"
+            placeholder="Confirm password"
+            value={confirmPassword}
+            onChange={e=>{setConfirmPassword(e.target.value);setPasswordError('');}}
+            autoComplete="new-password"
+            style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
+              borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
+          />
+        </div>
+        {passwordError && <div className="error-msg" style={{marginTop:8}}>{passwordError}</div>}
+        <button className="btn btn-primary" style={{marginTop:16}} disabled={passwordBusy || !newPassword || !confirmPassword} onClick={handleCreatePassword}>
+          {passwordBusy ? 'Encrypting…' : 'Create Wallet'}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="setup-screen">
       <div className="setup-hero" style={{marginTop:40}}>
@@ -301,9 +372,6 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   const [balance, setBalance] = useState<bigint | null>(null);
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
   const [selectedCat, setSelectedCat] = useState<CatBalance | null>(null);
-  const [hotWalletDismissed, setHotWalletDismissed] = useState(
-    () => sessionStorage.getItem('chia_hw_banner_dismissed') === '1'
-  );
   const primaryAddress = wallet.addresses[0]?.address || '';
   const hasLoadedRef = React.useRef(false);
 
@@ -352,23 +420,6 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
 
   return (
     <div className="wallet-screen">
-      {/* Hot wallet security banner */}
-      {!hotWalletDismissed && (
-        <div style={{background:'rgba(224,123,58,0.1)',border:'1px solid rgba(224,123,58,0.5)',
-          borderRadius:8,padding:'10px 14px',fontSize:11,color:'var(--warn)',
-          display:'flex',alignItems:'flex-start',gap:8,marginBottom:4}}>
-          <span style={{flexShrink:0}}>⚠️</span>
-          <span style={{flex:1}}>
-            <strong>Unencrypted hot wallet.</strong> Your seed phrase is stored in plaintext in browser storage.
-            Do not store large amounts. Use a hardware wallet for significant holdings.
-          </span>
-          <button onClick={() => {
-            sessionStorage.setItem('chia_hw_banner_dismissed', '1');
-            setHotWalletDismissed(true);
-          }} style={{background:'none',border:'none',cursor:'pointer',color:'var(--warn)',
-            fontSize:14,lineHeight:1,flexShrink:0,padding:0}}>✕</button>
-        </div>
-      )}
       {/* Balance card */}
       {proxyError && (
         <div style={{background:'rgba(220,50,50,0.1)',border:'1px solid #dc3232',
@@ -2575,6 +2626,102 @@ function saveClawbacks(entries: ClawbackEntry[]) {
 const WALLETS_KEY = 'chia_wallets';
 const ACTIVE_WALLET_KEY = 'chia_active_wallet';
 const LEGACY_STORAGE_KEY = 'chia_wallet_mnemonic';
+// VAULT_SALT_KEY imported from ./lib/crypto
+
+function LockScreen({ mode, walletList, onUnlock }: {
+  mode: 'unlock' | 'migrate';
+  walletList: WalletEntry[];
+  onUnlock: (key: CryptoKey, updatedWallets?: WalletEntry[]) => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleUnlock = async () => {
+    if (!password) { setError('Enter your password'); return; }
+    setBusy(true);
+    try {
+      const saltB64 = localStorage.getItem(VAULT_SALT_KEY) || '';
+      const key = await deriveKey(password, saltB64);
+      const target = walletList.find(w => w.encryptedMnemonic);
+      if (target) await decryptMnemonic(target.encryptedMnemonic!, key); // throws on wrong password
+      onUnlock(key);
+    } catch {
+      setError('Incorrect password');
+    } finally { setBusy(false); }
+  };
+
+  const handleMigrate = async () => {
+    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
+    if (password !== confirm) { setError('Passwords do not match'); return; }
+    setBusy(true);
+    try {
+      const saltB64 = generateAndStoreSalt();
+      const key = await deriveKey(password, saltB64);
+      const updated: WalletEntry[] = await Promise.all(
+        walletList.map(async w => {
+          if (w.mnemonic && !w.encryptedMnemonic) {
+            const encryptedMnemonic = await encryptMnemonic(w.mnemonic, key);
+            const { mnemonic: _m, ...rest } = w;
+            return { ...rest, encryptedMnemonic };
+          }
+          return w;
+        })
+      );
+      onUnlock(key, updated);
+    } catch (e: any) {
+      setError(e.message);
+    } finally { setBusy(false); }
+  };
+
+  const isMigrate = mode === 'migrate';
+
+  return (
+    <div className="setup-screen">
+      <div className="setup-hero">
+        <div style={{fontSize:40,marginBottom:12}}>🔒</div>
+        <h1>{isMigrate ? <><span className="accent">Secure</span> your wallet</> : <>Unlock <span className="accent">wallet</span></>}</h1>
+        <p>{isMigrate
+          ? 'Your seed phrase is currently stored unencrypted. Set a password to protect it.'
+          : 'Enter your password to access your wallet.'
+        }</p>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <input
+          type="password"
+          placeholder={isMigrate ? 'New password (min 8 chars)' : 'Password'}
+          value={password}
+          onChange={e=>{setPassword(e.target.value);setError('');}}
+          autoComplete={isMigrate ? 'new-password' : 'current-password'}
+          onKeyDown={e=>{if(e.key==='Enter'&&!isMigrate)handleUnlock();}}
+          style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
+            borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
+        />
+        {isMigrate && (
+          <input
+            type="password"
+            placeholder="Confirm password"
+            value={confirm}
+            onChange={e=>{setConfirm(e.target.value);setError('');}}
+            autoComplete="new-password"
+            style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
+              borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
+          />
+        )}
+      </div>
+      {error && <div className="error-msg" style={{marginTop:8}}>{error}</div>}
+      <button
+        className="btn btn-primary"
+        style={{marginTop:16}}
+        disabled={busy || !password || (isMigrate && !confirm)}
+        onClick={isMigrate ? handleMigrate : handleUnlock}
+      >
+        {busy ? (isMigrate ? 'Encrypting…' : 'Unlocking…') : (isMigrate ? 'Set password' : 'Unlock')}
+      </button>
+    </div>
+  );
+}
 const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
 const HIDE_SMALL_KEY = 'chia_hide_small';
@@ -2585,6 +2732,8 @@ export default function App() {
   const [walletList, setWalletList] = useState<WalletEntry[]>([]);
   const [activeWalletId, setActiveWalletId] = useState<string|null>(null);
   const [screen, setScreen] = useState<Screen>('setup');
+  const [sessionKey, setSessionKey] = useState<CryptoKey|null>(null);
+  const [unlockMode, setUnlockMode] = useState<'unlock'|'migrate'|null>(null);
   const [nodeUrl, setNodeUrl] = useState<string>('');
   const [nodeStatus, setNodeStatus] = useState<NodeStatus|null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -2626,17 +2775,14 @@ export default function App() {
     if (wallets.length > 0) {
       setWalletList(wallets);
       const savedActiveId = localStorage.getItem(ACTIVE_WALLET_KEY);
-      const active = wallets.find(w => w.id === savedActiveId) ?? wallets[0];
-      setActiveWalletId(active.id);
-      import('./lib/keys').then(({ deriveAddresses }) => {
-        try {
-          setWallet({ mnemonic: active.mnemonic, addresses: deriveAddresses(active.mnemonic, 50) });
-          setScreen('wallet');
-        } catch {
-          localStorage.removeItem(WALLETS_KEY);
-          localStorage.removeItem(ACTIVE_WALLET_KEY);
-        }
-      });
+      setActiveWalletId(wallets.find(w => w.id === savedActiveId)?.id ?? wallets[0].id);
+      const hasEncrypted = wallets.some(w => w.encryptedMnemonic);
+      if (hasEncrypted) {
+        setUnlockMode('unlock');
+      } else {
+        // All wallets are legacy plaintext — force encryption migration
+        setUnlockMode('migrate');
+      }
     }
   }, []);
 
@@ -2654,18 +2800,51 @@ export default function App() {
     return () => clearInterval(interval);
   }, [nodeUrl]);
 
-  const handleWalletReady = (w: WalletState) => {
+  const handleUnlock = async (key: CryptoKey, updatedWallets?: WalletEntry[]) => {
+    const list = updatedWallets ?? walletList;
+    if (updatedWallets) {
+      setWalletList(updatedWallets);
+      localStorage.setItem(WALLETS_KEY, JSON.stringify(updatedWallets));
+    }
+    setSessionKey(key);
+    setUnlockMode(null);
+    const savedActiveId = localStorage.getItem(ACTIVE_WALLET_KEY);
+    const active = list.find(w => w.id === savedActiveId) ?? list[0];
+    setActiveWalletId(active.id);
+    const { deriveAddresses } = await import('./lib/keys');
+    try {
+      const mnemonic = active.encryptedMnemonic
+        ? await decryptMnemonic(active.encryptedMnemonic, key)
+        : active.mnemonic!;
+      setWallet({ mnemonic, addresses: deriveAddresses(mnemonic, 50) });
+      setScreen('wallet');
+    } catch {
+      localStorage.removeItem(WALLETS_KEY);
+      localStorage.removeItem(ACTIVE_WALLET_KEY);
+      localStorage.removeItem(VAULT_SALT_KEY);
+      setWalletList([]);
+      setSessionKey(null);
+      setUnlockMode(null);
+    }
+  };
+
+  const handleWalletReady = async (mnemonic: string, key: CryptoKey) => {
+    setSessionKey(key);
+    const encrypted = await encryptMnemonic(mnemonic, key);
+    const { deriveAddresses } = await import('./lib/keys');
+    const addresses = deriveAddresses(mnemonic, 50);
     const newEntry: WalletEntry = {
       id: crypto.randomUUID(),
       name: `Wallet ${walletList.length + 1}`,
-      mnemonic: w.mnemonic,
+      encryptedMnemonic: encrypted,
     };
     const next = [...walletList, newEntry];
     setWalletList(next);
     setActiveWalletId(newEntry.id);
     localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
     localStorage.setItem(ACTIVE_WALLET_KEY, newEntry.id);
-    setWallet(w);
+    setUnlockMode(null);
+    setWallet({ mnemonic, addresses });
     setScreen('wallet');
   };
 
@@ -2673,28 +2852,33 @@ export default function App() {
     setNodeUrl(url); localStorage.setItem(NODE_KEY, url);
   };
 
-  const handleSwitchWallet = (id: string) => {
+  const handleSwitchWallet = async (id: string) => {
     const entry = walletList.find(w => w.id === id);
     if (!entry) return;
-    import('./lib/keys').then(({ deriveAddresses }) => {
-      setWallet({ mnemonic: entry.mnemonic, addresses: deriveAddresses(entry.mnemonic, 50) });
-      setActiveWalletId(id);
-      localStorage.setItem(ACTIVE_WALLET_KEY, id);
-      setScreen('wallet');
-      setRefreshKey(k => k + 1);
-    });
+    const { deriveAddresses } = await import('./lib/keys');
+    const mnemonic = entry.encryptedMnemonic && sessionKey
+      ? await decryptMnemonic(entry.encryptedMnemonic, sessionKey)
+      : entry.mnemonic!;
+    setWallet({ mnemonic, addresses: deriveAddresses(mnemonic, 50) });
+    setActiveWalletId(id);
+    localStorage.setItem(ACTIVE_WALLET_KEY, id);
+    setScreen('wallet');
+    setRefreshKey(k => k + 1);
   };
 
-  const handleRemoveWallet = (id: string) => {
+  const handleRemoveWallet = async (id: string) => {
     const next = walletList.filter(w => w.id !== id);
     if (next.length === 0) {
       localStorage.removeItem(WALLETS_KEY);
       localStorage.removeItem(ACTIVE_WALLET_KEY);
       localStorage.removeItem(NODE_KEY);
       localStorage.removeItem(ADDRESS_BOOK_KEY);
+      localStorage.removeItem(VAULT_SALT_KEY);
       setWalletList([]);
       setActiveWalletId(null);
       setWallet(null);
+      setSessionKey(null);
+      setUnlockMode(null);
       setScreen('setup');
       setNodeStatus(null);
       setNodeUrl('');
@@ -2704,13 +2888,15 @@ export default function App() {
       setWalletList(next);
       if (id === activeWalletId) {
         const switchTo = next[0];
-        import('./lib/keys').then(({ deriveAddresses }) => {
-          setWallet({ mnemonic: switchTo.mnemonic, addresses: deriveAddresses(switchTo.mnemonic, 50) });
-          setActiveWalletId(switchTo.id);
-          localStorage.setItem(ACTIVE_WALLET_KEY, switchTo.id);
-          setScreen('wallet');
-          setRefreshKey(k => k + 1);
-        });
+        const { deriveAddresses } = await import('./lib/keys');
+        const mnemonic = switchTo.encryptedMnemonic && sessionKey
+          ? await decryptMnemonic(switchTo.encryptedMnemonic, sessionKey)
+          : switchTo.mnemonic!;
+        setWallet({ mnemonic, addresses: deriveAddresses(mnemonic, 50) });
+        setActiveWalletId(switchTo.id);
+        localStorage.setItem(ACTIVE_WALLET_KEY, switchTo.id);
+        setScreen('wallet');
+        setRefreshKey(k => k + 1);
       }
     }
   };
@@ -2761,7 +2947,8 @@ export default function App() {
         {isWallet && <NodeBadge status={nodeStatus}/>}
       </div>
 
-      {screen==='setup'    && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined}/>}
+      {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock}/>}
+      {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
       {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}

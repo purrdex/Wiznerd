@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Completes the full wallet creation flow including the 3-word backup verification quiz.
+const TEST_PASSWORD = 'test_password_1';
+
+// Completes the full wallet creation flow including quiz + password step.
 async function completeWalletCreation(page: Page) {
   await page.click('text=Create new wallet');
   await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
@@ -34,6 +36,19 @@ async function completeWalletCreation(page: Page) {
   }
 
   await page.getByRole('button', { name: 'Open Wallet' }).click();
+
+  // Password creation step
+  await expect(page.locator('text=Create password')).toBeVisible({ timeout: 5000 });
+  await page.locator('input[placeholder*="New password"]').fill(TEST_PASSWORD);
+  await page.locator('input[placeholder="Confirm password"]').fill(TEST_PASSWORD);
+  await page.getByRole('button', { name: 'Create Wallet' }).click();
+}
+
+// Unlocks an encrypted wallet after a page reload.
+async function unlockWallet(page: Page) {
+  await expect(page.locator('text=Unlock wallet').or(page.locator('text=Secure your wallet'))).toBeVisible({ timeout: 5000 });
+  await page.locator('input[placeholder="Password"]').fill(TEST_PASSWORD);
+  await page.getByRole('button', { name: 'Unlock' }).click();
 }
 
 test.describe('Wiznerd Wallet', () => {
@@ -217,6 +232,8 @@ test.describe('Wiznerd Wallet', () => {
     // Inject a non-working node URL then reload so App re-reads it from localStorage
     await page.evaluate(() => localStorage.setItem('chia_node_url', 'http://localhost:19999'));
     await page.reload();
+    // After reload, wallet is locked — must re-enter password
+    await unlockWallet(page);
     await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
     await page.click('text=History');
     await expect(page.locator('text=Transaction History')).toBeVisible();
