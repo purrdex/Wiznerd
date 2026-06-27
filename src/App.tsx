@@ -195,8 +195,8 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
   );
 }
 
-function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
-  wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void;
+function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalances }: {
+  wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void; hideSmallBalances: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [proxyError, setProxyError] = useState('');
@@ -306,25 +306,43 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess }: {
       {loading && catBalances.length === 0 && (
         <div className="balance-loading"><div className="spinner"/>Scanning tokens…</div>
       )}
-      {catBalances.map(token => {
-        const usdValue = token.priceUsd ? formatCatUsdValue(token.totalMojo, token.priceUsd) : null;
+      {(() => {
+        const visible = hideSmallBalances
+          ? catBalances.filter(t => {
+              if (t.priceUsd) return Number(t.totalMojo) / 1000 * t.priceUsd >= 0.01;
+              return t.totalMojo >= 1000n;
+            })
+          : catBalances;
+        const hidden = catBalances.length - visible.length;
         return (
-          <div key={token.assetId} className="token-card" style={{cursor:'pointer'}}
-            onClick={() => setSelectedCat(token)}>
-            <TokenAvatar ticker={token.ticker} logoUrl={token.logoUrl} />
-            <div className="token-info">
-              <div className="token-row">
-                <span className="token-name">{token.name}</span>
-                <span className="token-amount">{formatCatAmount(token.totalMojo)}</span>
+          <>
+            {visible.map(token => {
+              const usdValue = token.priceUsd ? formatCatUsdValue(token.totalMojo, token.priceUsd) : null;
+              return (
+                <div key={token.assetId} className="token-card" style={{cursor:'pointer'}}
+                  onClick={() => setSelectedCat(token)}>
+                  <TokenAvatar ticker={token.ticker} logoUrl={token.logoUrl} />
+                  <div className="token-info">
+                    <div className="token-row">
+                      <span className="token-name">{token.name}</span>
+                      <span className="token-amount">{formatCatAmount(token.totalMojo)}</span>
+                    </div>
+                    <div className="token-row" style={{marginTop:2}}>
+                      <span className="token-ticker">{token.ticker}</span>
+                      <span className="token-price">{usdValue || ''}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {hidden > 0 && (
+              <div style={{fontSize:12,color:'var(--text-secondary)',textAlign:'center',padding:'6px 0'}}>
+                {hidden} small balance{hidden > 1 ? 's' : ''} hidden
               </div>
-              <div className="token-row" style={{marginTop:2}}>
-                <span className="token-ticker">{token.ticker}</span>
-                <span className="token-price">{usdValue || ''}</span>
-              </div>
-            </div>
-          </div>
+            )}
+          </>
         );
-      })}
+      })()}
     </div>
   );
 }
@@ -396,12 +414,13 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry }:
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
     onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
     walletList: WalletEntry[]; activeWalletId: string|null;
-    addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void }) {
+    addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
+    hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void }) {
   const [input, setInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NodeStatus|null>(null);
@@ -440,7 +459,30 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
 
   return (
     <div className="wallet-screen">
-      <div className="section-label">Node Configuration</div>
+      <div className="section-label">Display</div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+        background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',
+        padding:'12px 14px'}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>Hide small balances</div>
+          <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>Hide tokens worth less than $0.01</div>
+        </div>
+        <button
+          onClick={() => onToggleHideSmall(!hideSmallBalances)}
+          style={{
+            width:44,height:24,borderRadius:12,border:'none',cursor:'pointer',
+            background: hideSmallBalances ? 'var(--accent)' : 'var(--border)',
+            position:'relative',transition:'background 0.2s',flexShrink:0,
+          }}
+        >
+          <div style={{
+            position:'absolute',top:3,left: hideSmallBalances ? 23 : 3,
+            width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left 0.2s',
+          }}/>
+        </button>
+      </div>
+
+      <div className="section-label mt-16">Node Configuration</div>
       <div className="node-config">
         <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
           Point to any Chia full node RPC with CORS enabled. The wallet verifies sync state before trusting it.
@@ -1619,6 +1661,7 @@ const ACTIVE_WALLET_KEY = 'chia_active_wallet';
 const LEGACY_STORAGE_KEY = 'chia_wallet_mnemonic';
 const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
+const HIDE_SMALL_KEY = 'chia_hide_small';
 
 export default function App() {
   const [wallet, setWallet] = useState<WalletState|null>(null);
@@ -1632,6 +1675,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem(ADDRESS_BOOK_KEY) || '[]'); }
     catch { return []; }
   });
+  const [hideSmallBalances, setHideSmallBalances] = useState(() => localStorage.getItem(HIDE_SMALL_KEY) === '1');
 
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
@@ -1764,6 +1808,11 @@ export default function App() {
     localStorage.setItem(ADDRESS_BOOK_KEY, JSON.stringify(next));
   };
 
+  const handleToggleHideSmall = (value: boolean) => {
+    setHideSmallBalances(value);
+    localStorage.setItem(HIDE_SMALL_KEY, value ? '1' : '0');
+  };
+
   const isWallet = wallet !== null;
 
   const activeWalletName = walletList.find(w => w.id === activeWalletId)?.name;
@@ -1781,12 +1830,12 @@ export default function App() {
       </div>
 
       {screen==='setup'    && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined}/>}
-      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
+      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry}/>}
+      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall}/>}
 
       {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">
