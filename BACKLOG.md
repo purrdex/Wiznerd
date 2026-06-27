@@ -58,7 +58,7 @@ exchange. Every serious Chia wallet has offers; without them users must go to an
 to trade. Dexie is just an aggregator of offer strings — we can participate.
 
 - [x] [FEAT] Take offer — paste an `offer1…` string; decode terms (you give X / you receive Y), show royalty info for NFT legs, one tap to complete and submit via `push_tx`. Atomic settlement in one block, no counterparty risk. XCH↔CAT pairs first, NFT legs in a follow-up. — L effort
-- [ ] [FEAT] Create offer — pick asset + amount to offer, pick asset + amount to request; lock the offered coins with the SETTLEMENT_PAYMENTS puzzle and output the offer string. Copy to clipboard + one-tap submit to Dexie. XCH↔CAT. — L effort
+- [x] [FEAT] Create offer — pick asset + amount to offer, pick asset + amount to request; lock the offered coins with the SETTLEMENT_PAYMENTS puzzle and output the offer string. Copy to clipboard + one-tap submit to Dexie. XCH↔CAT. — L effort
 - [ ] [FEAT] Clawback sends — send XCH with a user-chosen timelock (10 min / 1 hr / 24 hr); history shows a "Clawback pending — Cancel" row during the window. Matches Chia Cloud Wallet's headline safety feature, low implementation cost relative to user value. — M effort
 - [ ] [UX] Transaction detail screen — tap any history row to expand: full mojo amount, block height, coin IDs, spacescan link, fee (where derivable from change). Currently the row is the whole story. — S effort
 - [ ] [BUG] CAT history gap for fully-spent tokens — tokens received and fully sent are absent from `catBalances`, so hint-found spent coin records can't be labelled; need outer-puzzle-hash → assetId lookup via the existing `phAssetCache` for coins not in active balances. — M effort

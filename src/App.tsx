@@ -1352,6 +1352,39 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCount, setShowCount] = useState(50);
+  const [clawbacks, setClawbacks] = useState<ClawbackEntry[]>(() =>
+    loadClawbacks().filter(e => Date.now() < e.expiresAt)
+  );
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelMsg, setCancelMsg] = useState<Record<string, string>>({});
+
+  async function handleCancelClawback(entry: ClawbackEntry) {
+    setCancellingId(entry.txId);
+    try {
+      const txRes = await walletRpc('get_transaction', { transaction_id: entry.txId });
+      if (!txRes.success) throw new Error('Could not retrieve transaction');
+      const additions: Array<{parent_coin_info:string;puzzle_hash:string;amount:number}> =
+        txRes.transaction?.additions ?? [];
+      const amtTarget = Number(entry.amountMojo);
+      const match = additions.find(a => a.amount === amtTarget)
+        ?? additions.reduce((best, a) => Math.abs(a.amount - amtTarget) < Math.abs((best?.amount ?? Infinity) - amtTarget) ? a : best, additions[0]);
+      if (!match) throw new Error('Could not find clawback coin in transaction');
+      const coinId = await calculateCoinId(match.parent_coin_info, match.puzzle_hash, match.amount);
+      const res = await walletRpc('spend_clawback_coins', { coin_ids: [`0x${coinId}`], fee: 0, is_clawback: true });
+      if (res.success) {
+        const next = loadClawbacks().filter(e => e.txId !== entry.txId);
+        saveClawbacks(next);
+        setClawbacks(next.filter(e => Date.now() < e.expiresAt));
+        setCancelMsg(m => ({ ...m, [entry.txId]: 'Recalled successfully' }));
+      } else {
+        setCancelMsg(m => ({ ...m, [entry.txId]: res.error || 'Recall failed' }));
+      }
+    } catch (e: any) {
+      setCancelMsg(m => ({ ...m, [entry.txId]: e.message }));
+    } finally {
+      setCancellingId(null);
+    }
+  }
 
   useEffect(() => {
     if (!nodeUrl) { setLoading(false); return; }
@@ -1507,6 +1540,44 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
           No transactions found.
         </div>
       )}
+      {/* Pending clawback rows */}
+      {clawbacks.map(entry => {
+        const remaining = Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+        const label = remaining >= 3600
+          ? `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m`
+          : remaining >= 60 ? `${Math.floor(remaining / 60)}m ${remaining % 60}s` : `${remaining}s`;
+        const msg = cancelMsg[entry.txId];
+        return (
+          <div key={entry.txId} style={{background:'rgba(224,123,58,0.07)',border:'1px solid rgba(224,123,58,0.4)',
+            borderRadius:'var(--radius)',padding:'12px 14px',display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div>
+                <span style={{fontSize:12,fontWeight:700,color:'var(--warn)'}}>⏳ Clawback pending</span>
+                <span style={{fontSize:12,color:'var(--text-primary)',marginLeft:8}}>
+                  −{formatMojoToXch(BigInt(entry.amountMojo))} XCH
+                </span>
+              </div>
+              <span style={{fontSize:10,color:'var(--warn)',fontFamily:'var(--font-mono)'}}>{label} left</span>
+            </div>
+            <div style={{fontSize:10,color:'var(--text-secondary)',fontFamily:'var(--font-mono)',
+              overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              → {entry.toAddress}
+            </div>
+            {msg ? (
+              <div style={{fontSize:11,color: msg.includes('success') ? 'var(--accent)' : '#ff6b6b'}}>{msg}</div>
+            ) : (
+              <button onClick={() => handleCancelClawback(entry)}
+                disabled={cancellingId === entry.txId}
+                style={{alignSelf:'flex-start',padding:'6px 12px',fontSize:11,fontWeight:600,cursor:'pointer',
+                  background:'none',border:'1px solid var(--warn)',borderRadius:'var(--radius-sm)',
+                  color:'var(--warn)',transition:'all 0.15s'}}>
+                {cancellingId === entry.txId ? 'Recalling…' : 'Recall'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+
       {visible.map(ev => {
         const amount = ev.isCat
           ? formatCatAmount(ev.amount)
@@ -1919,6 +1990,8 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   const [balance, setBalance] = useState<bigint | null>(null);
   const [balanceError, setBalanceError] = useState('');
   const [showBook, setShowBook] = useState(false);
+  const [useClawback, setUseClawback] = useState(false);
+  const [clawbackTimelock, setClawbackTimelock] = useState(3600);
   const sendingRef = React.useRef(false);
   const pollTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1978,22 +2051,44 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
     setStatus('sending');
     setMessage('');
     try {
-      const result = await sendXch({ toAddress, amountMojo, feeMojo, nodeUrl });
-      if (result.success) {
-        setToAddress('');
-        setAmount('');
-        if (result.txId && result.txId !== 'submitted') {
-          setStatus('pending');
-          setMessage(result.txId);
-          pollConfirmation(result.txId);
-        } else {
+      if (useClawback) {
+        const res = await walletRpc('send_transaction', {
+          wallet_id: 1,
+          amount: Number(amountMojo),
+          fee: Number(feeMojo),
+          address: toAddress,
+          puzzle_decorator_list: [{ decorator: 'CLAWBACK', clawback_timelock: clawbackTimelock }],
+        });
+        if (res.success) {
+          const txId = res.transaction?.name ?? res.transaction_id ?? '';
+          const entry: ClawbackEntry = {
+            txId, amount, amountMojo: amountMojo.toString(), toAddress,
+            timelock: clawbackTimelock,
+            submittedAt: Date.now(), expiresAt: Date.now() + clawbackTimelock * 1000,
+          };
+          saveClawbacks([...loadClawbacks(), entry]);
+          setToAddress(''); setAmount('');
+          const label = clawbackTimelock >= 3600
+            ? `${clawbackTimelock / 3600}h` : `${clawbackTimelock / 60}m`;
           setStatus('success');
-          setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH`);
+          setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH with ${label} clawback window`);
           onSendSuccess();
+        } else {
+          setStatus('error');
+          setMessage(res.error || 'Clawback send failed');
         }
       } else {
-        setStatus('error');
-        setMessage(result.error || 'Transaction failed');
+        const result = await sendXch({ toAddress, amountMojo, feeMojo, nodeUrl });
+        if (result.success) {
+          setToAddress(''); setAmount('');
+          if (result.txId && result.txId !== 'submitted') {
+            setStatus('pending'); setMessage(result.txId); pollConfirmation(result.txId);
+          } else {
+            setStatus('success'); setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH`); onSendSuccess();
+          }
+        } else {
+          setStatus('error'); setMessage(result.error || 'Transaction failed');
+        }
       }
     } catch (e: any) {
       setStatus('error');
@@ -2111,6 +2206,36 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
           </div>
         )}
 
+        {/* Clawback toggle */}
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:'12px 14px'}}>
+          <label style={{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer'}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>Clawback send</div>
+              <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>Recall within a time window if sent in error</div>
+            </div>
+            <button onClick={() => setUseClawback(v => !v)} style={{
+              width:44,height:24,borderRadius:12,border:'none',cursor:'pointer',
+              background: useClawback ? 'var(--accent)' : 'var(--border)',
+              position:'relative',transition:'background 0.2s',flexShrink:0,
+            }}>
+              <div style={{position:'absolute',top:3,left:useClawback?23:3,width:18,height:18,
+                borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
+            </button>
+          </label>
+          {useClawback && (
+            <div style={{marginTop:10,display:'flex',alignItems:'center',gap:10}}>
+              <div style={{fontSize:11,color:'var(--text-secondary)',flexShrink:0}}>RECALL WINDOW</div>
+              <select value={clawbackTimelock} onChange={e => setClawbackTimelock(Number(e.target.value))}
+                style={{flex:1,background:'var(--bg-input)',border:'1px solid var(--border)',color:'var(--text-primary)',
+                  borderRadius:'var(--radius-sm)',padding:'7px 10px',fontSize:12}}>
+                <option value={600}>10 minutes</option>
+                <option value={3600}>1 hour</option>
+                <option value={86400}>24 hours</option>
+              </select>
+            </div>
+          )}
+        </div>
+
         <button
           onClick={handleSend}
           disabled={!isValid || isBusy || !nodeUrl}
@@ -2152,6 +2277,25 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
       </div>
     </div>
   );
+}
+
+const CLAWBACK_KEY = 'chia_clawback_sends';
+
+interface ClawbackEntry {
+  txId: string;
+  amount: string;
+  amountMojo: string;
+  toAddress: string;
+  timelock: number;
+  submittedAt: number;
+  expiresAt: number;
+}
+
+function loadClawbacks(): ClawbackEntry[] {
+  try { return JSON.parse(sessionStorage.getItem(CLAWBACK_KEY) || '[]'); } catch { return []; }
+}
+function saveClawbacks(entries: ClawbackEntry[]) {
+  try { sessionStorage.setItem(CLAWBACK_KEY, JSON.stringify(entries)); } catch {}
 }
 
 const WALLETS_KEY = 'chia_wallets';
