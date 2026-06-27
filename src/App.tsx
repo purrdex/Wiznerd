@@ -1549,6 +1549,9 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
 }
 
 function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
+  const [tab, setTab] = useState<'take'|'create'>('take');
+
+  // ── Take offer state ──
   const [offerStr, setOfferStr] = useState('');
   const [summary, setSummary] = useState<any>(null);
   const [summaryError, setSummaryError] = useState('');
@@ -1557,6 +1560,19 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
   const [status, setStatus] = useState<'idle'|'submitting'|'success'|'error'>('idle');
   const [resultMsg, setResultMsg] = useState('');
   const [summaryMeta, setSummaryMeta] = useState<Record<string, {name:string;ticker:string}>>({});
+
+  // ── Create offer state ──
+  const [giveType, setGiveType] = useState<'xch'|'cat'>('xch');
+  const [giveAssetId, setGiveAssetId] = useState('');
+  const [giveAmount, setGiveAmount] = useState('');
+  const [wantType, setWantType] = useState<'xch'|'cat'>('cat');
+  const [wantAssetId, setWantAssetId] = useState('');
+  const [wantAmount, setWantAmount] = useState('');
+  const [createFee, setCreateFee] = useState('0');
+  const [creating, setCreating] = useState(false);
+  const [createdOffer, setCreatedOffer] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [offerCopied, setOfferCopied] = useState(false);
 
   const knownAssets = React.useMemo(() => {
     const m: Record<string, {name:string;ticker:string}> = {};
@@ -1615,17 +1631,199 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
     } catch (e: any) { setStatus('error'); setResultMsg(e.message); }
   }
 
+  async function handleCreate() {
+    const giveAmtF = parseFloat(giveAmount || '0');
+    const wantAmtF = parseFloat(wantAmount || '0');
+    const createFeeF = parseFloat(createFee || '0');
+    if (isNaN(giveAmtF) || giveAmtF <= 0 || isNaN(wantAmtF) || wantAmtF <= 0) {
+      setCreateError('Enter amounts for both sides'); return;
+    }
+    if (giveType === 'cat' && !giveAssetId.trim()) { setCreateError('Select a token to give'); return; }
+    if (wantType === 'cat' && !wantAssetId.trim()) { setCreateError('Enter asset ID to request'); return; }
+    if (giveType === wantType && giveType === 'xch') { setCreateError('Cannot offer XCH for XCH'); return; }
+    if (giveType === wantType && giveType === 'cat' && giveAssetId.toLowerCase() === wantAssetId.toLowerCase()) {
+      setCreateError('Cannot offer same token for itself'); return;
+    }
+
+    setCreating(true); setCreateError(''); setCreatedOffer('');
+    try {
+      const giveMojo = giveType === 'xch'
+        ? BigInt(Math.round(giveAmtF * 1_000_000_000_000))
+        : BigInt(Math.round(giveAmtF * 1000));
+      const wantMojo = wantType === 'xch'
+        ? BigInt(Math.round(wantAmtF * 1_000_000_000_000))
+        : BigInt(Math.round(wantAmtF * 1000));
+      const feeMojo = BigInt(Math.round(createFeeF * 1_000_000_000_000));
+
+      const offerDict: Record<string, number> = {};
+      // Give side (negative = offering)
+      if (giveType === 'xch') offerDict['1'] = -Number(giveMojo);
+      else offerDict[giveAssetId.toLowerCase()] = -Number(giveMojo);
+      // Want side (positive = requesting)
+      if (wantType === 'xch') {
+        const cur = offerDict['1'] ?? 0;
+        offerDict['1'] = cur + Number(wantMojo);
+      } else {
+        const key = wantAssetId.toLowerCase();
+        const cur = offerDict[key] ?? 0;
+        offerDict[key] = cur + Number(wantMojo);
+      }
+
+      const res = await walletRpc('create_offer_for_ids', {
+        offer: offerDict, fee: Number(feeMojo), validate_only: false,
+      });
+      if (res.success && res.offer) { setCreatedOffer(res.offer); }
+      else throw new Error(res.error || 'Failed to create offer');
+    } catch (e: any) { setCreateError(e.message); }
+    finally { setCreating(false); }
+  }
+
+  function handleCopyOffer() {
+    navigator.clipboard.writeText(createdOffer);
+    setOfferCopied(true); setTimeout(() => setOfferCopied(false), 2000);
+  }
+
   const offered = Object.entries(summary?.offered ?? {});
   const requested = Object.entries(summary?.requested ?? {});
 
+  const tabStyle = (active: boolean) => ({
+    flex: 1, padding: '9px 0', fontSize: 13, fontWeight: 600,
+    background: active ? 'var(--accent)' : 'var(--bg-card)',
+    color: active ? '#0a0b0f' : 'var(--text-secondary)',
+    border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.15s',
+  });
+
   return (
     <div className="wallet-screen">
-      <div className="section-label">Take Offer</div>
-      <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:12}}>
-        Paste a Chia offer string to review and accept it. Trades settle atomically on-chain — no counterparty risk.
-        Requires wallet daemon.
+      <div className="section-label">Offers</div>
+
+      {/* Tab switcher */}
+      <div style={{display:'flex',gap:0,borderRadius:'var(--radius)',overflow:'hidden',marginBottom:16}}>
+        <button style={{...tabStyle(tab==='take'),borderRadius:'var(--radius) 0 0 var(--radius)'}}
+          onClick={() => setTab('take')}>Take Offer</button>
+        <button style={{...tabStyle(tab==='create'),borderRadius:'0 var(--radius) var(--radius) 0',borderLeft:'none'}}
+          onClick={() => setTab('create')}>Create Offer</button>
       </div>
 
+      {/* ── Create Offer ── */}
+      {tab === 'create' && (
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
+            Build an offer and share the string with your trade partner or post it on Dexie.
+          </div>
+
+          {/* Give side */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
+            <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>YOU GIVE</div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={() => setGiveType('xch')} style={{
+                flex:1,padding:'8px',fontSize:12,fontWeight:600,cursor:'pointer',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',
+                background: giveType==='xch' ? 'var(--accent)' : 'var(--bg-input)', color: giveType==='xch' ? '#0a0b0f' : 'var(--text-secondary)',
+              }}>XCH</button>
+              <button onClick={() => setGiveType('cat')} style={{
+                flex:1,padding:'8px',fontSize:12,fontWeight:600,cursor:'pointer',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',
+                background: giveType==='cat' ? 'var(--accent)' : 'var(--bg-input)', color: giveType==='cat' ? '#0a0b0f' : 'var(--text-secondary)',
+              }}>Token (CAT)</button>
+            </div>
+            {giveType === 'cat' && (
+              <select value={giveAssetId} onChange={e => setGiveAssetId(e.target.value)}
+                style={{background:'var(--bg-input)',border:'1px solid var(--border)',color:'var(--text-primary)',
+                  borderRadius:'var(--radius-sm)',padding:'9px 10px',fontSize:12,width:'100%'}}>
+                <option value="">— Pick token —</option>
+                {catBalances.map(b => (
+                  <option key={b.assetId} value={b.assetId}>{b.ticker} — {b.name}</option>
+                ))}
+              </select>
+            )}
+            <input className="address-input" type="number" min="0" step="0.001"
+              placeholder={giveType === 'xch' ? '0.00 (XCH)' : '0.000 (tokens)'}
+              value={giveAmount} onChange={e => setGiveAmount(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}/>
+          </div>
+
+          {/* Want side */}
+          <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
+            <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>YOU WANT</div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={() => setWantType('xch')} style={{
+                flex:1,padding:'8px',fontSize:12,fontWeight:600,cursor:'pointer',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',
+                background: wantType==='xch' ? 'var(--accent)' : 'var(--bg-input)', color: wantType==='xch' ? '#0a0b0f' : 'var(--text-secondary)',
+              }}>XCH</button>
+              <button onClick={() => setWantType('cat')} style={{
+                flex:1,padding:'8px',fontSize:12,fontWeight:600,cursor:'pointer',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',
+                background: wantType==='cat' ? 'var(--accent)' : 'var(--bg-input)', color: wantType==='cat' ? '#0a0b0f' : 'var(--text-secondary)',
+              }}>Token (CAT)</button>
+            </div>
+            {wantType === 'cat' && (
+              <>
+                <select value={wantAssetId} onChange={e => setWantAssetId(e.target.value)}
+                  style={{background:'var(--bg-input)',border:'1px solid var(--border)',color:'var(--text-primary)',
+                    borderRadius:'var(--radius-sm)',padding:'9px 10px',fontSize:12,width:'100%'}}>
+                  <option value="">— Pick known token —</option>
+                  {catBalances.map(b => (
+                    <option key={b.assetId} value={b.assetId}>{b.ticker} — {b.name}</option>
+                  ))}
+                </select>
+                <input className="address-input" type="text" placeholder="or paste 64-char asset ID"
+                  value={wantAssetId} onChange={e => setWantAssetId(e.target.value.trim().toLowerCase())}
+                  style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:11,fontFamily:'var(--font-mono)'}}
+                  spellCheck={false}/>
+              </>
+            )}
+            <input className="address-input" type="number" min="0" step="0.001"
+              placeholder={wantType === 'xch' ? '0.00 (XCH)' : '0.000 (tokens)'}
+              value={wantAmount} onChange={e => setWantAmount(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}/>
+          </div>
+
+          <div>
+            <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>FEE (XCH)</div>
+            <input className="address-input" type="number" min="0" step="0.00001"
+              value={createFee} onChange={e => setCreateFee(e.target.value)}
+              style={{width:'100%',boxSizing:'border-box',padding:'10px 12px',fontSize:14}}/>
+          </div>
+
+          {createError && <div className="error-msg">{createError}</div>}
+
+          {!createdOffer ? (
+            <button onClick={handleCreate} disabled={creating} style={{
+              padding:'14px',fontWeight:700,fontSize:15,
+              background: creating ? 'var(--bg-card)' : 'var(--accent)',
+              color: creating ? 'var(--text-dim)' : '#0a0b0f',
+              border:'1px solid var(--border)',borderRadius:'var(--radius)',
+              cursor: creating ? 'not-allowed' : 'pointer',transition:'all 0.2s',
+            }}>
+              {creating ? '⏳ Creating…' : 'Create Offer'}
+            </button>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em'}}>OFFER STRING — SHARE THIS</div>
+              <textarea rows={5} readOnly value={createdOffer}
+                style={{width:'100%',background:'var(--bg-input)',border:'1px solid var(--accent)',
+                  borderRadius:'var(--radius-sm)',color:'var(--text-secondary)',fontSize:9,
+                  fontFamily:'var(--font-mono)',padding:'10px 12px',resize:'none',lineHeight:1.5}}/>
+              <div style={{display:'flex',gap:8}}>
+                <button className={`btn ${offerCopied ? 'btn-primary' : 'btn-secondary'}`} style={{flex:1}}
+                  onClick={handleCopyOffer}>
+                  {offerCopied ? '✓ Copied!' : 'Copy Offer String'}
+                </button>
+                <button className="btn btn-secondary" style={{flex:1}}
+                  onClick={() => { setCreatedOffer(''); setGiveAmount(''); setWantAmount(''); setCreateError(''); }}>
+                  New Offer
+                </button>
+              </div>
+              <div style={{fontSize:11,color:'var(--text-dim)',lineHeight:1.6}}>
+                Share this string with your trade partner or post it on{' '}
+                <a href="https://dexie.space" target="_blank" rel="noopener noreferrer"
+                  style={{color:'var(--accent)'}}>dexie.space</a>.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Take Offer ── */}
+      {tab === 'take' && (
       <div style={{display:'flex',flexDirection:'column',gap:12}}>
         <div>
           <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.08em',marginBottom:6}}>OFFER STRING</div>
@@ -1703,6 +1901,7 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
