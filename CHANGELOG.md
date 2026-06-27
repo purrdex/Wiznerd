@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.12.0 — 2026-06-27 (Security Hardening & Polish)
+- fix: CORS wildcard replaced with origin-allowlist in chia-proxy — localhost always allowed; production origins via `FRONTEND_ORIGIN` env var; `Vary: Origin` header set
+- fix: Change Password now verifies current password before re-encrypting — decrypts one wallet with re-derived key before any state changes; errors clearly as "incorrect password"
+- fix: Salt race condition in Change Password — `generateSalt()` and `storeSalt()` split; salt only committed to localStorage after all wallets successfully re-encrypted
+- fix: Mixed-content warning in Settings — shown when app is on HTTPS but proxy URL is HTTP
+- fix: HistoryScreen state reset on deps change — `setEvents([])`, `setError('')`, `setLoading(true)` at effect start prevents stale history on wallet/node switch
+- fix: Local proxy option now selectable from node dropdown — sentinel value `__local__` clears the custom URL field instead of being excluded from the list
+- ux: Proxy URL test button in Settings — fetches `/price/xch` with 5s timeout, shows latency or error inline
+- ux: In-app transaction confirmation toast — slides up from bottom nav, auto-dismisses after 4s; fires on `pollConfirmation` success
+- ux: Password strength indicator on wallet creation and Change Password — animated bar: Weak / Fair / Strong with color feedback
+- ux: Seed phrase backup reminder banner — shows on first wallet creation, dismissible, persisted to localStorage
+- test: Forgot Password wipe-and-restore flow — verifies lock screen → wipe → setup screen + localStorage cleared
+- test: Change Password wrong-password rejection — verifies `error-msg` appears with "incorrect" text when current password is wrong
+
 ## v0.11.0 — 2026-06-27 (Bug Fixes & Web Deployment)
 - fix: HistoryScreen `useEffect` now re-runs on wallet switch and nodeUrl change — history reloads correctly when switching wallets or configuring a node mid-session
 - fix: SetupScreen 'password' mode adds Back button — user can return to quiz (new wallet) or import form

@@ -26,11 +26,21 @@ function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Generate a fresh 32-byte salt (does NOT store it). */
+export function generateSalt(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32) as Uint8Array<ArrayBuffer>);
+  return toBase64(bytes);
+}
+
+/** Commit a previously-generated salt to localStorage. */
+export function storeSalt(b64: string): void {
+  localStorage.setItem(VAULT_SALT_KEY, b64);
+}
+
 /** Generate a fresh 32-byte PBKDF2 salt and store it in localStorage. */
 export function generateAndStoreSalt(): string {
-  const salt = crypto.getRandomValues(new Uint8Array(32) as Uint8Array<ArrayBuffer>);
-  const b64 = toBase64(salt);
-  localStorage.setItem(VAULT_SALT_KEY, b64);
+  const b64 = generateSalt();
+  storeSalt(b64);
   return b64;
 }
 

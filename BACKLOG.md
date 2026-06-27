@@ -84,6 +84,21 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [FEAT] View/re-export seed phrase from Settings — no way to reveal stored mnemonic after setup; any user who needs to migrate or re-backup is stuck — S effort
 - [x] [UX] Seed phrase verification quiz on wallet creation — currently a checkbox; MetaMask and Sage require re-entering 3 random words; highest-impact new-user security gap — S effort
 
+## v0.12.0 — Security Hardening & Polish
+
+- [x] [BUG] Fix CORS wildcard on wallet RPC — restrict proxy to configured frontend origin, not `*`; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Fix `generateAndStoreSalt` race in `handleChangePasswordSubmit` — generate new salt only after all wallets successfully re-encrypted, not before; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Change Password must verify current password before allowing rotation; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Mixed-content warning — detect when frontend is HTTPS and proxy URL is HTTP, show warning in Settings; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [BUG] HistoryScreen missing `setLoading(true)`/`setEvents([])` reset on deps change — old history flashes on wallet switch; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Local proxy option unreachable in node dropdown — add back as selectable option; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [UX] Proxy URL Test button in Settings — validate URL before saving, show latency; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [UX] In-app transaction confirmation toast — show notification when TX confirms, not just on send screen; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [UX] Password strength indicator on wallet creation and change-password screens; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [UX] Seed phrase backup reminder banner — first session after creation, dismissible; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [TEST] Forgot Password wipe-and-restore flow; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [TEST] Change Password flow including wrong current-password rejection; promoted from vNext Code Quality Analysis 2026-06-27
+
 ## v0.11.0 — Bug Fixes & Web Deployment
 
 - [x] [BUG] HistoryScreen `useEffect` has empty deps — wallet switches and nodeUrl changes don't trigger a history reload; promoted from vNext Code Quality Analysis 2026-06-27
@@ -198,3 +213,27 @@ Compared against: Sage Wallet, MetaMask, Rainbow, Phantom, Goby. Prior-session f
 - [ ] [UX] History "View block" link targets the block, not the specific coin — Spacescan.io has `/coin/:coinId` deep links; the current link goes to `/block/${blockIndex}` which contains dozens of unrelated transactions; Sage and the Official GUI link directly to the coin — S effort
 - [ ] [UX] No Dexie verified-token badge — the Dexie token list distinguishes verified tokens from unverified; Wiznerd shows all CATs identically; users cannot distinguish well-known tokens from spam/scam CATs — S effort
 - [ ] [FEAT] Fiat-denominated send input — type an amount in USD and have it auto-convert to XCH/CAT; MetaMask and Coinbase Wallet both support this; reduces cognitive load for users who think in fiat — S effort
+
+## vNext — Code Quality Analysis (2026-06-27, v0.11.0 audit)
+Build: clean. Tests: 15/15 pass. Sorted by user impact. No items from prior audits are repeated.
+
+- [ ] [BUG] `HistoryScreen` `useEffect` missing state reset on deps change — v0.11.0 fixed the empty-deps bug but didn't add `setLoading(true); setEvents([]); setError('')` at the start of the effect; when switching wallets or changing nodeUrl the old wallet's events are visible with no spinner during the reload; regression introduced by the deps fix (App.tsx:1791) — S effort
+- [ ] [BUG] `handleChangePasswordSubmit` calls `generateAndStoreSalt()` before all re-encryptions complete — the new salt is written to localStorage synchronously then `encryptMnemonic` is awaited in the loop; if any wallet's decryption or re-encryption throws mid-batch, the salt has already changed but `onChangePassword` is never called; on next reload all wallets fail to decrypt against the new salt causing permanent lockout; fix: accumulate all re-encrypted wallets first, then write the salt and call `onChangePassword` atomically (App.tsx:709) — M effort
+- [ ] [BUG] Proxy `Access-Control-Allow-Origin: *` allows any browser tab to reach wallet RPC — any website open in the same browser can call `http://localhost:3001/wallet/send_transaction` with crafted parameters; newly critical because v0.11.0 documented public web deployment; proxy should validate `Origin` against a configurable allow-list before forwarding wallet daemon calls (chia-proxy/index.js:14) — M effort
+- [ ] [BUG] "Local proxy (default)" entry in `PUBLIC_NODES` is unreachable via dropdown — `PUBLIC_NODES.filter(n => n.url)` excludes the `{ label: 'Local proxy (default)', url: '' }` entry; once a user selects a public node they have no quick-select path back to local — they must manually clear the URL field; either remove the dead entry from the constant or add a "Local" option with explicit handling (App.tsx:920–922) — S effort
+- [ ] [UX] Change Password form has no current-password field — anyone who gains momentary access to an unlocked browser session can silently rotate the password without knowing the current one; MetaMask, Rainbow, and Phantom all require current-password verification before accepting a new one (App.tsx:984–1007) — S effort
+- [ ] [UX] Proxy URL field has no Test button — the Node Configuration section has Test + Save; the Proxy section has only Save; saving an invalid proxy URL silently breaks balance fetch, CAT discovery, sends, and NFT transfers with no error until the user next tries to use the wallet (App.tsx:951–962) — S effort
+- [ ] [TEST] No coverage for LockScreen Forgot Password / wipe-and-restore path — clicking "Forgot password?" → confirmation → full wipe is entirely untested; a regression in `handleForgotPassword` (missing a removeItem call, wrong state reset) would not be caught (tests/wallet.spec.ts) — S effort
+- [ ] [TEST] No coverage for Change Password flow — new Security section added in v0.11.0 (re-key + re-encrypt all wallets) has zero Playwright tests; happy-path and wrong-password rejection are untested (tests/wallet.spec.ts) — S effort
+
+## vNext — Competitive Analysis (2026-06-27, v0.11.0 audit)
+Compared against: Sage Wallet, Goby, Phantom web, MetaMask. Items already listed in prior competitive sections are not repeated here. Sorted by user impact.
+
+- [ ] [FEAT] Proxy deployment guide for web deployments — vercel.json + netlify.toml added in v0.11.0 cover the frontend SPA but the proxy must also be hosted separately; no documentation on deploying the proxy to Render / Railway / Fly.io; users who follow the deploy configs end up with a working frontend that can't reach a node or wallet daemon — L effort
+- [ ] [UX] Mixed-content / HTTPS proxy warning — when the frontend is served over HTTPS (Vercel/Netlify, added in v0.11.0) and the saved proxy URL is `http://`, browsers silently block the fetch as mixed content and all wallet ops fail; the Proxy URL field in Settings should detect this mismatch and show a warning before the user saves — S effort
+- [ ] [FEAT] Recommended / tiered fee estimation — Sage and the Official Chia GUI surface "low / standard / priority" fee tiers derived from recent mempool data; Wiznerd shows a blank fee field with a hardcoded 0.00005 XCH default; users with no fee knowledge risk under-pricing (stuck tx) or over-paying on congested days — M effort
+- [ ] [UX] Password strength indicator on setup and change-password screens — MetaMask, Rainbow, Phantom, and Bitwarden all show a real-time strength bar as the user types; Wiznerd accepts any password ≥ 8 chars (including "password1") with no feedback; weak passwords are the most common cause of wallet loss in consumer wallets — S effort
+- [ ] [FEAT] In-app transaction confirmation notification — Phantom, Rainbow, and Trust Wallet show a brief toast banner when a pending transaction confirms; Wiznerd silently updates on the next 30 s poll; users who submit a send and navigate away never learn the outcome without switching to History and expanding the row — S effort
+- [ ] [UX] Seed phrase backup reminder — MetaMask, Coinbase Wallet, and Phantom surface a persistent banner during the first session urging users to verify their backup; Wiznerd displays the mnemonic once at creation then nothing; users who skip the backup step are silently at risk with no subsequent prompt — S effort
+- [ ] [FEAT] Multi-signature / vault wallets — Sage recently added m-of-n vault wallets using Chia's BLS key aggregation; useful for teams and high-value holders who need joint custody without a hardware wallet; not listed in any prior competitive section — L effort
+- [ ] [FEAT] WebAuthn / passkey-derived key for wallet unlock — Chrome 119+ and Safari 17+ support the FIDO2 PRF extension, allowing a device passkey (Face ID, Touch ID, Windows Hello) to deterministically derive an AES key; Phantom web uses this to eliminate the password prompt on supported browsers; works alongside the existing PBKDF2 path as an opt-in — L effort

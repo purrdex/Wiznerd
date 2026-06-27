@@ -27,6 +27,8 @@ import {
   VAULT_SALT_KEY,
   getOrCreateSalt,
   generateAndStoreSalt,
+  generateSalt,
+  storeSalt,
   deriveKey,
   encryptMnemonic,
   decryptMnemonic,
@@ -317,15 +319,27 @@ function SetupScreen({ onWalletReady, onCancel, existingKey }: {
           <p>Your seed phrase will be encrypted with this password. You'll need it every time you open the wallet.</p>
         </div>
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
-          <input
-            type="password"
-            placeholder="New password (min 8 chars)"
-            value={newPassword}
-            onChange={e=>{setNewPassword(e.target.value);setPasswordError('');}}
-            autoComplete="new-password"
-            style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
-              borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
-          />
+          <div>
+            <input
+              type="password"
+              placeholder="New password (min 8 chars)"
+              value={newPassword}
+              onChange={e=>{setNewPassword(e.target.value);setPasswordError('');}}
+              autoComplete="new-password"
+              style={{padding:'11px 14px',background:'var(--bg-input)',border:'1px solid var(--border)',
+                borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:14,width:'100%',boxSizing:'border-box'}}
+            />
+            {(() => { const s = passwordStrength(newPassword); return s ? (
+              <div style={{display:'flex',alignItems:'center',gap:6,marginTop:6}}>
+                <div style={{flex:1,height:3,borderRadius:2,background:'var(--border)'}}>
+                  <div style={{height:'100%',borderRadius:2,transition:'all 0.3s',
+                    width: s.label==='Weak'?'33%':s.label==='Fair'?'66%':'100%',
+                    background: s.color}}/>
+                </div>
+                <span style={{fontSize:10,color:s.color,fontWeight:600,minWidth:32}}>{s.label}</span>
+              </div>
+            ) : null; })()}
+          </div>
           <input
             type="password"
             placeholder="Confirm password"
@@ -658,8 +672,19 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
 const PUBLIC_NODES = [
   { label: 'SpeedFarmer', url: 'https://chia-node.speedfarmer.io' },
   { label: 'Chia Official', url: 'https://node.chia.net' },
-  { label: 'Local proxy (default)', url: '' },
 ];
+
+function passwordStrength(pw: string): { label: string; color: string } | null {
+  if (!pw) return null;
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[0-9]/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  if (score <= 1) return { label: 'Weak', color: '#ff6b6b' };
+  if (score === 2) return { label: 'Fair', color: '#e07b3a' };
+  return { label: 'Strong', color: '#4daa87' };
+}
 
 function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey, onChangePassword }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
@@ -688,6 +713,9 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
   const [assetIdError, setAssetIdError] = useState('');
   const [showMnemonic, setShowMnemonic] = useState(false);
   const [proxyInput, setProxyInput] = useState(proxyUrl);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState('');
+  const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [pwError, setPwError] = useState('');
@@ -701,27 +729,59 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
   }, [nodeUrl]);
 
   const handleChangePasswordSubmit = async () => {
-    if (newPw.length < 8) { setPwError('Password must be at least 8 characters'); return; }
+    if (!currentPw) { setPwError('Enter your current password'); return; }
+    if (newPw.length < 8) { setPwError('New password must be at least 8 characters'); return; }
     if (newPw !== confirmPw) { setPwError('Passwords do not match'); return; }
-    if (!sessionKey) { setPwError('Session expired — please reload'); return; }
     setPwBusy(true); setPwError(''); setPwSuccess(false);
     try {
-      const saltB64 = generateAndStoreSalt(); // new salt for the new password
-      const newKey = await deriveKey(newPw, saltB64);
-      const updated: WalletEntry[] = await Promise.allSettled(
+      // Verify current password by re-deriving and decrypting a test wallet
+      const saltB64 = localStorage.getItem(VAULT_SALT_KEY) || '';
+      const currentKey = await deriveKey(currentPw, saltB64);
+      const testWallet = walletList.find(w => w.encryptedMnemonic);
+      if (testWallet) await decryptMnemonic(testWallet.encryptedMnemonic!, currentKey);
+
+      // Generate new salt but DO NOT store yet — only commit after successful re-encryption
+      const newSaltB64 = generateSalt();
+      const newKey = await deriveKey(newPw, newSaltB64);
+
+      const results = await Promise.allSettled(
         walletList.map(async w => {
           if (!w.encryptedMnemonic) return w;
-          const mnemonic = await decryptMnemonic(w.encryptedMnemonic, sessionKey);
+          const mnemonic = await decryptMnemonic(w.encryptedMnemonic, currentKey);
           return { ...w, encryptedMnemonic: await encryptMnemonic(mnemonic, newKey) };
         })
-      ).then(results => results.map((r, i) =>
-        r.status === 'fulfilled' ? r.value : walletList[i]
-      ));
+      );
+      const failures = results.filter(r => r.status === 'rejected').length;
+      if (failures > 0) throw new Error(`Failed to re-encrypt ${failures} wallet(s)`);
+
+      const updated = results.map(r => (r as PromiseFulfilledResult<WalletEntry>).value);
+
+      // Atomically commit new salt then update state
+      storeSalt(newSaltB64);
       onChangePassword(newKey, updated);
-      setNewPw(''); setConfirmPw(''); setPwSuccess(true);
+      setCurrentPw(''); setNewPw(''); setConfirmPw(''); setPwSuccess(true);
     } catch (e: any) {
-      setPwError(`Failed: ${e.message}`);
+      const msg = e.message || '';
+      if (msg.includes('OperationError') || msg.includes('decrypt') || msg.includes('The operation failed')) {
+        setPwError('Current password is incorrect');
+      } else {
+        setPwError(`Failed: ${msg}`);
+      }
     } finally { setPwBusy(false); }
+  };
+
+  const handleTestProxy = async () => {
+    const url = proxyInput.trim();
+    if (!url) { setProxyTestResult('Enter a proxy URL first'); return; }
+    setProxyTesting(true); setProxyTestResult('');
+    try {
+      const start = Date.now();
+      const res = await fetch(`${url}/price/xch`, { signal: AbortSignal.timeout(5000) });
+      const ms = Date.now() - start;
+      setProxyTestResult(res.ok ? `✓ Reachable (${ms}ms)` : `✗ HTTP ${res.status}`);
+    } catch (e: any) {
+      setProxyTestResult(`✗ ${(e.message || 'Unreachable').slice(0, 60)}`);
+    } finally { setProxyTesting(false); }
   };
 
   const handleTest = async () => {
@@ -913,14 +973,19 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           Quick-select a public node or enter a custom URL.
         </div>
         <select
-          value={PUBLIC_NODES.find(n => n.url === input)?.url ?? ''}
-          onChange={e => { if (e.target.value !== '') { setInput(e.target.value); setTestResult(null); } }}
+          value={PUBLIC_NODES.find(n => n.url === input)?.url ?? (input ? '' : '__local__')}
+          onChange={e => {
+            const val = e.target.value;
+            if (val === '__local__') { setInput(''); setTestResult(null); }
+            else if (val) { setInput(val); setTestResult(null); }
+          }}
           style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
             borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:13,width:'100%',cursor:'pointer'}}>
           <option value="">— Choose a public node —</option>
-          {PUBLIC_NODES.filter(n => n.url).map(n => (
+          {PUBLIC_NODES.map(n => (
             <option key={n.url} value={n.url}>{n.label}</option>
           ))}
+          <option value="__local__">Local proxy (default)</option>
         </select>
         <input type="url" value={input} onChange={e=>{setInput(e.target.value);setTestResult(null);}} placeholder="https://node.example.com:8555"/>
         <div style={{display:'flex',gap:8}}>
@@ -953,12 +1018,30 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
         <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
           URL of the Wiznerd proxy server. Change this when deploying to a custom host.
         </div>
-        <input type="url" value={proxyInput} onChange={e=>setProxyInput(e.target.value)}
+        {window.location.protocol === 'https:' && proxyInput.startsWith('http:') && (
+          <div style={{fontSize:12,color:'var(--warn)',background:'rgba(224,123,58,0.08)',
+            border:'1px solid rgba(224,123,58,0.4)',borderRadius:'var(--radius-sm)',padding:'8px 12px'}}>
+            ⚠️ Mixed content — your app is on HTTPS but the proxy URL is HTTP. Browsers will block these requests. Use an HTTPS proxy URL.
+          </div>
+        )}
+        <input type="url" value={proxyInput}
+          onChange={e=>{ setProxyInput(e.target.value); setProxyTestResult(''); }}
           placeholder="http://localhost:3001"/>
-        <button className="btn btn-secondary" style={{padding:'10px'}}
-          onClick={()=>onProxyChange(proxyInput)}>
-          Save proxy URL
-        </button>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-secondary" style={{flex:1,padding:'10px'}}
+            onClick={handleTestProxy} disabled={proxyTesting}>
+            {proxyTesting ? 'Testing…' : 'Test proxy'}
+          </button>
+          <button className="btn btn-primary" style={{flex:1,padding:'10px'}}
+            onClick={()=>{ onProxyChange(proxyInput); setProxyTestResult(''); }}>
+            Save
+          </button>
+        </div>
+        {proxyTestResult && (
+          <div style={{fontSize:12,color:proxyTestResult.startsWith('✓')?'var(--accent)':'var(--error)'}}>
+            {proxyTestResult}
+          </div>
+        )}
       </div>
 
       <div className="section-label mt-16">Security</div>
@@ -990,19 +1073,35 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           <div style={{fontSize:12,color:'var(--accent)',marginBottom:8}}>✓ Password changed successfully</div>
         )}
         <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          <input type="password" placeholder="New password (min 8 chars)" value={newPw}
-            onChange={e=>{setNewPw(e.target.value);setPwError('');setPwSuccess(false);}}
+          <input type="password" placeholder="Current password" value={currentPw}
+            onChange={e=>{setCurrentPw(e.target.value);setPwError('');setPwSuccess(false);}}
             style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
               borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:13,width:'100%',boxSizing:'border-box'}}/>
+          <div>
+            <input type="password" placeholder="New password (min 8 chars)" value={newPw}
+              onChange={e=>{setNewPw(e.target.value);setPwError('');setPwSuccess(false);}}
+              style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
+                borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:13,width:'100%',boxSizing:'border-box'}}/>
+            {(() => { const s = passwordStrength(newPw); return s ? (
+              <div style={{display:'flex',alignItems:'center',gap:6,marginTop:5}}>
+                <div style={{flex:1,height:3,borderRadius:2,background:'var(--border)'}}>
+                  <div style={{height:'100%',borderRadius:2,transition:'all 0.3s',
+                    width: s.label==='Weak'?'33%':s.label==='Fair'?'66%':'100%',
+                    background: s.color}}/>
+                </div>
+                <span style={{fontSize:10,color:s.color,fontWeight:600,minWidth:32}}>{s.label}</span>
+              </div>
+            ) : null; })()}
+          </div>
           <input type="password" placeholder="Confirm new password" value={confirmPw}
             onChange={e=>{setConfirmPw(e.target.value);setPwError('');setPwSuccess(false);}}
-            onKeyDown={e=>{if(e.key==='Enter'&&!pwBusy&&newPw&&confirmPw)handleChangePasswordSubmit();}}
+            onKeyDown={e=>{if(e.key==='Enter'&&!pwBusy&&currentPw&&newPw&&confirmPw)handleChangePasswordSubmit();}}
             style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
               borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:13,width:'100%',boxSizing:'border-box'}}/>
         </div>
         {pwError && <div className="error-msg" style={{marginTop:6}}>{pwError}</div>}
         <button className="btn btn-secondary" style={{padding:'9px',marginTop:8}}
-          disabled={pwBusy || !newPw || !confirmPw} onClick={handleChangePasswordSubmit}>
+          disabled={pwBusy || !currentPw || !newPw || !confirmPw} onClick={handleChangePasswordSubmit}>
           {pwBusy ? 'Encrypting…' : 'Change password'}
         </button>
       </div>
@@ -1789,6 +1888,7 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
   }
 
   useEffect(() => {
+    setEvents([]); setError(''); setLoading(true);
     if (!nodeUrl) { setLoading(false); return; }
 
     (async () => {
@@ -2456,10 +2556,11 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
   );
 }
 
-function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
+function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
   nodeUrl: string;
   onSendSuccess: () => void;
   addressBook: AddressEntry[];
+  onTxConfirmed?: (msg: string) => void;
 }) {
   const [toAddress, setToAddress] = useState('');
   const [amount, setAmount] = useState('');
@@ -2508,9 +2609,11 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
       try {
         const res = await walletRpc('get_transaction', { transaction_id: txId });
         if (res.success && res.transaction?.confirmed) {
+          const msg = `Sent ${formatMojoToXch(amountMojo)} XCH — confirmed at block #${res.transaction.confirmed_at_height?.toLocaleString()}`;
           setStatus('success');
-          setMessage(`Sent ${formatMojoToXch(amountMojo)} XCH — confirmed at block #${res.transaction.confirmed_at_height?.toLocaleString()}`);
+          setMessage(msg);
           onSendSuccess();
+          onTxConfirmed?.(msg);
           return;
         }
       } catch { /* keep polling */ }
@@ -2968,7 +3071,18 @@ export default function App() {
     const saved = localStorage.getItem(IDLE_LOCK_KEY);
     return saved ? Number(saved) : 0;
   });
+  const [showBackupBanner, setShowBackupBanner] = useState(() => {
+    try { return localStorage.getItem('chia_backup_reminder') === 'pending'; } catch { return false; }
+  });
+  const [toast, setToast] = useState<string | null>(null);
   const lastActivityRef = React.useRef(Date.now());
+  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = React.useCallback((msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(msg);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -3092,9 +3206,19 @@ export default function App() {
     setActiveWalletId(newEntry.id);
     localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
     localStorage.setItem(ACTIVE_WALLET_KEY, newEntry.id);
+    // Show backup reminder only when creating the very first wallet
+    if (walletList.length === 0) {
+      try { localStorage.setItem('chia_backup_reminder', 'pending'); } catch {}
+      setShowBackupBanner(true);
+    }
     setUnlockMode(null);
     setWallet({ mnemonic, addresses });
     setScreen('wallet');
+  };
+
+  const handleDismissBackupBanner = () => {
+    try { localStorage.setItem('chia_backup_reminder', 'dismissed'); } catch {}
+    setShowBackupBanner(false);
   };
 
   const handleNodeChange = (url: string) => {
@@ -3232,15 +3356,37 @@ export default function App() {
         {isWallet && <NodeBadge status={nodeStatus}/>}
       </div>
 
+      {isWallet && showBackupBanner && (
+        <div style={{background:'rgba(224,179,0,0.08)',borderBottom:'1px solid rgba(224,179,0,0.35)',
+          padding:'10px 16px',display:'flex',gap:10,alignItems:'center',flexShrink:0}}>
+          <span style={{fontSize:16}}>🔐</span>
+          <span style={{flex:1,fontSize:12,color:'var(--text-primary)',lineHeight:1.4}}>
+            Back up your seed phrase — it's the only way to recover this wallet.
+          </span>
+          <button onClick={handleDismissBackupBanner}
+            style={{background:'none',border:'none',color:'var(--text-secondary)',
+              cursor:'pointer',fontSize:18,padding:0,lineHeight:1}}>×</button>
+        </div>
+      )}
+
       {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock} onForgotPassword={handleForgotPassword}/>}
       {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
       {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
-      {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
+      {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
       {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
       {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme} currentMnemonic={wallet?.mnemonic ?? ''} proxyUrl={proxyUrl} onProxyChange={handleProxyChange} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
+
+      {toast && (
+        <div style={{position:'fixed',bottom:72,left:'50%',transform:'translateX(-50%)',
+          background:'var(--accent)',color:'#0a0b0f',borderRadius:'var(--radius)',
+          padding:'10px 18px',fontSize:13,fontWeight:600,zIndex:9999,whiteSpace:'nowrap',
+          boxShadow:'0 4px 16px rgba(0,0,0,0.4)',animation:'slideUp 0.25s ease',pointerEvents:'none'}}>
+          ✓ {toast}
+        </div>
+      )}
 
       {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">

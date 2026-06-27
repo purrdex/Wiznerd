@@ -244,4 +244,50 @@ test.describe('Wiznerd Wallet', () => {
     await expect(scanning.or(errored).or(noTxs)).toBeVisible({ timeout: 15000 });
   });
 
+  test('Forgot Password wipes wallets and returns to setup', async ({ page }) => {
+    // Create a wallet first so the lock screen will appear on reload
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await completeWalletCreation(page);
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    // Reload to trigger lock screen
+    await page.reload();
+    // Lock screen should show with forgot-password option
+    await expect(page.locator('text=Unlock wallet').or(page.locator('text=Secure your wallet'))).toBeVisible({ timeout: 10000 });
+    const forgotBtn = page.locator('button, a').filter({ hasText: /forgot password/i });
+    await expect(forgotBtn.first()).toBeVisible({ timeout: 5000 });
+    await forgotBtn.first().click();
+    // Confirmation — click Wipe & Restore
+    const wipeBtn = page.locator('button').filter({ hasText: /wipe.*restore|erase|reset/i });
+    await expect(wipeBtn.first()).toBeVisible({ timeout: 5000 });
+    await wipeBtn.first().click();
+    // Should be back on setup screen
+    await expect(page.getByRole('button', { name: 'Create new wallet' })).toBeVisible({ timeout: 10000 });
+    // localStorage wallet data should be cleared
+    const wallets = await page.evaluate(() => localStorage.getItem('chia_wallets'));
+    expect(wallets).toBeNull();
+  });
+
+  test('Change Password — wrong current password is rejected', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await completeWalletCreation(page);
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: /settings/i }).last().click();
+    await expect(page.locator('text=NODE CONFIGURATION').or(page.locator('text=Node Configuration'))).toBeVisible({ timeout: 10000 });
+    // Scroll to and fill change-password fields (section is near bottom of Settings)
+    const currentPwInput = page.locator('input[placeholder="Current password"]');
+    await currentPwInput.scrollIntoViewIfNeeded();
+    await currentPwInput.fill('wrong_password');
+    await page.locator('input[placeholder="New password (min 8 chars)"]').fill('new_secure_pw_1!');
+    await page.locator('input[placeholder="Confirm new password"]').fill('new_secure_pw_1!');
+    await page.getByRole('button', { name: 'Change password' }).click();
+    // Should show error about incorrect current password
+    const errMsg = page.locator('.error-msg').last();
+    await expect(errMsg).toBeVisible({ timeout: 12000 });
+    await expect(errMsg).toHaveText(/incorrect|wrong|failed/i);
+  });
+
 });
