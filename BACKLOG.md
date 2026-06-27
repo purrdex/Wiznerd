@@ -45,10 +45,10 @@ Build: clean (479 KB / 139 KB gzip, no warnings). Tests: 10/10 pass. All items c
 Theme: make transaction history work entirely from the full node — no wallet daemon required.
 Manual CAT sends become visible. XCH history becomes reliable regardless of daemon state.
 
-- [ ] [BUG] History requires wallet daemon — shows nothing when daemon absent or unregistered; rebuild using `get_coin_records_by_puzzle_hashes(include_spent=true)`; compute coin IDs to strip change outputs; group spent coins by block for net-sent amounts — M effort
-- [ ] [BUG] Manual CAT sends invisible — `get_transactions` knows nothing about `push_tx` sends; add CAT history via `get_coin_records_by_hint(include_spent=true)` for all inner puzzle hashes; use `catBalances.coins[].puzzleHash` to resolve assetId/ticker — M effort
-- [ ] [FEAT] Remove proxy XCH price cap `price < 100` — silently drops real prices if XCH ever exceeds $100 (proxy/index.js:175) — S effort
-- [ ] [UX] History: show load-more — full-node scan can find many events; cap initial render at 50, paginate — S effort
+- [x] [BUG] History requires wallet daemon — shows nothing when daemon absent or unregistered; rebuild using `get_coin_records_by_puzzle_hashes(include_spent=true)`; compute coin IDs to strip change outputs; group spent coins by block for net-sent amounts — M effort
+- [x] [BUG] Manual CAT sends invisible — `get_transactions` knows nothing about `push_tx` sends; add CAT history via `get_coin_records_by_hint(include_spent=true)` for all inner puzzle hashes; use `catBalances.coins[].puzzleHash` to resolve assetId/ticker — M effort
+- [x] [FEAT] Remove proxy XCH price cap `price < 100` — silently drops real prices if XCH ever exceeds $100 (proxy/index.js:175) — S effort
+- [x] [UX] History: show load-more — full-node scan can find many events; cap initial render at 50, paginate — S effort
 - [ ] [TEST] Playwright test for HistoryScreen: verify renders without daemon, shows empty state when no node configured — S effort
 
 ## vNext — Analysis Findings
@@ -69,5 +69,5 @@ Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings
   — Result: initial 174→137 KB gzip; BLS chunk (39 KB gzip) loads only at wallet setup/restore; chunk-size build warning eliminated; hexToBytes/bytesToHex/formatMojoToXch/isValidXchAddress extracted to utils.ts to break cats.ts→keys.ts static chain
 - [x] [PERF] NFT metadata requests all fire in parallel (up to 50 at once via `Promise.all`) — IPFS gateways rate-limit concurrent requests; add a concurrency limiter (e.g. 5 at a time) (App.tsx:746) — S effort
 - [x] [PERF] Token metadata cache (`metadataCache` in cats.ts) is module-level in-memory only — cleared on every page reload; persisting to `sessionStorage` would eliminate repeated Dexie/taildatabase queries within a session (cats.ts:88) — S effort
-- [ ] [FEAT] Proxy XCH price guard `price < 100` will silently drop real prices if XCH ever exceeds $100 — raise the cap or remove it (proxy/index.js:175) — S effort
+- [x] [FEAT] Proxy XCH price guard `price < 100` will silently drop real prices if XCH ever exceeds $100 — raise the cap or remove it (proxy/index.js:175) — S effort
 - [ ] [BUG] Transaction history is blank after manual CAT sends — `HistoryScreen` queries the wallet daemon (`get_transactions`) which has no record of sends made via `push_tx` directly to the full node; manual CAT spends need to be surfaced via coin-record lookups on the full node rather than the daemon history — M effort
