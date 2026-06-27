@@ -70,8 +70,8 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [SECURITY] Password-derived mnemonic encryption — Web Crypto API, PBKDF2 key derivation, AES-256-GCM encryption. Prompt for password on first wallet creation and on each new session unlock. Mnemonic never stored in plaintext. MetaMask pattern. — L effort
 - [x] [FEAT] Total portfolio USD value across all assets on home screen — XCH + all CAT holdings summed to single fiat total — S effort
 - [x] [FEAT] Coin consolidation / UTXO merge — send all coins to own address with fee; resolves "no single CAT coin covers this send" dead-end — M effort
-- [ ] [BUG] ReceiveScreen address cap fix — "Show more" uses `slice(0, 20)` but should show all 50 derived addresses — S effort
-- [ ] [PERF] `calculateCoinId` concurrency limit in HistoryScreen — currently fires unlimited parallel digest calls; stalls on 200+ coins — S effort
+- [x] [BUG] ReceiveScreen address cap fix — "Show more" uses `slice(0, 20)` but should show all 50 derived addresses — S effort
+- [x] [PERF] `calculateCoinId` concurrency limit in HistoryScreen — currently fires unlimited parallel digest calls; stalls on 200+ coins — S effort
 
 ## v0.9.0 — Security & Critical Fixes
 

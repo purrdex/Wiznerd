@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.0 — 2026-06-27 (Portfolio, Polish & Security)
+- feat: Password-derived mnemonic encryption — PBKDF2 (600k iterations) + AES-256-GCM via Web Crypto API; mnemonics never stored in plaintext; existing wallets forced through one-time migration to set a password; password re-prompted on each page reload (MetaMask pattern)
+- feat: Total portfolio USD value — XCH + all priced CAT holdings summed to a single fiat total in the balance card; visible whenever at least one CAT has a known price
+- feat: Coin consolidation / UTXO merge — "Consolidate coins" action in WalletHome sends full XCH balance back to primary address, forcing daemon to merge all UTXOs; configurable fee
+- fix: ReceiveScreen address cap — "Show more" now reveals all 50 derived addresses instead of capping at 20
+- fix: `calculateCoinId` concurrency — replaced unbounded `Promise.all` with `mapConcurrent(items, 20)` in HistoryScreen; prevents event-loop stall on 200+ coin wallets
+
 ## v0.9.0 — 2026-06-27 (Security & Critical Fixes)
 - feat: Hot wallet security banner — persistent unencrypted-storage warning with per-session dismiss
 - feat: Reveal seed phrase in Settings — show/hide/copy mnemonic after wallet creation (like MetaMask's "Reveal SRP")
