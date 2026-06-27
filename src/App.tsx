@@ -413,6 +413,9 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
 
   const handleCopy = () => { navigator.clipboard.writeText(primaryAddress); setCopied(true); setTimeout(()=>setCopied(false),2000); };
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
+  const xchUsd = balance !== null && xchPrice > 0 ? Number(balance) / 1_000_000_000_000 * xchPrice : 0;
+  const catUsd = catBalances.reduce((sum, c) => sum + (c.priceUsd > 0 ? c.priceUsd * Number(c.totalMojo) / 1000 : 0), 0);
+  const portfolioUsd = xchUsd + catUsd;
 
   if (selectedCat) {
     return <CatDetailScreen token={selectedCat} onBack={() => setSelectedCat(null)} onSendSuccess={onSendSuccess} wallet={wallet} nodeUrl={nodeUrl}/>;
@@ -439,7 +442,16 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
             <div className="balance-amount">{xchDisplay ?? '—'}<span className="balance-unit">XCH</span></div>
             {balance !== null && xchPrice > 0 && (
               <div style={{fontSize:20,color:'var(--text-secondary)',marginTop:4}}>
-                ${(Number(balance)/1_000_000_000_000*xchPrice).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                ${xchUsd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+              </div>
+            )}
+            {catUsd > 0 && (
+              <div style={{fontSize:13,color:'var(--text-secondary)',marginTop:8,
+                borderTop:'1px solid var(--border)',paddingTop:8,display:'flex',justifyContent:'space-between'}}>
+                <span>Portfolio total</span>
+                <span style={{fontWeight:600,color:'var(--text-primary)'}}>
+                  ${portfolioUsd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+                </span>
               </div>
             )}
           </>

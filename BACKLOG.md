@@ -65,6 +65,14 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [UX] Pending/mempool transactions in history — history only shows confirmed coin records; track recently submitted spend bundles in sessionStorage, show as "Pending" until a matching confirmed record appears on the next poll. — M effort
 - [x] [TEST] Playwright test for HistoryScreen — verify no-node empty state and "Scanning chain…" loading state (carried from v0.7.0). — S effort
 
+## v0.10.0 — Portfolio, Polish & Security
+
+- [x] [SECURITY] Password-derived mnemonic encryption — Web Crypto API, PBKDF2 key derivation, AES-256-GCM encryption. Prompt for password on first wallet creation and on each new session unlock. Mnemonic never stored in plaintext. MetaMask pattern. — L effort
+- [ ] [FEAT] Total portfolio USD value across all assets on home screen — XCH + all CAT holdings summed to single fiat total — S effort
+- [ ] [FEAT] Coin consolidation / UTXO merge — send all coins to own address with fee; resolves "no single CAT coin covers this send" dead-end — M effort
+- [ ] [BUG] ReceiveScreen address cap fix — "Show more" uses `slice(0, 20)` but should show all 50 derived addresses — S effort
+- [ ] [PERF] `calculateCoinId` concurrency limit in HistoryScreen — currently fires unlimited parallel digest calls; stalls on 200+ coins — S effort
+
 ## v0.9.0 — Security & Critical Fixes
 
 - [x] [SECURITY] All wallet mnemonics stored in plaintext in `localStorage['chia_wallets']` — any JS in the same origin (browser extension, injected script, XSS) can read every mnemonic; add persistent banner warning this is an unencrypted hot wallet — L effort
