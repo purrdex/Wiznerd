@@ -116,23 +116,48 @@ function NodeBadge({ status }: { status: NodeStatus | null }) {
 }
 
 function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletState) => void; onCancel?: () => void }) {
-  const [mode, setMode] = useState<'choose'|'new'|'import'>('choose');
+  const [mode, setMode] = useState<'choose'|'new'|'verify'|'import'>('choose');
   const [mnemonic, setMnemonic] = useState('');
   const [importInput, setImportInput] = useState('');
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
+  const [quizIndices, setQuizIndices] = useState<number[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState(['', '', '']);
+  const [quizError, setQuizError] = useState('');
 
   const handleGenerate = async () => {
     const { generateNewMnemonic } = await import('./lib/keys');
     setMnemonic(generateNewMnemonic()); setMode('new');
   };
 
+  const startVerify = () => {
+    // Pick 3 distinct random word positions
+    const positions: number[] = [];
+    while (positions.length < 3) {
+      const idx = Math.floor(Math.random() * 24);
+      if (!positions.includes(idx)) positions.push(idx);
+    }
+    positions.sort((a, b) => a - b);
+    setQuizIndices(positions);
+    setQuizAnswers(['', '', '']);
+    setQuizError('');
+    setMode('verify');
+  };
+
   const handleConfirmNew = async () => {
+    const words = mnemonic.split(' ');
+    const wrong = quizIndices.findIndex((idx, i) =>
+      quizAnswers[i].trim().toLowerCase() !== words[idx]
+    );
+    if (wrong !== -1) {
+      setQuizError(`Word #${quizIndices[wrong] + 1} is incorrect. Check your backup.`);
+      return;
+    }
     try {
       const { deriveAddresses } = await import('./lib/keys');
       const addresses = deriveAddresses(mnemonic, 50);
       onWalletReady({ mnemonic, addresses });
-    } catch(e: any) { setError(`Failed: ${e.message}`); }
+    } catch(e: any) { setQuizError(`Failed: ${e.message}`); }
   };
 
   const handleImport = async () => {
@@ -175,8 +200,55 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
           <input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} style={{width:16,height:16,accentColor:'var(--accent)'}}/>
           I've written down my seed phrase
         </label>
-        <button className="btn btn-primary" disabled={!confirmed} onClick={handleConfirmNew}>Open Wallet</button>
+        <button className="btn btn-primary" disabled={!confirmed} onClick={startVerify}>Continue →</button>
         <button className="btn btn-secondary mt-8" onClick={()=>setMode('choose')}>Back</button>
+      </div>
+    );
+  }
+
+  if (mode === 'verify') {
+    const words = mnemonic.split(' ');
+    return (
+      <div className="setup-screen">
+        <div className="setup-hero">
+          <h1>Verify your <span className="accent">backup</span></h1>
+          <p>Enter the words at these positions to confirm you saved your seed phrase.</p>
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          {quizIndices.map((wordIdx, qi) => (
+            <div key={qi} style={{background:'var(--bg-card)',border:`1px solid ${quizAnswers[qi].trim().toLowerCase() === words[wordIdx] && quizAnswers[qi] ? 'var(--accent)' : 'var(--border)'}`,
+              borderRadius:'var(--radius)',padding:'12px 14px'}}>
+              <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:6,fontWeight:600}}>
+                Word #{wordIdx + 1}
+              </div>
+              <input
+                type="text"
+                autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                placeholder={`Enter word #${wordIdx + 1}`}
+                value={quizAnswers[qi]}
+                onChange={e => {
+                  const next = [...quizAnswers];
+                  next[qi] = e.target.value;
+                  setQuizAnswers(next);
+                  setQuizError('');
+                }}
+                style={{width:'100%',boxSizing:'border-box',padding:'9px 12px',
+                  background:'var(--bg-input)',border:'1px solid var(--border)',
+                  borderRadius:'var(--radius-sm)',color:'var(--text-primary)',fontSize:14,
+                  fontFamily:'var(--font-mono)'}}
+              />
+            </div>
+          ))}
+        </div>
+        {quizError && <div className="error-msg" style={{marginTop:8}}>{quizError}</div>}
+        <button
+          className="btn btn-primary"
+          style={{marginTop:16}}
+          disabled={quizAnswers.some(a => !a.trim())}
+          onClick={handleConfirmNew}>
+          Open Wallet
+        </button>
+        <button className="btn btn-secondary mt-8" onClick={() => setMode('new')}>Back</button>
       </div>
     );
   }

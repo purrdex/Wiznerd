@@ -1,4 +1,40 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+// Completes the full wallet creation flow including the 3-word backup verification quiz.
+async function completeWalletCreation(page: Page) {
+  await page.click('text=Create new wallet');
+  await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+
+  // Capture mnemonic words before navigating away
+  const wordValues = page.locator('.mnemonic-word .word-value');
+  await expect(wordValues.first()).toBeVisible();
+  const wordCount = await wordValues.count();
+  const words: string[] = [];
+  for (let i = 0; i < wordCount; i++) {
+    words.push((await wordValues.nth(i).textContent()) ?? '');
+  }
+
+  // Confirm backup and proceed to quiz
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: /Continue/i }).click();
+
+  // Verify quiz screen
+  await expect(page.locator('text=Verify your backup')).toBeVisible({ timeout: 5000 });
+
+  // Fill in the quiz inputs using the placeholder to determine which word is needed
+  const inputs = page.locator('input[placeholder^="Enter word"]');
+  const inputCount = await inputs.count();
+  for (let i = 0; i < inputCount; i++) {
+    const placeholder = (await inputs.nth(i).getAttribute('placeholder')) ?? '';
+    const m = placeholder.match(/Enter word #(\d+)/);
+    if (m) {
+      const wordIdx = parseInt(m[1], 10) - 1;
+      await inputs.nth(i).fill(words[wordIdx] ?? '');
+    }
+  }
+
+  await page.getByRole('button', { name: 'Open Wallet' }).click();
+}
 
 test.describe('Wiznerd Wallet', () => {
 
@@ -36,6 +72,40 @@ test.describe('Wiznerd Wallet', () => {
     await expect(page.locator('text=Copy seed phrase')).toBeVisible();
   });
 
+  test('wallet creation flow — verification quiz appears after confirm', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.click('text=Create new wallet');
+    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: /Continue/i }).click();
+    await expect(page.locator('text=Verify your backup')).toBeVisible({ timeout: 5000 });
+    // Should show 3 quiz inputs
+    const inputs = page.locator('input[placeholder^="Enter word"]');
+    await expect(inputs).toHaveCount(3);
+  });
+
+  test('wallet creation quiz rejects wrong words', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.click('text=Create new wallet');
+    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: /Continue/i }).click();
+    await expect(page.locator('text=Verify your backup')).toBeVisible({ timeout: 5000 });
+    // Fill all inputs with wrong word
+    const inputs = page.locator('input[placeholder^="Enter word"]');
+    const count = await inputs.count();
+    for (let i = 0; i < count; i++) {
+      await inputs.nth(i).fill('wrongword');
+    }
+    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await expect(page.locator('.error-msg')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('.error-msg')).toContainText('incorrect');
+  });
+
   test('mnemonic import shows validation error', async ({ page }) => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
@@ -51,12 +121,7 @@ test.describe('Wiznerd Wallet', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    // Create wallet
-    await page.click('text=Create new wallet');
-    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
-    // Confirm backup and open wallet
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await completeWalletCreation(page);
     // Wallet home screen should appear (with or without balance data)
     await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
     // Token section should render (empty state or with tokens)
@@ -116,15 +181,24 @@ test.describe('Wiznerd Wallet', () => {
     }
   });
 
+  test('Settings tab shows seed phrase reveal section', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await completeWalletCreation(page);
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    await page.click('text=Settings');
+    await expect(page.locator('text=Reveal seed phrase')).toBeVisible();
+    await page.locator('text=Show seed phrase').click();
+    // Should now show the mnemonic grid (24 words in the reveal panel)
+    await expect(page.locator('text=KEEP THIS PRIVATE')).toBeVisible({ timeout: 3000 });
+  });
+
   test('HistoryScreen: no-node empty state', async ({ page }) => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    // Create wallet with no node configured
-    await page.click('text=Create new wallet');
-    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await completeWalletCreation(page);
     await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
     await page.click('text=History');
     await expect(page.locator('text=Transaction History')).toBeVisible();
@@ -138,10 +212,7 @@ test.describe('Wiznerd Wallet', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    await page.click('text=Create new wallet');
-    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await completeWalletCreation(page);
     await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
     // Inject a non-working node URL then reload so App re-reads it from localStorage
     await page.evaluate(() => localStorage.setItem('chia_node_url', 'http://localhost:19999'));
