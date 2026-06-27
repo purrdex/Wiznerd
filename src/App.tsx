@@ -372,6 +372,10 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   const [balance, setBalance] = useState<bigint | null>(null);
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
   const [selectedCat, setSelectedCat] = useState<CatBalance | null>(null);
+  const [consolidateOpen, setConsolidateOpen] = useState(false);
+  const [consolidateFee, setConsolidateFee] = useState('0.001');
+  const [consolidateStatus, setConsolidateStatus] = useState('');
+  const [consolidateBusy, setConsolidateBusy] = useState(false);
   const primaryAddress = wallet.addresses[0]?.address || '';
   const hasLoadedRef = React.useRef(false);
 
@@ -412,6 +416,34 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   }, [catBalances]);
 
   const handleCopy = () => { navigator.clipboard.writeText(primaryAddress); setCopied(true); setTimeout(()=>setCopied(false),2000); };
+
+  const handleConsolidate = async () => {
+    if (!balance || balance <= 0n || !primaryAddress) return;
+    const feeMojo = BigInt(Math.round(parseFloat(consolidateFee || '0') * 1_000_000_000_000));
+    if (feeMojo >= balance) { setConsolidateStatus('Fee exceeds balance'); return; }
+    setConsolidateBusy(true);
+    setConsolidateStatus('');
+    try {
+      const amountMojo = balance - feeMojo;
+      const res = await walletRpc('send_transaction', {
+        wallet_id: 1,
+        address: primaryAddress,
+        amount: amountMojo,
+        fee: feeMojo,
+        memos: ['consolidate'],
+      });
+      if (res.success) {
+        setConsolidateStatus('Consolidation submitted');
+        setConsolidateOpen(false);
+        onSendSuccess();
+      } else {
+        setConsolidateStatus(res.error || 'Failed');
+      }
+    } catch (e: any) {
+      setConsolidateStatus(e.message);
+    } finally { setConsolidateBusy(false); }
+  };
+
   const xchDisplay = balance !== null ? formatMojoToXch(balance) : null;
   const xchUsd = balance !== null && xchPrice > 0 ? Number(balance) / 1_000_000_000_000 * xchPrice : 0;
   const catUsd = catBalances.reduce((sum, c) => sum + (c.priceUsd > 0 ? c.priceUsd * Number(c.totalMojo) / 1000 : 0), 0);
@@ -525,6 +557,45 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
           </>
         );
       })()}
+
+      {/* Consolidate UTXOs */}
+      {balance !== null && balance > 0n && !consolidateOpen && (
+        <button onClick={() => { setConsolidateOpen(true); setConsolidateStatus(''); }}
+          style={{background:'none',border:'none',color:'var(--text-secondary)',fontSize:12,
+            cursor:'pointer',padding:'4px 0',textDecoration:'underline',textAlign:'left'}}>
+          Consolidate coins
+        </button>
+      )}
+      {consolidateOpen && (
+        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',
+          padding:'14px',marginTop:4}}>
+          <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:10}}>
+            Merges all XCH UTXOs into one by sending your full balance back to yourself.
+          </div>
+          <label style={{fontSize:11,color:'var(--text-secondary)',display:'block',marginBottom:4}}>Fee (XCH)</label>
+          <input
+            type="number" step="0.0001" min="0"
+            value={consolidateFee}
+            onChange={e=>{setConsolidateFee(e.target.value);setConsolidateStatus('');}}
+            style={{width:'100%',boxSizing:'border-box',padding:'9px 12px',background:'var(--bg-input)',
+              border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
+              color:'var(--text-primary)',fontSize:14,marginBottom:10}}
+          />
+          {consolidateStatus && (
+            <div style={{fontSize:12,color: consolidateStatus.includes('submitted') ? 'var(--accent)' : '#ff6b6b',marginBottom:8}}>
+              {consolidateStatus}
+            </div>
+          )}
+          <div style={{display:'flex',gap:8}}>
+            <button className="btn btn-primary" style={{flex:1,padding:'8px 0',fontSize:13}}
+              disabled={consolidateBusy} onClick={handleConsolidate}>
+              {consolidateBusy ? 'Sending…' : 'Consolidate'}
+            </button>
+            <button className="btn btn-secondary" style={{flex:1,padding:'8px 0',fontSize:13}}
+              onClick={() => setConsolidateOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
