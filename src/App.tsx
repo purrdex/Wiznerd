@@ -1357,6 +1357,7 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
   );
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelMsg, setCancelMsg] = useState<Record<string, string>>({});
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
 
   async function handleCancelClawback(entry: ClawbackEntry) {
     setCancellingId(entry.txId);
@@ -1579,33 +1580,63 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
       })}
 
       {visible.map(ev => {
-        const amount = ev.isCat
-          ? formatCatAmount(ev.amount)
-          : formatMojoToXch(ev.amount);
+        const amountStr = ev.isCat ? formatCatAmount(ev.amount) : formatMojoToXch(ev.amount);
         const date = new Date(ev.timestamp * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const expanded = expandedTxId === ev.txId;
         return (
-          <div key={ev.txId} className="tx-row">
-            <div className={`tx-icon ${ev.type === 'sent' ? 'tx-send' : 'tx-recv'}`}>
-              {ev.type === 'sent' ? '↑' : '↓'}
-            </div>
-            <div className="tx-info">
-              <div className="tx-top">
-                <span className="tx-type">{ev.type === 'sent' ? 'Sent' : 'Received'}</span>
-                <span className={`tx-amount ${ev.type === 'sent' ? 'tx-amount-send' : 'tx-amount-recv'}`}>
-                  {ev.type === 'sent' ? '−' : '+'}{amount} {ev.ticker}
-                </span>
+          <div key={ev.txId}>
+            <div className="tx-row" style={{cursor:'pointer'}}
+              onClick={() => setExpandedTxId(expanded ? null : ev.txId)}>
+              <div className={`tx-icon ${ev.type === 'sent' ? 'tx-send' : 'tx-recv'}`}>
+                {ev.type === 'sent' ? '↑' : '↓'}
               </div>
-              <div className="tx-bottom">
-                <span className="tx-date">{dateStr} · {timeStr}</span>
+              <div className="tx-info">
+                <div className="tx-top">
+                  <span className="tx-type">{ev.type === 'sent' ? 'Sent' : 'Received'}</span>
+                  <span className={`tx-amount ${ev.type === 'sent' ? 'tx-amount-send' : 'tx-amount-recv'}`}>
+                    {ev.type === 'sent' ? '−' : '+'}{amountStr} {ev.ticker}
+                  </span>
+                </div>
+                <div className="tx-bottom">
+                  <span className="tx-date">{dateStr} · {timeStr}</span>
+                  <span style={{fontSize:10,color:'var(--text-dim)',marginLeft:6}}>{expanded ? '▲' : '▼'}</span>
+                </div>
+              </div>
+            </div>
+            {expanded && (
+              <div style={{margin:'0 0 4px 0',background:'var(--bg-card)',border:'1px solid var(--border)',
+                borderRadius:'0 0 var(--radius) var(--radius)',padding:'10px 14px',
+                display:'flex',flexDirection:'column',gap:6}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
+                  <span style={{color:'var(--text-secondary)'}}>Block</span>
+                  <span style={{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>#{ev.blockIndex.toLocaleString()}</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
+                  <span style={{color:'var(--text-secondary)'}}>Amount (mojo)</span>
+                  <span style={{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>{ev.amount.toLocaleString()}</span>
+                </div>
+                {ev.assetId && (
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
+                    <span style={{color:'var(--text-secondary)'}}>Asset ID</span>
+                    <span style={{color:'var(--text-dim)',fontFamily:'var(--font-mono)',fontSize:9}}>
+                      {ev.assetId.slice(0,16)}…
+                    </span>
+                  </div>
+                )}
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:11,alignItems:'center'}}>
+                  <span style={{color:'var(--text-secondary)'}}>Coin ID</span>
+                  <span style={{color:'var(--text-dim)',fontFamily:'var(--font-mono)',fontSize:9}}>
+                    {ev.txId.length > 20 ? `${ev.txId.slice(0,14)}…` : ev.txId}
+                  </span>
+                </div>
                 <a href={`https://www.spacescan.io/block/${ev.blockIndex}`} target="_blank" rel="noopener noreferrer"
-                  style={{fontSize:10,color:'var(--accent)',textDecoration:'none',marginLeft:6}}
-                  onClick={e => e.stopPropagation()}>
-                  ↗ Explorer
+                  style={{fontSize:11,color:'var(--accent)',textDecoration:'none',marginTop:2}}>
+                  ↗ View block on Spacescan
                 </a>
               </div>
-            </div>
+            )}
           </div>
         );
       })}
