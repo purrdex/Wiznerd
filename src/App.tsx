@@ -420,7 +420,8 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
     walletList: WalletEntry[]; activeWalletId: string|null;
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
-    hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void }) {
+    hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void;
+    theme: 'dark'|'light'; onToggleTheme:()=>void }) {
   const [input, setInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NodeStatus|null>(null);
@@ -477,6 +478,27 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
         >
           <div style={{
             position:'absolute',top:3,left: hideSmallBalances ? 23 : 3,
+            width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left 0.2s',
+          }}/>
+        </button>
+      </div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+        background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',
+        padding:'12px 14px',marginTop:8}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>Light mode</div>
+          <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>Switch between dark and light theme</div>
+        </div>
+        <button
+          onClick={onToggleTheme}
+          style={{
+            width:44,height:24,borderRadius:12,border:'none',cursor:'pointer',
+            background: theme === 'light' ? 'var(--accent)' : 'var(--border)',
+            position:'relative',transition:'background 0.2s',flexShrink:0,
+          }}
+        >
+          <div style={{
+            position:'absolute',top:3,left: theme === 'light' ? 23 : 3,
             width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left 0.2s',
           }}/>
         </button>
@@ -1662,6 +1684,7 @@ const LEGACY_STORAGE_KEY = 'chia_wallet_mnemonic';
 const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
 const HIDE_SMALL_KEY = 'chia_hide_small';
+const THEME_KEY = 'chia_theme';
 
 export default function App() {
   const [wallet, setWallet] = useState<WalletState|null>(null);
@@ -1676,6 +1699,14 @@ export default function App() {
     catch { return []; }
   });
   const [hideSmallBalances, setHideSmallBalances] = useState(() => localStorage.getItem(HIDE_SMALL_KEY) === '1');
+  const [theme, setTheme] = useState<'dark'|'light'>(() => {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === 'light' ? 'light' : 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
@@ -1813,6 +1844,12 @@ export default function App() {
     localStorage.setItem(HIDE_SMALL_KEY, value ? '1' : '0');
   };
 
+  const handleToggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem(THEME_KEY, next);
+  };
+
   const isWallet = wallet !== null;
 
   const activeWalletName = walletList.find(w => w.id === activeWalletId)?.name;
@@ -1835,7 +1872,7 @@ export default function App() {
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall}/>}
+      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme}/>}
 
       {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">

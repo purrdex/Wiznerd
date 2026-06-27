@@ -20,6 +20,22 @@
   --radius-sm: 8px;
 }
 
+[data-theme="light"] {
+  --bg-base:     #f4f6fb;
+  --bg-card:     #ffffff;
+  --bg-input:    #eef0f7;
+  --bg-hover:    #e8eaf3;
+  --border:      #d0d4e4;
+  --accent:      #2e7a60;
+  --accent-dim:  #1e5440;
+  --accent-glow: rgba(46,122,96,0.12);
+  --warn:        #b35a1a;
+  --error:       #c0392b;
+  --text-primary:   #0a0b0f;
+  --text-secondary: #4a4f62;
+  --text-dim:       #9ea3b5;
+}
+
 html, body, #root {
   height: 100%;
   background: var(--bg-base);
