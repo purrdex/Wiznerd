@@ -607,7 +607,7 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   const handleCopy = (address: string, index: number) => {
     navigator.clipboard.writeText(address); setCopied(index); setTimeout(()=>setCopied(null),2000);
   };
-  const displayed = showAll ? wallet.addresses.slice(0, 20) : wallet.addresses.slice(0, 3);
+  const displayed = showAll ? wallet.addresses : wallet.addresses.slice(0, 3);
   const selectedAddress = wallet.addresses[selectedIndex]?.address || '';
 
   return (
@@ -1703,9 +1703,9 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
 
         // Compute coin IDs for all records (for change-output detection)
         const xchIdMap = new Map<CoinRecord, string>();
-        await Promise.all(xchRecords.map(async r => {
+        await mapConcurrent(xchRecords, 20, async r => {
           xchIdMap.set(r, await calculateCoinId(r.coin.parent_coin_info, r.coin.puzzle_hash, r.coin.amount));
-        }));
+        });
         const ownXchIds = new Set(xchIdMap.values());
 
         // Received: external coins (parent not ours)
@@ -1787,9 +1787,9 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
 
           // Compute CAT coin IDs
           const catIdMap = new Map<any, string>();
-          await Promise.all(annotated.map(async ({ cr }) => {
+          await mapConcurrent(annotated, 20, async ({ cr }) => {
             catIdMap.set(cr, await calculateCoinId(cr.coin.parent_coin_info, cr.coin.puzzle_hash, cr.coin.amount));
-          }));
+          });
           const ownCatIds = new Set(catIdMap.values());
 
           // Received CAT: external parent
