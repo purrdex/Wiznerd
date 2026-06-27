@@ -74,9 +74,18 @@ function loadPuzzleCache(): Record<string, { puzzleReveal: string; solution: str
 
 let puzzleCache = loadPuzzleCache();
 
+const PUZZLE_CACHE_MAX = 500;
+
 function savePuzzleCache(): void {
-  try { localStorage.setItem(PUZZLE_CACHE_KEY, JSON.stringify(puzzleCache)); }
-  catch { /* storage full */ }
+  try {
+    const keys = Object.keys(puzzleCache);
+    if (keys.length > PUZZLE_CACHE_MAX) {
+      // Keep the most recently-added entries (Object.keys preserves insertion order)
+      const toRemove = keys.slice(0, keys.length - PUZZLE_CACHE_MAX);
+      for (const k of toRemove) delete puzzleCache[k];
+    }
+    localStorage.setItem(PUZZLE_CACHE_KEY, JSON.stringify(puzzleCache));
+  } catch { /* storage full — skip silently; in-memory cache still works */ }
 }
 
 export async function getPuzzleAndSolution(nodeUrl: string, coinId: string, height: number): Promise<{ puzzleReveal: string; solution: string } | null> {
@@ -168,10 +177,18 @@ async function fetchAllDexieAssetIds(): Promise<string[]> {
 
 // puzzle_hash → assetId cache so we don't brute-force on every refresh
 const PH_ASSET_KEY = 'chia_ph_asset_map';
+const PH_ASSET_MAX = 2000;
 let phAssetCache: Record<string, string> = {};
 try { phAssetCache = JSON.parse(localStorage.getItem(PH_ASSET_KEY) || '{}'); } catch {}
 function savePHAssetCache() {
-  try { localStorage.setItem(PH_ASSET_KEY, JSON.stringify(phAssetCache)); } catch {}
+  try {
+    const keys = Object.keys(phAssetCache);
+    if (keys.length > PH_ASSET_MAX) {
+      const toRemove = keys.slice(0, keys.length - PH_ASSET_MAX);
+      for (const k of toRemove) delete phAssetCache[k];
+    }
+    localStorage.setItem(PH_ASSET_KEY, JSON.stringify(phAssetCache));
+  } catch {}
 }
 
 // For genesis/eve coins whose parent is NOT a CAT, infer assetId by testing the

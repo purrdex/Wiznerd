@@ -230,6 +230,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
   const [selectedCat, setSelectedCat] = useState<CatBalance | null>(null);
   const primaryAddress = wallet.addresses[0]?.address || '';
+  const hasLoadedRef = React.useRef(false);
 
   const fetchAll = useCallback(async () => {
     if (!nodeUrl) { setLoading(false); return; }
@@ -243,11 +244,12 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
       setBalance(result.totalMojo);
       setXchPrice(xch);
       setProxyError('');
+      hasLoadedRef.current = true;
       const cats = await getCatBalances(nodeUrl, puzzleHashes, xch);
       setCatBalances(cats);
       onCatBalancesChange(cats);
     } catch (e: any) {
-      if (balance === null) setProxyError('Cannot reach proxy. Is it running on localhost:3001?');
+      if (!hasLoadedRef.current) setProxyError('Cannot reach proxy. Is it running on localhost:3001?');
     }
     finally { setLoading(false); }
   }, [nodeUrl, wallet.addresses]);
@@ -734,13 +736,32 @@ interface NftData {
 
 const WALLET_PROXY = 'http://localhost:3001';
 
+function serializeJSON(v: unknown): string {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'bigint') return v.toString();
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (typeof v === 'string') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(serializeJSON).join(',')}]`;
+  if (typeof v === 'object') {
+    const pairs = Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => val !== undefined)
+      .map(([k, val]) => `${JSON.stringify(k)}:${serializeJSON(val)}`);
+    return `{${pairs.join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
 async function walletRpc(endpoint: string, body: Record<string, unknown> = {}) {
   const res = await fetch(`${WALLET_PROXY}/wallet/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: serializeJSON(body),
     signal: AbortSignal.timeout(15000),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`Wallet RPC ${endpoint} failed (${res.status}): ${text.slice(0, 200)}`);
+  }
   return res.json();
 }
 
@@ -1781,7 +1802,7 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
     const feeF = parseFloat(fee || '0');
     const feeMojo = BigInt(isNaN(feeF) ? 0 : Math.round(feeF * 1_000_000_000_000));
     try {
-      const res = await walletRpc('take_offer', { offer: offerStr.trim(), fee: Number(feeMojo) });
+      const res = await walletRpc('take_offer', { offer: offerStr.trim(), fee: feeMojo });
       if (res.success) { setStatus('success'); setResultMsg('Offer accepted! Transaction submitted to the network.'); }
       else { setStatus('error'); setResultMsg(res.error || 'Failed to accept offer'); }
     } catch (e: any) { setStatus('error'); setResultMsg(e.message); }
@@ -1811,22 +1832,22 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
         : BigInt(Math.round(wantAmtF * 1000));
       const feeMojo = BigInt(Math.round(createFeeF * 1_000_000_000_000));
 
-      const offerDict: Record<string, number> = {};
+      const offerDict: Record<string, bigint> = {};
       // Give side (negative = offering)
-      if (giveType === 'xch') offerDict['1'] = -Number(giveMojo);
-      else offerDict[giveAssetId.toLowerCase()] = -Number(giveMojo);
+      if (giveType === 'xch') offerDict['1'] = -giveMojo;
+      else offerDict[giveAssetId.toLowerCase()] = -giveMojo;
       // Want side (positive = requesting)
       if (wantType === 'xch') {
-        const cur = offerDict['1'] ?? 0;
-        offerDict['1'] = cur + Number(wantMojo);
+        const cur = offerDict['1'] ?? 0n;
+        offerDict['1'] = cur + wantMojo;
       } else {
         const key = wantAssetId.toLowerCase();
-        const cur = offerDict[key] ?? 0;
-        offerDict[key] = cur + Number(wantMojo);
+        const cur = offerDict[key] ?? 0n;
+        offerDict[key] = cur + wantMojo;
       }
 
       const res = await walletRpc('create_offer_for_ids', {
-        offer: offerDict, fee: Number(feeMojo), validate_only: false,
+        offer: offerDict, fee: feeMojo, validate_only: false,
       });
       if (res.success && res.offer) { setCreatedOffer(res.offer); }
       else throw new Error(res.error || 'Failed to create offer');
@@ -2139,8 +2160,8 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
       if (useClawback) {
         const res = await walletRpc('send_transaction', {
           wallet_id: 1,
-          amount: Number(amountMojo),
-          fee: Number(feeMojo),
+          amount: amountMojo,
+          fee: feeMojo,
           address: toAddress,
           puzzle_decorator_list: [{ decorator: 'CLAWBACK', clawback_timelock: clawbackTimelock }],
         });

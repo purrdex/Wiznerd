@@ -12,8 +12,13 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 export function formatMojoToXch(mojo: bigint): string {
-  const xch = Number(mojo) / 1_000_000_000_000;
-  return xch.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 6 });
+  const MOJO = 1_000_000_000_000n;
+  const whole = mojo / MOJO;
+  const frac = mojo % MOJO;
+  const fracStr = frac.toString().padStart(12, '0').slice(0, 6);
+  const trimmed = fracStr.replace(/0+$/, '');
+  const display = trimmed.length >= 3 ? trimmed : fracStr.slice(0, 3);
+  return `${whole.toLocaleString('en-US')}.${display}`;
 }
 
 export function isValidXchAddress(address: string): boolean {
