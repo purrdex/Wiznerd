@@ -65,6 +65,17 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [UX] Pending/mempool transactions in history — history only shows confirmed coin records; track recently submitted spend bundles in sessionStorage, show as "Pending" until a matching confirmed record appears on the next poll. — M effort
 - [x] [TEST] Playwright test for HistoryScreen — verify no-node empty state and "Scanning chain…" loading state (carried from v0.7.0). — S effort
 
+## v0.9.0 — Security & Critical Fixes
+
+- [ ] [SECURITY] All wallet mnemonics stored in plaintext in `localStorage['chia_wallets']` — any JS in the same origin (browser extension, injected script, XSS) can read every mnemonic; add persistent banner warning this is an unencrypted hot wallet — L effort
+- [x] [SECURITY] `puzzleCache` and `phAssetCache` in `localStorage` grow unbounded with no TTL or size cap — silent `setItem` failure once storage fills causes cache/memory divergence and repeated RPC calls — M effort
+- [x] [BUG] `formatMojoToXch` coerces BigInt through `Number()` before dividing — `Number(mojo) / 1_000_000_000_000` loses precision above ~9,007 XCH; affects every balance display and history row (utils.ts) — S effort
+- [x] [BUG] Clawback send path passes `Number(amountMojo)` / `Number(feeMojo)` to `walletRpc` — same precision-loss pattern fixed for regular sends; wrong mojo count above ~9,007 XCH (App.tsx) — S effort
+- [x] [BUG] `OffersScreen` create/take paths pass `Number(giveMojo)`, `Number(wantMojo)`, `Number(feeMojo)` to wallet daemon — precision lost above ~9,007 XCH equivalent (App.tsx) — S effort
+- [x] [BUG] `WalletHome` `fetchAll` closes over stale `balance` state — `useCallback` missing `balance` dep; shows "Cannot reach proxy" on any transient failure even when a valid cached balance is displayed (App.tsx) — S effort
+- [ ] [FEAT] View/re-export seed phrase from Settings — no way to reveal stored mnemonic after setup; any user who needs to migrate or re-backup is stuck — S effort
+- [ ] [UX] Seed phrase verification quiz on wallet creation — currently a checkbox; MetaMask and Sage require re-entering 3 random words; highest-impact new-user security gap — S effort
+
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.
 

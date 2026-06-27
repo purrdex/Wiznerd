@@ -229,6 +229,9 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   const [balance, setBalance] = useState<bigint | null>(null);
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
   const [selectedCat, setSelectedCat] = useState<CatBalance | null>(null);
+  const [hotWalletDismissed, setHotWalletDismissed] = useState(
+    () => sessionStorage.getItem('chia_hw_banner_dismissed') === '1'
+  );
   const primaryAddress = wallet.addresses[0]?.address || '';
   const hasLoadedRef = React.useRef(false);
 
@@ -277,6 +280,23 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
 
   return (
     <div className="wallet-screen">
+      {/* Hot wallet security banner */}
+      {!hotWalletDismissed && (
+        <div style={{background:'rgba(224,123,58,0.1)',border:'1px solid rgba(224,123,58,0.5)',
+          borderRadius:8,padding:'10px 14px',fontSize:11,color:'var(--warn)',
+          display:'flex',alignItems:'flex-start',gap:8,marginBottom:4}}>
+          <span style={{flexShrink:0}}>⚠️</span>
+          <span style={{flex:1}}>
+            <strong>Unencrypted hot wallet.</strong> Your seed phrase is stored in plaintext in browser storage.
+            Do not store large amounts. Use a hardware wallet for significant holdings.
+          </span>
+          <button onClick={() => {
+            sessionStorage.setItem('chia_hw_banner_dismissed', '1');
+            setHotWalletDismissed(true);
+          }} style={{background:'none',border:'none',cursor:'pointer',color:'var(--warn)',
+            fontSize:14,lineHeight:1,flexShrink:0,padding:0}}>✕</button>
+        </div>
+      )}
       {/* Balance card */}
       {proxyError && (
         <div style={{background:'rgba(220,50,50,0.1)',border:'1px solid #dc3232',
