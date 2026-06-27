@@ -84,6 +84,21 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [FEAT] View/re-export seed phrase from Settings — no way to reveal stored mnemonic after setup; any user who needs to migrate or re-backup is stuck — S effort
 - [x] [UX] Seed phrase verification quiz on wallet creation — currently a checkbox; MetaMask and Sage require re-entering 3 random words; highest-impact new-user security gap — S effort
 
+## v0.11.0 — Bug Fixes & Web Deployment
+
+- [x] [BUG] HistoryScreen `useEffect` has empty deps — wallet switches and nodeUrl changes don't trigger a history reload; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Password setup screen missing Back button — user stranded on 'password' mode with no way back; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [UX/SEC] No Forgot Password / recovery path on LockScreen — users who forget their password appear permanently locked out; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [REFACTOR] Dead code removal — `sendXch` and `selectCoins` in spend.ts; inline XCH send path in SendScreen using `walletRpc`; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [BUG] Proxy full-node route missing timeout — `app.post('/:endpoint')` has no timeout unlike the wallet daemon route; promoted from vNext Code Quality Analysis 2026-06-27
+- [x] [UX/SEC] No Change Password in Settings — v0.10.0 added encryption but no way to rotate the password; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [UX/SEC] No idle auto-lock timeout — sessionKey stays in memory until tab close with no inactivity timeout; promoted from vNext Competitive Analysis 2026-06-27
+- [x] [UX] Remove "Your Address" from WalletHome — redundant with Receive tab; home screen goes directly balance card → Assets
+- [x] [FEAT] Proxy URL configurable in Settings — remove hardcoded `localhost:3001`; stored in localStorage; overrides `VITE_PROXY_URL` env var
+- [x] [FEAT] Public Chia node dropdown in Settings — quick-select from a list of known public nodes alongside the manual URL field
+- [x] [FEAT] Deploy script for Vercel/Netlify — `vercel.json` + `netlify.toml` with SPA routing rewrites
+- [x] [FEAT] Environment config via `.env` — `VITE_PROXY_URL` default; `.env.example` checked in; proxy URL and node URL resolved from env → localStorage → default
+
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.
 
@@ -149,3 +164,37 @@ Compared against: Sage Wallet, Official Chia GUI, Goby (browser extension), Meta
 - [ ] [FEAT] NFT minting — Sage and the Official GUI provide an in-wallet mint flow (upload data URI, set royalty, link to DID); creators must use a different wallet entirely; positions Wiznerd as a secondary tool for the creator segment — L effort
 - [ ] [FEAT] CAT token issuance — Sage and the Official GUI allow issuing new CAT tokens (TAIL puzzle, mint amount, metadata); every project team that needs to create tokens must use another wallet; niche but high-value recurring segment — L effort
 - [ ] [FEAT] dApp connectivity (CHIP-0002 wallet standard) — Goby is the only Chia wallet implementing the browser wallet API that allows dApps to request signatures without copy-pasting offer strings; without this Wiznerd cannot participate in the emerging Chia dApp ecosystem; requires a browser-extension architecture — L effort
+
+## vNext — Code Quality Analysis (2026-06-27, v0.10.0 audit)
+Build: clean. Tests: 15/15 pass. Findings sorted by user impact. Prior-session findings in the 2026-06-27 section above are not repeated here.
+
+- [ ] [BUG] `HistoryScreen` `useEffect` has empty deps but closes over `wallet.addresses` — switching wallets while the History tab is mounted leaves the previous wallet's transaction list visible with no reload; navigating away and back is the only recovery (App.tsx:~1693) — M effort
+- [ ] [BUG] `HistoryScreen` nodeUrl change not picked up — same empty-deps issue: if the user visits History before setting a node URL, then configures one in Settings, the "Set a node in Settings" message persists forever without an unmount/remount — S effort
+- [ ] [BUG] `CatDetailScreen` reads address book from `localStorage` directly — `useMemo(() => JSON.parse(localStorage.getItem('chia_address_book') || '[]'), [])` bypasses the `ADDRESS_BOOK_KEY` constant and React state; entries added during the same session won't appear in the CAT-send address picker until a page reload (App.tsx:~1087) — S effort
+- [ ] [BUG] `consolidateFee` NaN cascade on non-numeric input — `parseFloat(input)` → `Math.round(NaN)` → `BigInt(NaN)` throws "Cannot convert NaN to BigInt"; the raw JS error surfaces to the user instead of a validation message — S effort
+- [ ] [BUG] `sendXch` in `spend.ts` is orphaned dead code — `SendScreen.handleSend` calls `walletRpc('send_transaction', ...)` directly and has done so since v0.8.0; `sendXch` and its exported `selectCoins` stub are never called but still bloat the bundle — S effort (spend.ts:23–52)
+- [ ] [BUG] `WalletHome.fetchAll` silently swallows errors after first successful load — once `hasLoadedRef.current` is true, all subsequent poll failures are caught and ignored; the balance card shows stale data with no visual indicator that data may be outdated — S effort
+- [ ] [BUG] `LockScreen` migration path uses `Promise.all` for wallet encryption — if any one wallet fails to encrypt, the entire batch throws and the user cannot proceed; `Promise.allSettled` with per-wallet error display would let the rest succeed — S effort (App.tsx:~LockScreen handleMigrate)
+- [ ] [BUG] `onRemoveWallet` prop typed as `(id: string) => void` but `handleRemoveWallet` is `async` — the returned Promise is discarded; if the async path throws during salt/key cleanup after removing the last wallet, the error is silently lost and state may be partially reset — S effort
+- [ ] [BUG] Proxy full-node route has no request timeout — `app.post('/:endpoint', ...)` has no timeout; a slow node response holds the proxy worker open indefinitely; the wallet daemon route correctly has `timeout: 20000` but the full-node route does not (chia-proxy/index.js:39–57) — S effort
+- [ ] [UX] Password setup screen ('password' mode) has no Back button — a user who passes the quiz and reaches the password step cannot return to the mnemonic screen if they realize they didn't write down their words; the only escape is a page reload which loses all state — S effort
+- [ ] [UX] No "Forgot password?" escape hatch on LockScreen — when the password is wrong the error gives no recovery path; users who forget their password appear permanently locked out; a "Restore from seed phrase" link at the bottom would surface the wipe-and-restore path that does exist but is invisible — S effort
+- [ ] [UX] PBKDF2 derivation has no progress spinner — "Encrypting…" button label appears for 1–3 s on mid-range hardware with no spinner; users may click the disabled button repeatedly thinking the app froze — S effort
+- [ ] [PERF] `toBase64` uses spread-into-`String.fromCharCode` — `btoa(String.fromCharCode(...bytes))` throws `RangeError: Maximum call stack size exceeded` for buffers > ~65 KB; safe for today's 32-byte salt and 264-byte ciphertext, but a copy-paste into a future larger-buffer use case would fail silently (crypto.ts:18) — S effort
+- [ ] [TEST] LockScreen unlock flow has minimal coverage — only one test exercises the `unlockWallet()` helper (HistoryScreen scanning state); wrong-password rejection, Enter-key submission, and migrate-mode (legacy plaintext upgrade path) are completely untested — M effort
+- [ ] [TEST] No test verifies mnemonics are encrypted at rest — `wallet home loads after completing creation flow` confirms "Total Balance" is visible but never inspects `localStorage['chia_wallets']`; a regression that stores a plaintext `mnemonic` field instead of `encryptedMnemonic` would pass all existing tests — S effort
+
+## vNext — Competitive Analysis (2026-06-27, v0.10.0 audit)
+Compared against: Sage Wallet, MetaMask, Rainbow, Phantom, Goby. Prior-session findings in the 2026-06-27 section above are not repeated here. Findings sorted by user impact.
+
+- [ ] [UX/SEC] No "Change password" option in Settings — v0.10.0 sets a password at creation but offers no update path; MetaMask, Rainbow, and Phantom all surface "Change password" in security settings; users who want to rotate credentials must remove and re-import all wallets — S effort
+- [ ] [UX/SEC] No idle auto-lock — `sessionKey` stays in memory until the browser tab is closed with no configurable inactivity timeout; MetaMask defaults to locking after 15 min; important on shared or public devices — S effort
+- [ ] [UX] No "Forgot password?" recovery link on LockScreen — MetaMask and Phantom show "Forgot password? Restore from seed phrase" at the bottom of the unlock screen; Wiznerd shows only "Wrong password" with no hint that a seed-phrase restore path exists — S effort
+- [ ] [FEAT] CNS (.xch domain) resolution in Send — Chia Name Service maps human-readable names like `alice.xch` to puzzle hashes; Sage Wallet and Goby both resolve CNS names in the send-to field before treating input as a raw address; Wiznerd accepts only bech32 addresses — M effort
+- [ ] [FEAT] QR code scanner for recipient address — every mobile wallet (Trust Wallet, Rainbow, MetaMask Mobile, Phantom) supports opening the camera to scan a QR code as recipient; Wiznerd has no camera input; table-stakes for any mobile use — M effort
+- [ ] [FEAT] CAT coin consolidation — v0.10.0 added XCH UTXO merging but CAT tokens still surface "No single coin covers this amount"; Sage Wallet's "Combine coins" handles XCH and all CAT asset types; every user who accumulates CAT via DEX fills hits this wall — M effort
+- [ ] [FEAT] Testnet support — Sage, Goby, and the Official GUI all have a mainnet/testnet toggle; Wiznerd's node URL is manually editable but there's no quick-switch button, no testnet address-prefix validation, and no visual network indicator — M effort
+- [ ] [UX] SendScreen balance sourced from wallet daemon, WalletHome from full node — the two figures can diverge if the daemon is behind the chain tip; users who see a balance on Home may see a different (stale) figure in Send — M effort
+- [ ] [UX] History "View block" link targets the block, not the specific coin — Spacescan.io has `/coin/:coinId` deep links; the current link goes to `/block/${blockIndex}` which contains dozens of unrelated transactions; Sage and the Official GUI link directly to the coin — S effort
+- [ ] [UX] No Dexie verified-token badge — the Dexie token list distinguishes verified tokens from unverified; Wiznerd shows all CATs identically; users cannot distinguish well-known tokens from spam/scam CATs — S effort
+- [ ] [FEAT] Fiat-denominated send input — type an amount in USD and have it auto-convert to XCH/CAT; MetaMask and Coinbase Wallet both support this; reduces cognitive load for users who think in fiat — S effort

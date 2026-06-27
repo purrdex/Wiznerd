@@ -8,7 +8,11 @@ import { bytesToHex, hexToBytes } from './utils';
 export const CAT_MOD_HASH = '37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a';
 // CAT v1 (original, sunset — some legacy tokens may still exist on-chain)
 const CAT1_MOD_HASH = '72dec062874cd4d3aab892a0906688a1ae412b0109982e1797a170add88bdcdc';
-const PROXY_BASE = 'http://localhost:3001';
+const PROXY_URL_KEY = 'chia_proxy_url';
+const DEFAULT_PROXY = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
+function proxyBase(): string {
+  try { return localStorage.getItem(PROXY_URL_KEY) || DEFAULT_PROXY; } catch { return DEFAULT_PROXY; }
+}
 
 export interface CatCoin {
   coinId: string;
@@ -163,7 +167,7 @@ async function fetchAllDexieAssetIds(): Promise<string[]> {
     }
   } catch { /* ignore */ }
   try {
-    const res = await fetch(`${PROXY_BASE}/dexie/tokens`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${proxyBase()}/dexie/tokens`, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.assetIds) && data.assetIds.length > 0) {
@@ -277,14 +281,14 @@ function saveMetadataCache(): void {
 export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> {
   if (metadataCache[assetId]) return metadataCache[assetId];
   try {
-    const response = await fetch(`${PROXY_BASE}/taildatabase/${assetId}`, { signal: AbortSignal.timeout(8000) });
+    const response = await fetch(`${proxyBase()}/taildatabase/${assetId}`, { signal: AbortSignal.timeout(8000) });
     if (response.ok) {
       const data = await response.json();
       if (data?.name) {
         const meta: TokenMetadata = {
           name: data.name,
           ticker: data.code || data.symbol || assetId.slice(0, 6).toUpperCase(),
-          logoUrl: data.logo_url || data.icon_url || `${PROXY_BASE}/logo/${assetId}`,
+          logoUrl: data.logo_url || data.icon_url || `${proxyBase()}/logo/${assetId}`,
         };
         metadataCache[assetId] = meta;
         saveMetadataCache();
@@ -295,7 +299,7 @@ export async function getTokenMetadata(assetId: string): Promise<TokenMetadata> 
   const fallback: TokenMetadata = {
     name: `CAT ${assetId.slice(0, 8).toUpperCase()}`,
     ticker: assetId.slice(0, 4).toUpperCase(),
-    logoUrl: `${PROXY_BASE}/logo/${assetId}`,
+    logoUrl: `${proxyBase()}/logo/${assetId}`,
   };
   metadataCache[assetId] = fallback;
   saveMetadataCache();
@@ -309,7 +313,7 @@ export async function getCatPriceUsd(assetId: string, xchPriceUsd: number): Prom
   const cached = priceCache[assetId];
   if (cached && Date.now() - cached.time < 5 * 60 * 1000) return cached.price;
   try {
-    const res = await fetch(`${PROXY_BASE}/price/cat/${assetId}`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${proxyBase()}/price/cat/${assetId}`, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const data = await res.json();
       // Dexie returns price_xch (XCH per token), convert to USD
@@ -329,7 +333,7 @@ export async function getCatPriceUsd(assetId: string, xchPriceUsd: number): Prom
 // ─── XCH price ──────────────────────────────────────────────────────────────
 export async function fetchXchPrice(): Promise<number> {
   try {
-    const res = await fetch(`${PROXY_BASE}/price/xch`, { signal: AbortSignal.timeout(6000) });
+    const res = await fetch(`${proxyBase()}/price/xch`, { signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       const data = await res.json();
       if (typeof data.price === 'number' && data.price > 0) return data.price;

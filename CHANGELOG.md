@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.11.0 — 2026-06-27 (Bug Fixes & Web Deployment)
+- fix: HistoryScreen `useEffect` now re-runs on wallet switch and nodeUrl change — history reloads correctly when switching wallets or configuring a node mid-session
+- fix: SetupScreen 'password' mode adds Back button — user can return to quiz (new wallet) or import form
+- fix: LockScreen Forgot Password recovery path — "Restore from seed phrase" link with wipe-and-restore confirmation; prevents users from being permanently locked out
+- refactor: removed orphaned `sendXch` / `selectCoins` from spend.ts — XCH send path now uses `walletRpc` directly like clawback; proxy URL unified
+- fix: proxy full-node RPC route adds 20s timeout matching the wallet daemon route
+- feat: Change Password in Settings — re-derives key, re-encrypts all wallets with new salt; takes effect immediately for the session
+- feat: Idle auto-lock — configurable inactivity timeout (5/15/30/60 min / never); tracks mouse, keyboard, click, touch events
+- ux: removed redundant "Your Address" card from WalletHome — balance card → Assets without the copy row
+- feat: Proxy URL configurable in Settings — stored in localStorage; overrides `VITE_PROXY_URL`; `cats.ts` and `walletRpc` both read it dynamically
+- feat: Public Chia node dropdown in Settings — quick-select SpeedFarmer, Chia Official, or type custom URL
+- feat: Vercel/Netlify deploy config — `vercel.json` and `netlify.toml` with SPA rewrites and security headers
+- feat: `.env.example` checked in — documents `VITE_PROXY_URL` for production deployments
+
 ## v0.10.0 — 2026-06-27 (Portfolio, Polish & Security)
 - feat: Password-derived mnemonic encryption — PBKDF2 (600k iterations) + AES-256-GCM via Web Crypto API; mnemonics never stored in plaintext; existing wallets forced through one-time migration to set a password; password re-prompted on each page reload (MetaMask pattern)
 - feat: Total portfolio USD value — XCH + all priced CAT holdings summed to a single fiat total in the balance card; visible whenever at least one CAT has a known price
