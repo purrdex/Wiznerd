@@ -63,7 +63,7 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [UX] Transaction detail screen — tap any history row to expand: full mojo amount, block height, coin IDs, spacescan link, fee (where derivable from change). Currently the row is the whole story. — S effort
 - [x] [BUG] CAT history gap for fully-spent tokens — tokens received and fully sent are absent from `catBalances`, so hint-found spent coin records can't be labelled; need outer-puzzle-hash → assetId lookup via the existing `phAssetCache` for coins not in active balances. — M effort
 - [x] [UX] Pending/mempool transactions in history — history only shows confirmed coin records; track recently submitted spend bundles in sessionStorage, show as "Pending" until a matching confirmed record appears on the next poll. — M effort
-- [ ] [TEST] Playwright test for HistoryScreen — verify no-node empty state and "Scanning chain…" loading state (carried from v0.7.0). — S effort
+- [x] [TEST] Playwright test for HistoryScreen — verify no-node empty state and "Scanning chain…" loading state (carried from v0.7.0). — S effort
 
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.
