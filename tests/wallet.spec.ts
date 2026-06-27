@@ -116,4 +116,44 @@ test.describe('Wiznerd Wallet', () => {
     }
   });
 
+  test('HistoryScreen: no-node empty state', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    // Create wallet with no node configured
+    await page.click('text=Create new wallet');
+    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    await page.click('text=History');
+    await expect(page.locator('text=Transaction History')).toBeVisible();
+    // With no node URL set, should show the empty/no-node message
+    await expect(
+      page.locator('text=Set a node in Settings').or(page.locator('text=No node configured'))
+    ).toBeVisible({ timeout: 5000 });
+  });
+
+  test('HistoryScreen: shows scanning state when node configured', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.click('text=Create new wallet');
+    await expect(page.locator('.mnemonic-word').first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Open Wallet' }).click();
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    // Inject a non-working node URL then reload so App re-reads it from localStorage
+    await page.evaluate(() => localStorage.setItem('chia_node_url', 'http://localhost:19999'));
+    await page.reload();
+    await expect(page.locator('text=Total Balance')).toBeVisible({ timeout: 15000 });
+    await page.click('text=History');
+    await expect(page.locator('text=Transaction History')).toBeVisible();
+    // Should show scanning indicator or an error — either proves the node path was taken
+    const scanning = page.locator('text=Scanning chain').or(page.locator('text=Scanning…'));
+    const errored = page.locator('text=fetch').or(page.locator('text=Failed to fetch').or(page.locator('text=NetworkError').or(page.locator('text=ECONNREFUSED'))));
+    const noTxs = page.locator('text=No transactions found');
+    await expect(scanning.or(errored).or(noTxs)).toBeVisible({ timeout: 15000 });
+  });
+
 });
