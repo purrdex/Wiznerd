@@ -83,6 +83,7 @@ html, body, #root {
 }
 
 .node-badge.synced { color: var(--accent); border-color: var(--accent-dim); }
+.node-badge.synced.slow { color: var(--warn); border-color: rgba(229,188,48,0.35); }
 .node-badge.error  { color: var(--error); border-color: var(--error); }
 .node-badge.checking { color: var(--warn); }
 

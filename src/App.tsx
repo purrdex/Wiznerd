@@ -80,13 +80,16 @@ const FAILED_STATUS = (url: string): NodeStatus => ({
 });
 
 function NodeBadge({ status }: { status: NodeStatus | null }) {
-  try {
-    if (!status) return <div className="node-badge checking"><div className="node-dot"/>Checking…</div>;
-    if (status.trusted) return <div className="node-badge synced"><div className="node-dot"/>#{status.peakHeight.toLocaleString()}</div>;
-    return <div className="node-badge error"><div className="node-dot"/>Out of sync</div>;
-  } catch {
-    return <div className="node-badge checking"><div className="node-dot"/>…</div>;
+  if (!status) return <div className="node-badge checking"><div className="node-dot"/>Checking…</div>;
+  if (status.trusted) {
+    const qualifier = status.latencyMs > 800 ? ' slow' : '';
+    return (
+      <div className={`node-badge synced${qualifier}`}>
+        <div className="node-dot"/>#{status.peakHeight.toLocaleString()} · {status.latencyMs}ms
+      </div>
+    );
   }
+  return <div className="node-badge error"><div className="node-dot"/>Offline</div>;
 }
 
 function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletState) => void; onCancel?: () => void }) {
