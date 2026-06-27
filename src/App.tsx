@@ -6,10 +6,14 @@ import { formatMojoToXch, isValidXchAddress } from './lib/utils';
 import {
   checkNodeSync,
   getBalance,
+  getCoinRecords,
   type NodeStatus,
+  type CoinRecord,
 } from './lib/node';
 import {
   getCatBalances,
+  getCatCoinsByHint,
+  calculateCoinId,
   formatCatAmount,
   fetchXchPrice,
   formatCatUsdValue,
@@ -36,6 +40,18 @@ interface AddressEntry {
   id: string;
   label: string;
   address: string;
+}
+
+interface HistoryEvent {
+  type: 'received' | 'sent';
+  amount: bigint;
+  ticker: string;
+  label: string;
+  assetId: string | null;
+  isCat: boolean;
+  timestamp: number;
+  blockIndex: number;
+  txId: string;
 }
 
 const IconHome = () => (
@@ -195,8 +211,9 @@ function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletSta
   );
 }
 
-function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalances }: {
-  wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void; hideSmallBalances: boolean;
+function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalances, onCatBalancesChange }: {
+  wallet: WalletState; nodeUrl: string; refreshKey: number; onSendSuccess: () => void;
+  hideSmallBalances: boolean; onCatBalancesChange: (b: CatBalance[]) => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [proxyError, setProxyError] = useState('');
@@ -221,6 +238,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
       setProxyError('');
       const cats = await getCatBalances(nodeUrl, puzzleHashes, xch);
       setCatBalances(cats);
+      onCatBalancesChange(cats);
     } catch (e: any) {
       if (balance === null) setProxyError('Cannot reach proxy. Is it running on localhost:3001?');
     }
@@ -1321,111 +1339,205 @@ function NFTsScreen() {
 }
 
 
-interface TxRecord {
-  name: string;
-  type: number;
-  amount: number;
-  fee_amount: number;
-  confirmed: boolean;
-  confirmed_at_height: number;
-  created_at_time: number;
-  to_address: string;
-  walletLabel?: string; // 'XCH' or CAT name
-  isCat?: boolean;
-}
-
-const TX_PAGE_SIZE = 20;
-
-function HistoryScreen() {
-  const [txs, setTxs] = useState<TxRecord[]>([]);
+function HistoryScreen({ wallet, nodeUrl, catBalances }: {
+  wallet: WalletState; nodeUrl: string; catBalances: CatBalance[];
+}) {
+  const [events, setEvents] = useState<HistoryEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showCount, setShowCount] = useState(50);
 
   useEffect(() => {
+    if (!nodeUrl) { setLoading(false); return; }
+
     (async () => {
       try {
-        // Get all daemon wallets (XCH + registered CATs)
-        const walletsRes = await getDaemonWallets();
-        const relevantWallets = walletsRes.filter((w: any) => w.type === 1 || w.type === 6);
+        const puzzleHashes = wallet.addresses.map(a => a.puzzleHashHex);
+        const all: HistoryEvent[] = [];
 
-        const allTxs = await Promise.allSettled(
-          relevantWallets.map(async (w: any) => {
-            const res = await walletRpc('get_transactions', {
-              wallet_id: w.id, start: 0, end: TX_PAGE_SIZE,
-              sort_key: 'CONFIRMED_AT_HEIGHT', reverse: true,
+        // ── XCH history ──────────────────────────────────────────────────────
+        const xchRecords = await getCoinRecords(nodeUrl, puzzleHashes, true);
+
+        // Compute coin IDs for all records (for change-output detection)
+        const xchIdMap = new Map<CoinRecord, string>();
+        await Promise.all(xchRecords.map(async r => {
+          xchIdMap.set(r, await calculateCoinId(r.coin.parent_coin_info, r.coin.puzzle_hash, r.coin.amount));
+        }));
+        const ownXchIds = new Set(xchIdMap.values());
+
+        // Received: external coins (parent not ours)
+        for (const r of xchRecords) {
+          const parentId = (r.coin.parent_coin_info || '').replace('0x', '').toLowerCase();
+          if (!ownXchIds.has(parentId)) {
+            all.push({ type: 'received', amount: BigInt(r.coin.amount),
+              ticker: 'XCH', label: 'Chia', assetId: null, isCat: false,
+              timestamp: r.timestamp, blockIndex: r.confirmed_block_index,
+              txId: xchIdMap.get(r)! });
+          }
+        }
+
+        // Sent: group spent coins by spent_block_index, net of change
+        const xchSpentByBlock = new Map<number, CoinRecord[]>();
+        for (const r of xchRecords) {
+          if (r.spent) {
+            const arr = xchSpentByBlock.get(r.spent_block_index) ?? [];
+            arr.push(r);
+            xchSpentByBlock.set(r.spent_block_index, arr);
+          }
+        }
+        for (const [blockIndex, spent] of xchSpentByBlock) {
+          const spentIds = new Set(spent.map(r => xchIdMap.get(r)!));
+          const totalSpent = spent.reduce((s, r) => s + BigInt(r.coin.amount), 0n);
+          const changeInBlock = xchRecords.filter(r => {
+            const parentId = (r.coin.parent_coin_info || '').replace('0x', '').toLowerCase();
+            return r.confirmed_block_index === blockIndex && spentIds.has(parentId);
+          });
+          const netSent = totalSpent - changeInBlock.reduce((s, r) => s + BigInt(r.coin.amount), 0n);
+          if (netSent <= 0n) continue;
+          const ts = changeInBlock[0]?.timestamp ?? spent[0].timestamp;
+          all.push({ type: 'sent', amount: netSent,
+            ticker: 'XCH', label: 'Chia', assetId: null, isCat: false,
+            timestamp: ts, blockIndex, txId: `xch-${blockIndex}` });
+        }
+
+        // ── CAT history ───────────────────────────────────────────────────────
+        if (catBalances.length > 0) {
+          // Build outer puzzle hash → asset lookup from already-discovered coins
+          const phToAsset = new Map<string, { assetId: string; ticker: string; name: string }>();
+          for (const bal of catBalances) {
+            for (const coin of bal.coins) {
+              phToAsset.set((coin.puzzleHash || '').replace('0x', '').toLowerCase(),
+                { assetId: bal.assetId, ticker: bal.ticker, name: bal.name });
+            }
+          }
+
+          // Fetch all hint-found CAT coins including spent
+          const hintResults = await getCatCoinsByHint(nodeUrl, puzzleHashes, true);
+
+          // Annotate each coin with asset info
+          type AnnotatedCat = { cr: any; asset: { assetId: string; ticker: string; name: string } };
+          const annotated: AnnotatedCat[] = [];
+          for (const { coins } of hintResults) {
+            for (const cr of coins) {
+              const ph = (cr.coin.puzzle_hash || '').replace('0x', '').toLowerCase();
+              const asset = phToAsset.get(ph);
+              if (asset) annotated.push({ cr, asset });
+            }
+          }
+
+          // Compute CAT coin IDs
+          const catIdMap = new Map<any, string>();
+          await Promise.all(annotated.map(async ({ cr }) => {
+            catIdMap.set(cr, await calculateCoinId(cr.coin.parent_coin_info, cr.coin.puzzle_hash, cr.coin.amount));
+          }));
+          const ownCatIds = new Set(catIdMap.values());
+
+          // Received CAT: external parent
+          for (const { cr, asset } of annotated) {
+            const parentId = (cr.coin.parent_coin_info || '').replace('0x', '').toLowerCase();
+            if (!ownCatIds.has(parentId)) {
+              all.push({ type: 'received', amount: BigInt(cr.coin.amount),
+                ticker: asset.ticker, label: asset.name,
+                assetId: asset.assetId, isCat: true,
+                timestamp: cr.timestamp, blockIndex: cr.confirmed_block_index,
+                txId: catIdMap.get(cr)! });
+            }
+          }
+
+          // Sent CAT: group spent coins by (assetId, spent_block_index)
+          const catSpentByKey = new Map<string, AnnotatedCat[]>();
+          for (const item of annotated) {
+            if (!item.cr.spent) continue;
+            const key = `${item.asset.assetId}:${item.cr.spent_block_index}`;
+            const arr = catSpentByKey.get(key) ?? [];
+            arr.push(item);
+            catSpentByKey.set(key, arr);
+          }
+          for (const [, group] of catSpentByKey) {
+            const { asset } = group[0];
+            const blockIndex = group[0].cr.spent_block_index;
+            const spentIds = new Set(group.map(({ cr }) => catIdMap.get(cr)!));
+            const totalSpent = group.reduce((s, { cr }) => s + BigInt(cr.coin.amount), 0n);
+            const changeInBlock = annotated.filter(({ cr, asset: a }) => {
+              const parentId = (cr.coin.parent_coin_info || '').replace('0x', '').toLowerCase();
+              return a.assetId === asset.assetId
+                && cr.confirmed_block_index === blockIndex
+                && spentIds.has(parentId);
             });
-            if (!res.success) return [];
-            return (res.transactions || []).map((tx: TxRecord) => ({
-              ...tx,
-              walletLabel: w.type === 1 ? 'XCH' : (w.name || 'Token'),
-              isCat: w.type === 6,
-            }));
-          })
-        );
+            const netSent = totalSpent - changeInBlock.reduce((s, { cr }) => s + BigInt(cr.coin.amount), 0n);
+            if (netSent <= 0n) continue;
+            const ts = changeInBlock[0]?.cr.timestamp ?? group[0].cr.timestamp;
+            all.push({ type: 'sent', amount: netSent,
+              ticker: asset.ticker, label: asset.name,
+              assetId: asset.assetId, isCat: true,
+              timestamp: ts, blockIndex, txId: `cat-${asset.assetId.slice(0, 8)}-${blockIndex}` });
+          }
+        }
 
-        const merged: TxRecord[] = allTxs
-          .filter((r): r is PromiseFulfilledResult<TxRecord[]> => r.status === 'fulfilled')
-          .flatMap(r => r.value);
-
-        merged.sort((a, b) => b.confirmed_at_height - a.confirmed_at_height || b.created_at_time - a.created_at_time);
-        setTxs(merged.slice(0, TX_PAGE_SIZE * 2));
+        all.sort((a, b) => b.blockIndex - a.blockIndex || b.timestamp - a.timestamp);
+        setEvents(all);
       } catch (e: any) {
         setError(e.message);
       }
     })().finally(() => setLoading(false));
   }, []);
 
+  const visible = events.slice(0, showCount);
+
   return (
     <div className="wallet-screen">
       <div className="section-label">Transaction History</div>
-      {loading && <div className="balance-loading"><div className="spinner"/>Loading…</div>}
-      {!loading && error && <div className="error-msg">{error}</div>}
-      {!loading && !error && txs.length === 0 && (
+      {loading && <div className="balance-loading"><div className="spinner"/>Scanning chain…</div>}
+      {!loading && !nodeUrl && (
         <div className="empty-state">
-          <div style={{fontSize:36,marginBottom:12}}>🧾</div>
-          No transactions yet.
+          <div style={{fontSize:36,marginBottom:12}}>🔌</div>
+          Set a node in Settings to load history.
         </div>
       )}
-      {txs.map((tx, idx) => {
-        const isSend = tx.type === 2 || tx.type === 6;
-        const label = tx.walletLabel || 'XCH';
-        const amount = tx.isCat
-          ? formatCatAmount(BigInt(tx.amount))
-          : formatMojoToXch(BigInt(tx.amount));
-        const date = new Date(tx.created_at_time * 1000);
+      {!loading && nodeUrl && error && <div className="error-msg">{error}</div>}
+      {!loading && nodeUrl && !error && events.length === 0 && (
+        <div className="empty-state">
+          <div style={{fontSize:36,marginBottom:12}}>🧾</div>
+          No transactions found.
+        </div>
+      )}
+      {visible.map(ev => {
+        const amount = ev.isCat
+          ? formatCatAmount(ev.amount)
+          : formatMojoToXch(ev.amount);
+        const date = new Date(ev.timestamp * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        const addr = tx.to_address;
         return (
-          <div key={`${tx.name}-${idx}`} className="tx-row">
-            <div className={`tx-icon ${isSend ? 'tx-send' : 'tx-recv'}`}>
-              {isSend ? '↑' : '↓'}
+          <div key={ev.txId} className="tx-row">
+            <div className={`tx-icon ${ev.type === 'sent' ? 'tx-send' : 'tx-recv'}`}>
+              {ev.type === 'sent' ? '↑' : '↓'}
             </div>
             <div className="tx-info">
               <div className="tx-top">
-                <span className="tx-type">{isSend ? 'Sent' : 'Received'}</span>
-                <span className={`tx-amount ${isSend ? 'tx-amount-send' : 'tx-amount-recv'}`}>
-                  {isSend ? '−' : '+'}{amount} {label}
+                <span className="tx-type">{ev.type === 'sent' ? 'Sent' : 'Received'}</span>
+                <span className={`tx-amount ${ev.type === 'sent' ? 'tx-amount-send' : 'tx-amount-recv'}`}>
+                  {ev.type === 'sent' ? '−' : '+'}{amount} {ev.ticker}
                 </span>
               </div>
               <div className="tx-bottom">
                 <span className="tx-date">{dateStr} · {timeStr}</span>
-                {!tx.confirmed && <span className="tx-pending">pending</span>}
-                {tx.confirmed && (
-                  <a href={`https://www.spacescan.io/tx/${tx.name}`} target="_blank" rel="noopener noreferrer"
-                    style={{fontSize:10,color:'var(--accent)',textDecoration:'none',marginLeft:6}}
-                    onClick={e => e.stopPropagation()}>
-                    ↗ Explorer
-                  </a>
-                )}
+                <a href={`https://www.spacescan.io/block/${ev.blockIndex}`} target="_blank" rel="noopener noreferrer"
+                  style={{fontSize:10,color:'var(--accent)',textDecoration:'none',marginLeft:6}}
+                  onClick={e => e.stopPropagation()}>
+                  ↗ Explorer
+                </a>
               </div>
-              {isSend && addr && (
-                <div className="tx-address">→ {addr.slice(0, 10)}…{addr.slice(-6)}</div>
-              )}
             </div>
           </div>
         );
       })}
+      {events.length > showCount && (
+        <button className="btn btn-secondary" style={{marginTop:8}}
+          onClick={() => setShowCount(n => n + 50)}>
+          Load more ({events.length - showCount} remaining)
+        </button>
+      )}
     </div>
   );
 }
@@ -1699,6 +1811,7 @@ export default function App() {
     catch { return []; }
   });
   const [hideSmallBalances, setHideSmallBalances] = useState(() => localStorage.getItem(HIDE_SMALL_KEY) === '1');
+  const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
   const [theme, setTheme] = useState<'dark'|'light'>(() => {
     const saved = localStorage.getItem(THEME_KEY);
     return saved === 'light' ? 'light' : 'dark';
@@ -1867,11 +1980,11 @@ export default function App() {
       </div>
 
       {screen==='setup'    && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined}/>}
-      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances}/>}
+      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
-      {isWallet && screen==='history'  && <HistoryScreen/>}
+      {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
       {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme}/>}
 
       {isWallet && screen !== 'setup' && (

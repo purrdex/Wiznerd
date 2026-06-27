@@ -41,6 +41,16 @@ Build: clean (479 KB / 139 KB gzip, no warnings). Tests: 10/10 pass. All items c
 - [x] Settings: toggle showing/hiding small balances
 - [x] Dark/light mode toggle
 
+## v0.7.0 — History Rebuilt
+Theme: make transaction history work entirely from the full node — no wallet daemon required.
+Manual CAT sends become visible. XCH history becomes reliable regardless of daemon state.
+
+- [ ] [BUG] History requires wallet daemon — shows nothing when daemon absent or unregistered; rebuild using `get_coin_records_by_puzzle_hashes(include_spent=true)`; compute coin IDs to strip change outputs; group spent coins by block for net-sent amounts — M effort
+- [ ] [BUG] Manual CAT sends invisible — `get_transactions` knows nothing about `push_tx` sends; add CAT history via `get_coin_records_by_hint(include_spent=true)` for all inner puzzle hashes; use `catBalances.coins[].puzzleHash` to resolve assetId/ticker — M effort
+- [ ] [FEAT] Remove proxy XCH price cap `price < 100` — silently drops real prices if XCH ever exceeds $100 (proxy/index.js:175) — S effort
+- [ ] [UX] History: show load-more — full-node scan can find many events; cap initial render at 50, paginate — S effort
+- [ ] [TEST] Playwright test for HistoryScreen: verify renders without daemon, shows empty state when no node configured — S effort
+
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.
 
