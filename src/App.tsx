@@ -13,6 +13,8 @@ import {
   formatCatAmount,
   fetchXchPrice,
   formatCatUsdValue,
+  loadCustomAssetIds,
+  saveCustomAssetIds,
   type CatBalance,
 } from './lib/cats';
 import { sendXch } from './lib/spend';
@@ -22,6 +24,12 @@ type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'se
 interface WalletState {
   mnemonic: string;
   addresses: DerivedAddress[];
+}
+
+interface WalletEntry {
+  id: string;
+  name: string;
+  mnemonic: string;
 }
 
 interface AddressEntry {
@@ -81,7 +89,7 @@ function NodeBadge({ status }: { status: NodeStatus | null }) {
   }
 }
 
-function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => void }) {
+function SetupScreen({ onWalletReady, onCancel }: { onWalletReady: (w: WalletState) => void; onCancel?: () => void }) {
   const [mode, setMode] = useState<'choose'|'new'|'import'>('choose');
   const [mnemonic, setMnemonic] = useState('');
   const [importInput, setImportInput] = useState('');
@@ -178,6 +186,7 @@ function SetupScreen({ onWalletReady }: { onWalletReady: (w: WalletState) => voi
         <button className="btn btn-primary" onClick={handleGenerate}>Create new wallet</button>
         <div className="divider">or</div>
         <button className="btn btn-secondary" onClick={()=>setMode('import')}>Import existing wallet</button>
+        {onCancel && <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>}
       </div>
     </div>
   );
@@ -384,8 +393,11 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBook, onAddEntry, onRemoveEntry }:
-  { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void; onReset:()=>void;
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry }:
+  { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
+    onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
+    onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
+    walletList: WalletEntry[]; activeWalletId: string|null;
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void }) {
   const [input, setInput] = useState('');
   const [testing, setTesting] = useState(false);
@@ -393,7 +405,12 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBoo
   const [newLabel, setNewLabel] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [addError, setAddError] = useState('');
-  const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string|null>(null);
+  const [editingNameId, setEditingNameId] = useState<string|null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [customTokens, setCustomTokens] = useState<string[]>(() => loadCustomAssetIds());
+  const [newAssetId, setNewAssetId] = useState('');
+  const [assetIdError, setAssetIdError] = useState('');
 
   useEffect(() => {
     setInput(nodeUrl || '');
@@ -484,33 +501,94 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onReset, addressBoo
         </button>
       </div>
 
-      <div className="section-label mt-16">Danger Zone</div>
-      {!confirmReset ? (
-        <button className="btn btn-secondary" style={{borderColor:'var(--error)',color:'var(--error)'}}
-          onClick={() => setConfirmReset(true)}>
-          Remove wallet
-        </button>
-      ) : (
-        <div style={{background:'rgba(220,50,50,0.08)',border:'1px solid var(--error)',
-          borderRadius:'var(--radius)',padding:'16px',display:'flex',flexDirection:'column',gap:12}}>
-          <div style={{fontSize:13,color:'var(--text-primary)',fontWeight:600}}>Remove this wallet?</div>
-          <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-            Make sure you have your 24-word seed phrase saved. This cannot be undone.
+      <div className="section-label mt-16">Custom Tokens</div>
+      <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:8}}>
+        Pin a token by asset ID to scan for it directly, bypassing hint-based discovery.
+        Useful for tokens received via direct issuance or from wallets that don't set hints.
+      </div>
+      {customTokens.length > 0 && customTokens.map(id => (
+        <div className="address-card" key={id}>
+          <div style={{flex:1,minWidth:0}}>
+            <div className="address-text" style={{fontSize:10}}>{id}</div>
           </div>
-          <div style={{display:'flex',gap:8}}>
-            <button onClick={() => setConfirmReset(false)}
-              style={{flex:1,padding:'10px',background:'none',border:'1px solid var(--border)',
-                borderRadius:'var(--radius-sm)',color:'var(--text-secondary)',cursor:'pointer',fontSize:13}}>
-              Cancel
-            </button>
-            <button onClick={onReset}
-              style={{flex:1,padding:'10px',background:'#dc3232',border:'none',
-                borderRadius:'var(--radius-sm)',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
-              Remove
-            </button>
-          </div>
+          <button className="copy-btn"
+            style={{color:'var(--error)',borderColor:'rgba(224,92,92,0.4)',flexShrink:0}}
+            onClick={() => {
+              const next = customTokens.filter(t => t !== id);
+              setCustomTokens(next);
+              saveCustomAssetIds(next);
+            }}>
+            Remove
+          </button>
         </div>
-      )}
+      ))}
+      <div className="node-config">
+        <div style={{fontSize:11,color:'var(--text-secondary)',letterSpacing:'0.06em'}}>ADD TOKEN BY ASSET ID</div>
+        <input type="text" placeholder="64-char hex asset ID"
+          value={newAssetId}
+          onChange={e => { setNewAssetId(e.target.value.trim()); setAssetIdError(''); }}
+          style={{fontFamily:'var(--font-mono)',fontSize:11}}/>
+        {assetIdError && <div className="error-msg">{assetIdError}</div>}
+        <button className="btn btn-secondary" style={{padding:'10px'}} onClick={() => {
+          const id = newAssetId.toLowerCase().replace(/^0x/, '');
+          if (!/^[0-9a-f]{64}$/.test(id)) { setAssetIdError('Must be a 64-char hex asset ID'); return; }
+          if (customTokens.includes(id)) { setAssetIdError('Already pinned'); return; }
+          const next = [...customTokens, id];
+          setCustomTokens(next);
+          saveCustomAssetIds(next);
+          setNewAssetId('');
+        }}>
+          + Pin Token
+        </button>
+      </div>
+
+      <div className="section-label mt-16">Wallets</div>
+      {walletList.map(entry => (
+        <div key={entry.id} className="address-card" style={{flexDirection:'column',alignItems:'stretch',gap:8}}>
+          {editingNameId === entry.id ? (
+            <div style={{display:'flex',gap:8}}>
+              <input
+                type="text"
+                value={editingName}
+                onChange={e => setEditingName(e.target.value)}
+                style={{flex:1,padding:'6px 10px',background:'var(--bg-input)',border:'1px solid var(--border)',
+                  borderRadius:'var(--radius-sm)',color:'var(--text-primary)',fontSize:13}}
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { onRenameWallet(entry.id, editingName.trim() || entry.name); setEditingNameId(null); }
+                  if (e.key === 'Escape') setEditingNameId(null);
+                }}
+              />
+              <button className="copy-btn" onClick={() => { onRenameWallet(entry.id, editingName.trim() || entry.name); setEditingNameId(null); }}>Save</button>
+              <button className="copy-btn" style={{color:'var(--text-secondary)'}} onClick={() => setEditingNameId(null)}>Cancel</button>
+            </div>
+          ) : (
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{flex:1,fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>{entry.name}</div>
+              {entry.id === activeWalletId && (
+                <span style={{fontSize:10,background:'var(--accent)',color:'#000',borderRadius:4,padding:'2px 6px',fontWeight:700}}>ACTIVE</span>
+              )}
+              <button className="copy-btn" style={{fontSize:11}} onClick={() => { setEditingNameId(entry.id); setEditingName(entry.name); }}>Rename</button>
+              {entry.id !== activeWalletId && (
+                <button className="copy-btn" style={{fontSize:11}} onClick={() => onSwitchWallet(entry.id)}>Switch</button>
+              )}
+              {confirmRemoveId === entry.id ? (
+                <>
+                  <button className="copy-btn" style={{color:'var(--error)',borderColor:'rgba(224,92,92,0.4)',fontSize:11}}
+                    onClick={() => { onRemoveWallet(entry.id); setConfirmRemoveId(null); }}>Confirm</button>
+                  <button className="copy-btn" style={{fontSize:11}} onClick={() => setConfirmRemoveId(null)}>Cancel</button>
+                </>
+              ) : (
+                <button className="copy-btn" style={{color:'var(--error)',borderColor:'rgba(224,92,92,0.4)',fontSize:11}}
+                  onClick={() => setConfirmRemoveId(entry.id)}>Remove</button>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+      <button className="btn btn-secondary" style={{marginTop:4}} onClick={onAddWallet}>
+        + Add wallet
+      </button>
     </div>
   );
 }
@@ -724,14 +802,22 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
         )}
       </div>
 
-      {!loadingWallet && catWalletId === null && (
+      {token.isCat1 && (
+        <div style={{background:'rgba(255,160,0,0.08)',border:'1px solid rgba(255,160,0,0.4)',
+          borderRadius:8,padding:'10px 14px',fontSize:12,color:'rgba(255,160,0,0.9)'}}>
+          Legacy CAT1 token — this token was issued under the original CAT standard before
+          the 2022 upgrade. Viewing balance is supported, but sends require the Chia reference wallet.
+        </div>
+      )}
+
+      {!token.isCat1 && !loadingWallet && catWalletId === null && (
         <div style={{background:'rgba(77,170,135,0.07)',border:'1px solid var(--accent)',
           borderRadius:8,padding:'8px 12px',fontSize:11,color:'var(--accent)'}}>
           Direct chain send — no wallet daemon registration required. Fee: 0 XCH.
         </div>
       )}
 
-      {loadingWallet ? (
+      {!token.isCat1 && (loadingWallet ? (
         <div className="balance-loading"><div className="spinner"/>Checking wallet daemon…</div>
       ) : (
         <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -837,7 +923,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
             </div>
           )}
         </div>
-      )}
+      ))}
 
       <div style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
         wordBreak:'break-all',paddingTop:10,borderTop:'1px solid var(--border)'}}>
@@ -1525,12 +1611,16 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
   );
 }
 
-const STORAGE_KEY = 'chia_wallet_mnemonic';
+const WALLETS_KEY = 'chia_wallets';
+const ACTIVE_WALLET_KEY = 'chia_active_wallet';
+const LEGACY_STORAGE_KEY = 'chia_wallet_mnemonic';
 const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
 
 export default function App() {
   const [wallet, setWallet] = useState<WalletState|null>(null);
+  const [walletList, setWalletList] = useState<WalletEntry[]>([]);
+  const [activeWalletId, setActiveWalletId] = useState<string|null>(null);
   const [screen, setScreen] = useState<Screen>('setup');
   const [nodeUrl, setNodeUrl] = useState<string>('');
   const [nodeStatus, setNodeStatus] = useState<NodeStatus|null>(null);
@@ -1543,11 +1633,36 @@ export default function App() {
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
     setNodeUrl(savedNode);
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
+
+    let wallets: WalletEntry[] = [];
+    try { wallets = JSON.parse(localStorage.getItem(WALLETS_KEY) || '[]'); }
+    catch { wallets = []; }
+
+    // Migrate legacy single-mnemonic storage
+    if (wallets.length === 0) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        const id = crypto.randomUUID();
+        wallets = [{ id, name: 'My Wallet', mnemonic: legacy }];
+        localStorage.setItem(WALLETS_KEY, JSON.stringify(wallets));
+        localStorage.setItem(ACTIVE_WALLET_KEY, id);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    }
+
+    if (wallets.length > 0) {
+      setWalletList(wallets);
+      const savedActiveId = localStorage.getItem(ACTIVE_WALLET_KEY);
+      const active = wallets.find(w => w.id === savedActiveId) ?? wallets[0];
+      setActiveWalletId(active.id);
       import('./lib/keys').then(({ deriveAddresses }) => {
-        try { setWallet({ mnemonic: saved, addresses: deriveAddresses(saved, 50) }); setScreen('wallet'); }
-        catch { localStorage.removeItem(STORAGE_KEY); }
+        try {
+          setWallet({ mnemonic: active.mnemonic, addresses: deriveAddresses(active.mnemonic, 50) });
+          setScreen('wallet');
+        } catch {
+          localStorage.removeItem(WALLETS_KEY);
+          localStorage.removeItem(ACTIVE_WALLET_KEY);
+        }
       });
     }
   }, []);
@@ -1567,20 +1682,71 @@ export default function App() {
   }, [nodeUrl]);
 
   const handleWalletReady = (w: WalletState) => {
-    localStorage.setItem(STORAGE_KEY, w.mnemonic);
-    setWallet(w); setScreen('wallet');
+    const newEntry: WalletEntry = {
+      id: crypto.randomUUID(),
+      name: `Wallet ${walletList.length + 1}`,
+      mnemonic: w.mnemonic,
+    };
+    const next = [...walletList, newEntry];
+    setWalletList(next);
+    setActiveWalletId(newEntry.id);
+    localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
+    localStorage.setItem(ACTIVE_WALLET_KEY, newEntry.id);
+    setWallet(w);
+    setScreen('wallet');
   };
 
   const handleNodeChange = (url: string) => {
     setNodeUrl(url); localStorage.setItem(NODE_KEY, url);
   };
 
-  const handleReset = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(NODE_KEY);
-    localStorage.removeItem(ADDRESS_BOOK_KEY);
-    setWallet(null); setScreen('setup'); setNodeStatus(null); setNodeUrl('');
-    setAddressBook([]);
+  const handleSwitchWallet = (id: string) => {
+    const entry = walletList.find(w => w.id === id);
+    if (!entry) return;
+    import('./lib/keys').then(({ deriveAddresses }) => {
+      setWallet({ mnemonic: entry.mnemonic, addresses: deriveAddresses(entry.mnemonic, 50) });
+      setActiveWalletId(id);
+      localStorage.setItem(ACTIVE_WALLET_KEY, id);
+      setScreen('wallet');
+      setRefreshKey(k => k + 1);
+    });
+  };
+
+  const handleRemoveWallet = (id: string) => {
+    const next = walletList.filter(w => w.id !== id);
+    if (next.length === 0) {
+      localStorage.removeItem(WALLETS_KEY);
+      localStorage.removeItem(ACTIVE_WALLET_KEY);
+      localStorage.removeItem(NODE_KEY);
+      localStorage.removeItem(ADDRESS_BOOK_KEY);
+      setWalletList([]);
+      setActiveWalletId(null);
+      setWallet(null);
+      setScreen('setup');
+      setNodeStatus(null);
+      setNodeUrl('');
+      setAddressBook([]);
+    } else {
+      localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
+      setWalletList(next);
+      if (id === activeWalletId) {
+        const switchTo = next[0];
+        import('./lib/keys').then(({ deriveAddresses }) => {
+          setWallet({ mnemonic: switchTo.mnemonic, addresses: deriveAddresses(switchTo.mnemonic, 50) });
+          setActiveWalletId(switchTo.id);
+          localStorage.setItem(ACTIVE_WALLET_KEY, switchTo.id);
+          setScreen('wallet');
+          setRefreshKey(k => k + 1);
+        });
+      }
+    }
+  };
+
+  const handleRenameWallet = (id: string, name: string) => {
+    if (!name.trim()) return;
+    const next = walletList.map(w => w.id === id ? { ...w, name: name.trim() } : w);
+    setWalletList(next);
+    localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
   };
 
   const handleAddBookEntry = (label: string, address: string) => {
@@ -1597,22 +1763,29 @@ export default function App() {
 
   const isWallet = wallet !== null;
 
+  const activeWalletName = walletList.find(w => w.id === activeWalletId)?.name;
+
   return (
     <div className="app">
       <div className="header">
-        <div className="logo"><span style={{marginRight: 6}}>🧙‍♂️</span>Wiznerd Wallet</div>
+        <div className="logo">
+          <span style={{marginRight: 6}}>🧙‍♂️</span>Wiznerd Wallet
+          {isWallet && walletList.length > 1 && activeWalletName && (
+            <span style={{fontSize:11,color:'var(--text-secondary)',marginLeft:8,fontWeight:400}}>{activeWalletName}</span>
+          )}
+        </div>
         {isWallet && <NodeBadge status={nodeStatus}/>}
       </div>
 
-      {!isWallet && <SetupScreen onWalletReady={handleWalletReady}/>}
+      {screen==='setup'    && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined}/>}
       {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)}/>}
       {isWallet && screen==='nfts'     && <NFTsScreen/>}
       {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook}/>}
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onReset={handleReset} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry}/>}
+      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry}/>}
 
-      {isWallet && (
+      {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">
           <button className={`nav-item ${screen==='wallet'?'active':''}`} onClick={()=>setScreen('wallet')}><IconHome/>Home</button>
           <button className={`nav-item ${screen==='nfts'?'active':''}`} onClick={()=>setScreen('nfts')}><IconNFTs/>NFTs</button>
