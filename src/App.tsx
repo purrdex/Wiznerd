@@ -831,6 +831,9 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
         });
         const data = await res.json();
         if (data.success) {
+          addPendingTx({ id: crypto.randomUUID(), type: 'sent', amount,
+            amountMojo: amountMojo.toString(), ticker: token.ticker, isCat: true,
+            submittedAt: Date.now(), expiresAt: Date.now() + 5 * 60 * 1000 });
           setStatus('success');
           setMessage(`Sent ${amount} ${token.ticker}`);
           setToAddress('');
@@ -1353,6 +1356,9 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCount, setShowCount] = useState(50);
+  const [pendingTxs, setPendingTxs] = useState<PendingTx[]>(() =>
+    loadPendingTxs().filter(t => Date.now() < t.expiresAt)
+  );
   const [clawbacks, setClawbacks] = useState<ClawbackEntry[]>(() =>
     loadClawbacks().filter(e => Date.now() < e.expiresAt)
   );
@@ -1534,6 +1540,14 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
 
         all.sort((a, b) => b.blockIndex - a.blockIndex || b.timestamp - a.timestamp);
         setEvents(all);
+
+        // Prune pending txs that have now confirmed (matched in history)
+        const confirmedIds = new Set(all.map(e => e.txId));
+        const freshPending = loadPendingTxs().filter(t =>
+          Date.now() < t.expiresAt && (t.txId ? !confirmedIds.has(t.txId) : true)
+        );
+        savePendingTxs(freshPending);
+        setPendingTxs(freshPending);
       } catch (e: any) {
         setError(e.message);
       }
@@ -1559,6 +1573,28 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
           No transactions found.
         </div>
       )}
+      {/* Pending (mempool) transaction rows */}
+      {pendingTxs.map(pt => (
+        <div key={pt.id} style={{background:'rgba(90,160,255,0.06)',border:'1px solid rgba(90,160,255,0.35)',
+          borderRadius:'var(--radius)',padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+          <div style={{width:28,height:28,borderRadius:'50%',background:'rgba(90,160,255,0.15)',
+            display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,color:'var(--accent)'}}>
+            ↑
+          </div>
+          <div style={{flex:1}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:12,fontWeight:700,color:'var(--accent)'}}>Pending</span>
+              <span style={{fontSize:12,color:'var(--text-primary)'}}>−{pt.amount} {pt.ticker}</span>
+            </div>
+            <div style={{fontSize:10,color:'var(--text-secondary)',marginTop:2}}>
+              Submitted · awaiting confirmation
+            </div>
+          </div>
+          <div style={{width:14,height:14,border:'2px solid var(--accent)',borderTopColor:'transparent',
+            borderRadius:'50%',animation:'spin 0.8s linear infinite',flexShrink:0}}/>
+        </div>
+      ))}
+
       {/* Pending clawback rows */}
       {clawbacks.map(entry => {
         const remaining = Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
@@ -2129,6 +2165,10 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
       } else {
         const result = await sendXch({ toAddress, amountMojo, feeMojo, nodeUrl });
         if (result.success) {
+          const pendingId = result.txId || crypto.randomUUID();
+          addPendingTx({ id: pendingId, type: 'sent', amount: formatMojoToXch(amountMojo),
+            amountMojo: amountMojo.toString(), ticker: 'XCH', isCat: false,
+            submittedAt: Date.now(), expiresAt: Date.now() + 5 * 60 * 1000, txId: result.txId });
           setToAddress(''); setAmount('');
           if (result.txId && result.txId !== 'submitted') {
             setStatus('pending'); setMessage(result.txId); pollConfirmation(result.txId);
@@ -2329,6 +2369,29 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook }: {
 }
 
 const CLAWBACK_KEY = 'chia_clawback_sends';
+const PENDING_TXS_KEY = 'chia_pending_txs';
+
+interface PendingTx {
+  id: string;
+  type: 'sent';
+  amount: string;
+  amountMojo: string;
+  ticker: string;
+  isCat: boolean;
+  submittedAt: number;
+  expiresAt: number;
+  txId?: string;
+}
+
+function loadPendingTxs(): PendingTx[] {
+  try { return JSON.parse(sessionStorage.getItem(PENDING_TXS_KEY) || '[]'); } catch { return []; }
+}
+function savePendingTxs(txs: PendingTx[]) {
+  try { sessionStorage.setItem(PENDING_TXS_KEY, JSON.stringify(txs)); } catch {}
+}
+function addPendingTx(tx: PendingTx) {
+  savePendingTxs([...loadPendingTxs().filter(t => t.id !== tx.id), tx]);
+}
 
 interface ClawbackEntry {
   txId: string;

@@ -61,7 +61,7 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [FEAT] Create offer — pick asset + amount to offer, pick asset + amount to request; lock the offered coins with the SETTLEMENT_PAYMENTS puzzle and output the offer string. Copy to clipboard + one-tap submit to Dexie. XCH↔CAT. — L effort
 - [x] [FEAT] Clawback sends — send XCH with a user-chosen timelock (10 min / 1 hr / 24 hr); history shows a "Clawback pending — Cancel" row during the window. Matches Chia Cloud Wallet's headline safety feature, low implementation cost relative to user value. — M effort
 - [x] [UX] Transaction detail screen — tap any history row to expand: full mojo amount, block height, coin IDs, spacescan link, fee (where derivable from change). Currently the row is the whole story. — S effort
-- [ ] [BUG] CAT history gap for fully-spent tokens — tokens received and fully sent are absent from `catBalances`, so hint-found spent coin records can't be labelled; need outer-puzzle-hash → assetId lookup via the existing `phAssetCache` for coins not in active balances. — M effort
+- [x] [BUG] CAT history gap for fully-spent tokens — tokens received and fully sent are absent from `catBalances`, so hint-found spent coin records can't be labelled; need outer-puzzle-hash → assetId lookup via the existing `phAssetCache` for coins not in active balances. — M effort
 - [ ] [UX] Pending/mempool transactions in history — history only shows confirmed coin records; track recently submitted spend bundles in sessionStorage, show as "Pending" until a matching confirmed record appears on the next poll. — M effort
 - [ ] [TEST] Playwright test for HistoryScreen — verify no-node empty state and "Scanning chain…" loading state (carried from v0.7.0). — S effort
 
