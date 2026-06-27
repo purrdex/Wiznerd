@@ -20,6 +20,7 @@ import {
   loadCustomAssetIds,
   saveCustomAssetIds,
   getTokenMetadata,
+  resolveOuterPuzzleHash,
   type CatBalance,
 } from './lib/cats';
 import { sendXch } from './lib/spend';
@@ -1454,15 +1455,32 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
           // Fetch all hint-found CAT coins including spent
           const hintResults = await getCatCoinsByHint(nodeUrl, puzzleHashes, true);
 
-          // Annotate each coin with asset info
+          // Annotate each coin with asset info; fall back to phAssetCache for fully-spent tokens
           type AnnotatedCat = { cr: any; asset: { assetId: string; ticker: string; name: string } };
           const annotated: AnnotatedCat[] = [];
+          const unknownPhs = new Set<string>();
           for (const { coins } of hintResults) {
             for (const cr of coins) {
               const ph = (cr.coin.puzzle_hash || '').replace('0x', '').toLowerCase();
               const asset = phToAsset.get(ph);
-              if (asset) annotated.push({ cr, asset });
+              if (asset) { annotated.push({ cr, asset }); continue; }
+              // Try phAssetCache for tokens no longer in catBalances (fully spent)
+              const assetId = resolveOuterPuzzleHash(ph);
+              if (assetId) { unknownPhs.add(`${ph}:${assetId}`); annotated.push({ cr, asset: { assetId, ticker: assetId.slice(0,4).toUpperCase(), name: `CAT ${assetId.slice(0,8)}` } }); }
             }
+          }
+          // Resolve names for the fallback assets asynchronously
+          if (unknownPhs.size > 0) {
+            await Promise.allSettled([...unknownPhs].map(async key => {
+              const [, assetId] = key.split(':');
+              const meta = await getTokenMetadata(assetId);
+              for (const item of annotated) {
+                if (item.asset.assetId === assetId && item.asset.name.startsWith('CAT ')) {
+                  item.asset.ticker = meta.ticker;
+                  item.asset.name = meta.name;
+                }
+              }
+            }));
           }
 
           // Compute CAT coin IDs

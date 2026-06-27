@@ -191,6 +191,13 @@ async function findAssetIdByPuzzleHash(coinPuzzleHash: string, innerPh: string):
   return null;
 }
 
+// Look up assetId from an outer CAT puzzle hash using the persisted phAssetCache.
+// Returns null if unknown (coin was fully spent and not in the discovery cache).
+export function resolveOuterPuzzleHash(outerPh: string): string | null {
+  const ph = outerPh.replace('0x', '').toLowerCase();
+  return phAssetCache[ph] ?? null;
+}
+
 // ── Custom / pinned token asset IDs (user-specified, scanned by outer puzzle hash) ──
 export const CUSTOM_TOKENS_KEY = 'chia_custom_tokens';
 export function loadCustomAssetIds(): string[] {
