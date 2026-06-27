@@ -74,7 +74,7 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 - [x] [BUG] `OffersScreen` create/take paths pass `Number(giveMojo)`, `Number(wantMojo)`, `Number(feeMojo)` to wallet daemon — precision lost above ~9,007 XCH equivalent (App.tsx) — S effort
 - [x] [BUG] `WalletHome` `fetchAll` closes over stale `balance` state — `useCallback` missing `balance` dep; shows "Cannot reach proxy" on any transient failure even when a valid cached balance is displayed (App.tsx) — S effort
 - [x] [FEAT] View/re-export seed phrase from Settings — no way to reveal stored mnemonic after setup; any user who needs to migrate or re-backup is stuck — S effort
-- [ ] [UX] Seed phrase verification quiz on wallet creation — currently a checkbox; MetaMask and Sage require re-entering 3 random words; highest-impact new-user security gap — S effort
+- [x] [UX] Seed phrase verification quiz on wallet creation — currently a checkbox; MetaMask and Sage require re-entering 3 random words; highest-impact new-user security gap — S effort
 
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.

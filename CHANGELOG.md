@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0 — 2026-06-27 (Security & Critical Fixes)
+- feat: Hot wallet security banner — persistent unencrypted-storage warning with per-session dismiss
+- feat: Reveal seed phrase in Settings — show/hide/copy mnemonic after wallet creation (like MetaMask's "Reveal SRP")
+- feat: Seed phrase verification quiz — require re-entering 3 random words before opening a new wallet; wrong answers blocked with clear error
+- fix: BigInt-safe `walletRpc` serializer — all wallet daemon calls now emit raw integer literals via custom JSON serializer; no more `Number(bigint)` precision loss above ~9,007 XCH
+- fix: `formatMojoToXch` precision — replaced `Number(mojo)/1e12` with pure BigInt arithmetic; all balance displays correct at any amount
+- fix: Clawback and Offers screens use native bigint amounts — `Number()` casts removed from all `walletRpc` calls in `SendScreen` and `OffersScreen`
+- fix: Stale `balance` closure in `WalletHome.fetchAll` — replaced stale-state guard with a `hasLoadedRef`; no more spurious "Cannot reach proxy" on transient failures
+- fix: `localStorage` cache size caps — `puzzleCache` capped at 500 entries, `phAssetCache` at 2000; oldest entries evicted to prevent silent `setItem` failure and cache divergence
+- test: 3 new Playwright tests — quiz appears after confirm, quiz rejects wrong words, Settings reveals seed phrase (15 tests total)
+
 ## v0.8.0 — 2026-06-27 (On-Chain Trading & History)
 - feat: Take offer — paste an `offer1…` string, decode terms, one-tap atomic settlement via wallet daemon
 - feat: Create offer — build XCH↔CAT offer strings, copy or submit to Dexie
