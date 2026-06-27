@@ -461,14 +461,15 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme }:
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme, currentMnemonic }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
     onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
     walletList: WalletEntry[]; activeWalletId: string|null;
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
     hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void;
-    theme: 'dark'|'light'; onToggleTheme:()=>void }) {
+    theme: 'dark'|'light'; onToggleTheme:()=>void;
+    currentMnemonic: string }) {
   const [input, setInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<NodeStatus|null>(null);
@@ -481,6 +482,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
   const [customTokens, setCustomTokens] = useState<string[]>(() => loadCustomAssetIds());
   const [newAssetId, setNewAssetId] = useState('');
   const [assetIdError, setAssetIdError] = useState('');
+  const [showMnemonic, setShowMnemonic] = useState(false);
 
   useEffect(() => {
     setInput(nodeUrl || '');
@@ -703,6 +705,53 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
       <button className="btn btn-secondary" style={{marginTop:4}} onClick={onAddWallet}>
         + Add wallet
       </button>
+
+      <div className="section-label mt-16">Security</div>
+      <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',padding:'12px 14px'}}>
+        <div style={{fontSize:13,fontWeight:600,color:'var(--text-primary)',marginBottom:4}}>Reveal seed phrase</div>
+        <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:10}}>
+          Your 24-word seed phrase is the only way to recover this wallet. Never share it.
+        </div>
+        {!showMnemonic ? (
+          <button
+            onClick={() => setShowMnemonic(true)}
+            style={{padding:'8px 14px',background:'none',border:'1px solid rgba(224,92,92,0.5)',
+              borderRadius:'var(--radius-sm)',color:'var(--error)',fontSize:12,cursor:'pointer',fontWeight:600}}>
+            Show seed phrase
+          </button>
+        ) : (
+          <div>
+            <div style={{background:'rgba(224,92,92,0.07)',border:'1px solid rgba(224,92,92,0.3)',
+              borderRadius:'var(--radius-sm)',padding:'10px 12px',marginBottom:8}}>
+              <div style={{fontSize:10,color:'var(--error)',fontWeight:700,marginBottom:8}}>
+                ⚠️ KEEP THIS PRIVATE — anyone with these words controls your funds
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:4}}>
+                {currentMnemonic.split(' ').map((word, i) => (
+                  <div key={i} style={{fontSize:11,color:'var(--text-primary)',fontFamily:'var(--font-mono)',
+                    background:'var(--bg-input)',borderRadius:4,padding:'4px 6px'}}>
+                    <span style={{color:'var(--text-secondary)',marginRight:4,fontSize:9}}>{i+1}.</span>{word}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button
+                onClick={() => navigator.clipboard.writeText(currentMnemonic)}
+                style={{padding:'7px 12px',background:'none',border:'1px solid var(--border)',
+                  borderRadius:'var(--radius-sm)',color:'var(--text-secondary)',fontSize:11,cursor:'pointer'}}>
+                Copy
+              </button>
+              <button
+                onClick={() => setShowMnemonic(false)}
+                style={{padding:'7px 12px',background:'none',border:'1px solid var(--border)',
+                  borderRadius:'var(--radius-sm)',color:'var(--text-secondary)',fontSize:11,cursor:'pointer'}}>
+                Hide
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2647,7 +2696,7 @@ export default function App() {
       {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
       {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
       {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme}/>}
+      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme} currentMnemonic={wallet?.mnemonic ?? ''}/>}
 
       {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">

@@ -67,7 +67,7 @@ to trade. Dexie is just an aggregator of offer strings — we can participate.
 
 ## v0.9.0 — Security & Critical Fixes
 
-- [ ] [SECURITY] All wallet mnemonics stored in plaintext in `localStorage['chia_wallets']` — any JS in the same origin (browser extension, injected script, XSS) can read every mnemonic; add persistent banner warning this is an unencrypted hot wallet — L effort
+- [x] [SECURITY] All wallet mnemonics stored in plaintext in `localStorage['chia_wallets']` — any JS in the same origin (browser extension, injected script, XSS) can read every mnemonic; add persistent banner warning this is an unencrypted hot wallet — L effort
 - [x] [SECURITY] `puzzleCache` and `phAssetCache` in `localStorage` grow unbounded with no TTL or size cap — silent `setItem` failure once storage fills causes cache/memory divergence and repeated RPC calls — M effort
 - [x] [BUG] `formatMojoToXch` coerces BigInt through `Number()` before dividing — `Number(mojo) / 1_000_000_000_000` loses precision above ~9,007 XCH; affects every balance display and history row (utils.ts) — S effort
 - [x] [BUG] Clawback send path passes `Number(amountMojo)` / `Number(feeMojo)` to `walletRpc` — same precision-loss pattern fixed for regular sends; wrong mojo count above ~9,007 XCH (App.tsx) — S effort
