@@ -36,10 +36,10 @@ Build: clean (479 KB / 139 KB gzip, no warnings). Tests: 10/10 pass. All items c
 - [x] [TEST] No test for `CatDetailScreen` — opening a token detail view, verifying the wallet daemon status check, and send form validation are entirely untested — S effort
 
 ## v0.6.0 — Power Features
-- [ ] Multiple wallet support (switch between mnemonics)
-- [ ] Node connection indicator with latency
-- [ ] Settings: toggle showing/hiding small balances
-- [ ] Dark/light mode toggle
+- [x] Multiple wallet support (switch between mnemonics)
+- [x] Node connection indicator with latency
+- [x] Settings: toggle showing/hiding small balances
+- [x] Dark/light mode toggle
 
 ## vNext — Analysis Findings
 Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings sorted by user impact.
@@ -60,3 +60,4 @@ Build: clean (1 chunk-size warning — 558 KB bundle). Tests: 6/6 pass. Findings
 - [x] [PERF] NFT metadata requests all fire in parallel (up to 50 at once via `Promise.all`) — IPFS gateways rate-limit concurrent requests; add a concurrency limiter (e.g. 5 at a time) (App.tsx:746) — S effort
 - [x] [PERF] Token metadata cache (`metadataCache` in cats.ts) is module-level in-memory only — cleared on every page reload; persisting to `sessionStorage` would eliminate repeated Dexie/taildatabase queries within a session (cats.ts:88) — S effort
 - [ ] [FEAT] Proxy XCH price guard `price < 100` will silently drop real prices if XCH ever exceeds $100 — raise the cap or remove it (proxy/index.js:175) — S effort
+- [ ] [BUG] Transaction history is blank after manual CAT sends — `HistoryScreen` queries the wallet daemon (`get_transactions`) which has no record of sends made via `push_tx` directly to the full node; manual CAT spends need to be surfaced via coin-record lookups on the full node rather than the daemon history — M effort
