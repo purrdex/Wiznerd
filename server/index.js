@@ -311,5 +311,16 @@ app.post('/api/projects/:id/ipfs', async (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+async function ensureBuckets() {
+  for (const [id, isPublic] of [['layers', false], ['output', true]]) {
+    const { error } = await supabase.storage.createBucket(id, { public: isPublic });
+    if (!error) console.log(`[storage] created bucket "${id}"`);
+    else if (!error.message.includes('already exists')) console.warn(`[storage] bucket "${id}":`, error.message);
+  }
+}
+
 const PORT = process.env.API_PORT || 3002;
-app.listen(PORT, () => console.log(`Wiznerd API server on http://localhost:${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`Wiznerd API server on http://localhost:${PORT}`);
+  await ensureBuckets();
+});
