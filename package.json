@@ -1,7 +1,7 @@
 {
   "name": "chia-wallet",
   "private": true,
-  "version": "0.12.0",
+  "version": "0.14.0",
   "type": "module",
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js",
@@ -14,11 +14,13 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@scure/bip39": "^2.2.0",
+    "@supabase/supabase-js": "^2.108.2",
     "bech32": "^2.0.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.0"
+    "react-router-dom": "^7.18.0",
+    "recharts": "^3.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.14.0 — 2026-06-28 (Generative Art Engine)
+- feat: `supabase/migrations/001_initial.sql` — full schema: projects, layers, variants, incompatibilities, generated_tokens with RLS + realtime notes
+- feat: `server/index.js` — Express API server on port 3002 with full CORS allowlist; 8 routes: create project, upload layers, save variants/weights/incompatibilities, preview (5 samples), generate (BullMQ queue or synchronous fallback), status, rarity report, IPFS pin
+- feat: `server/generation.js` — Hashlips-style weighted trait selection with incompatibility checking, uniqueness enforcement, `@napi-rs/canvas` image compositing (prebuilt Windows x64 binaries), Supabase Storage upload, per-token DB records, live progress updates
+- feat: `server/ipfs.js` — NFT.storage HTTP API upload of all images + CHIP-0007 metadata JSON per token; updates token records with `ipfs://` URIs
+- feat: `src/create/index.tsx` — 8-step creator wizard: New Project → Layer Upload → Trait Config (weights + incompatibility rules) → Preview (5 samples) → Generate (Realtime progress via Supabase channel + polling fallback) → Rarity Report (recharts BarChart per layer) → IPFS Pin → Launch link
+- feat: `src/lib/supabase.ts` — Supabase frontend client from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
+- feat: `.env` updated with `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_URL` for Vite frontend exposure
+- infra: BullMQ + ioredis queue with graceful degradation (runs synchronously when Redis unavailable)
+- infra: `@napi-rs/canvas` replaces `node-canvas` for Windows-compatible prebuilt binaries
+- infra: `server/` directory added to repo with own `package.json`; output images excluded from git
+
+## v0.13.0 — 2026-06-27 (Platform Restructure)
+- refactor: installed react-router-dom; set up `createBrowserRouter` in `src/main.tsx`
+- refactor: moved wallet code from `src/` to `src/wallet/`; `src/lib/*` to `src/wallet/lib/*`
+- feat: routes: `/` → WalletApp, `/create` → CreateScreen (placeholder), `/marketplace` → MarketplaceScreen (placeholder)
+
 ## v0.12.0 — 2026-06-27 (Security Hardening & Polish)
 - fix: CORS wildcard replaced with origin-allowlist in chia-proxy — localhost always allowed; production origins via `FRONTEND_ORIGIN` env var; `Vary: Origin` header set
 - fix: Change Password now verifies current password before re-encrypting — decrypts one wallet with re-derived key before any state changes; errors clearly as "incorrect password"

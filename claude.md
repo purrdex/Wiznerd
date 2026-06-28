@@ -18,8 +18,13 @@ No Chia SDK dependencies in the frontend — all crypto handled via local node R
 - src/wallet/lib/cats.ts — CAT token discovery, metadata, prices
 - src/wallet/lib/spend.ts — XCH sends via wallet daemon RPC
 - src/wallet/lib/node.ts — Chia full node RPC calls
-- src/create/index.tsx — generative art studio (placeholder)
+- src/lib/supabase.ts — Supabase frontend client
+- src/create/index.tsx — 8-step generative art creator wizard
 - src/marketplace/index.tsx — NFT marketplace (placeholder)
+- server/index.js — Express API server (port 3002)
+- server/generation.js — Hashlips trait engine + @napi-rs/canvas compositing
+- server/ipfs.js — NFT.storage CHIP-0007 upload
+- supabase/migrations/001_initial.sql — full DB schema
 
 ## Running the App
 - Frontend: npm start (in chia-wallet/)
@@ -69,13 +74,39 @@ test: description (vX.X.X)
 
 
 ## Current State (last updated)
-- v0.13.0 complete — Platform restructure: React Router added, wallet moved to src/wallet/, placeholder /create and /marketplace routes added
-- All 17 tests passing, build clean at 660 KB / 190 KB gzip (react-router-dom adds ~95 KB; chunk warning is pre-existing)
-- Route / serves wallet app (unchanged behavior); /create and /marketplace are placeholder screens
-- src/wallet/App.tsx and src/wallet/lib/* are the wallet source; src/create/ and src/marketplace/ are new sections
+- v0.14.0 complete — Generative art engine: 8-step creator at /create, Express API server on port 3002, Hashlips trait engine, @napi-rs/canvas compositing, Supabase backend, CHIP-0007 IPFS metadata
+- All 17 wallet tests passing; build clean (1.26 MB / 358 KB gzip — Supabase JS + recharts are large; chunk warning is pre-existing)
+- server/ runs separately: `node server/index.js` (requires Supabase credentials in .env; Redis optional for BullMQ)
+- @napi-rs/canvas used instead of node-canvas — prebuilt Windows x64 binaries, identical API
+- Supabase migration: run supabase/migrations/001_initial.sql in Supabase SQL editor
+- Also create storage buckets: layers (private) and output (public) in Supabase dashboard
 
 ## Platform Security Strategy
 - Web: password-derived encryption (PBKDF2 + AES-256-GCM), salt in localStorage
 - iOS: iOS Keychain via react-native-keychain, Face ID/Touch ID, no password prompt
 - Android: Android Keystore via react-native-keychain, biometrics, no password prompt
 - Core wallet logic in src/lib/ is platform-agnostic TypeScript, ports directly to RN
+
+## Platform Stack
+Frontend:   React/TypeScript (Vite)
+Backend:    Node.js + Express (chia-proxy extended)
+Database:   Supabase (Postgres + Storage + Realtime)
+Queue:      BullMQ + Redis (generation and mint jobs)
+Chia:       Full node RPC via proxy
+IPFS:       NFT.storage for final metadata pinning
+
+## Supabase Usage
+- Projects table — creator projects, config, status
+- Layers table — trait categories and variants per project  
+- Generated table — output metadata per token
+- Orders table — buyer orders, payment status, mint status
+- Storage bucket: layers — uploaded PNG layer files
+- Storage bucket: output — generated collection images
+- Realtime — generation progress pushed to browser
+
+## Environment Variables needed
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_KEY=
+NFT_STORAGE_KEY=
+REDIS_URL=redis://localhost:6379
