@@ -1,18 +1,11 @@
 'use strict';
-/**
- * IPFS pinning via NFT.storage HTTP API (v1).
- * Uploads all generated images + Chia NFT1-standard metadata JSON for a project.
- */
 const fs = require('fs');
 const path = require('path');
 
-function getSupabase() {
-  return require('./index').supabase;
-}
+function getSupabase() { return require('./index').supabase; }
 
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
-// Build Chia CHIP-0007 metadata for a single token
 function buildMetadata(project, tokenIndex, traits, imageCid) {
   return {
     format: 'CHIP-0007',
@@ -31,60 +24,100 @@ function buildMetadata(project, tokenIndex, traits, imageCid) {
   };
 }
 
-// Upload a single file to NFT.storage and return the CID
-async function uploadFileToNFTStorage(buffer, mimeType, apiKey) {
+async function uploadToNFTStorage(buffer, mimeType, apiKey) {
   const res = await fetch('https://api.nft.storage/upload', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': mimeType,
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': mimeType },
     body: buffer,
     signal: AbortSignal.timeout(120000),
   });
-  if (!res.ok) throw new Error(`NFT.storage upload failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`NFT.storage ${res.status}: ${await res.text()}`);
   const json = await res.json();
   return json.value?.cid ?? json.cid;
 }
 
+async function uploadToPinata(buffer, mimeType, filename, pinataJwt) {
+  const blob = new Blob([buffer], { type: mimeType });
+  const fd = new FormData();
+  fd.append('file', blob, filename || 'file');
+  const res = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${pinataJwt}` },
+    body: fd,
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) throw new Error(`Pinata ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  return json.IpfsHash;
+}
+
+function detectService() {
+  if (process.env.NFT_STORAGE_KEY) return { service: 'nftstorage', key: process.env.NFT_STORAGE_KEY };
+  if (process.env.PINATA_JWT) return { service: 'pinata', key: process.env.PINATA_JWT };
+  return null;
+}
+
+async function uploadFile(buffer, mimeType, filename) {
+  const svc = detectService();
+  if (!svc) throw new Error('No IPFS service configured — set NFT_STORAGE_KEY or PINATA_JWT in .env');
+  if (svc.service === 'nftstorage') return uploadToNFTStorage(buffer, mimeType, svc.key);
+  return uploadToPinata(buffer, mimeType, filename, svc.key);
+}
+
+async function testIPFS() {
+  const svc = detectService();
+  if (!svc) return { ok: false, service: null, error: 'No IPFS service configured — set NFT_STORAGE_KEY or PINATA_JWT in .env' };
+
+  if (svc.service === 'pinata') {
+    try {
+      const res = await fetch('https://api.pinata.cloud/data/testAuthentication', {
+        headers: { Authorization: `Bearer ${svc.key}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      return { ok: true, service: 'Pinata' };
+    } catch (e) {
+      return { ok: false, service: 'Pinata', error: e.message };
+    }
+  }
+
+  // NFT.storage: test with a tiny JSON upload
+  try {
+    const cid = await uploadToNFTStorage(Buffer.from('{"test":true}'), 'application/json', svc.key);
+    return { ok: true, service: 'NFT.storage', cid };
+  } catch (e) {
+    return { ok: false, service: 'NFT.storage', error: e.message };
+  }
+}
+
 async function pinToIPFS(projectId) {
-  const apiKey = process.env.NFT_STORAGE_KEY;
-  if (!apiKey) throw new Error('NFT_STORAGE_KEY env var not set');
+  const svc = detectService();
+  if (!svc) throw new Error('No IPFS service configured — set NFT_STORAGE_KEY or PINATA_JWT in .env');
+  const serviceName = svc.service === 'pinata' ? 'Pinata' : 'NFT.storage';
 
   const supabase = getSupabase();
-
   const { data: project } = await supabase.from('projects').select('*').eq('id', projectId).single();
   const { data: tokens } = await supabase.from('generated_tokens').select('*').eq('project_id', projectId).order('token_index');
-
   if (!tokens || tokens.length === 0) throw new Error('No generated tokens found for this project');
 
   const projectOutputDir = path.join(OUTPUT_DIR, projectId);
-  const metadataCids = [];
+  let lastCid = '';
 
   for (const token of tokens) {
-    // Upload image
     const imgPath = path.join(projectOutputDir, `${token.token_index}.png`);
     let imageCid = '';
     if (fs.existsSync(imgPath)) {
-      const imgBuffer = fs.readFileSync(imgPath);
-      imageCid = await uploadFileToNFTStorage(imgBuffer, 'image/png', apiKey);
+      imageCid = await uploadFile(fs.readFileSync(imgPath), 'image/png', `${token.token_index}.png`);
     }
-
-    // Build and upload metadata
     const metadata = buildMetadata(project, token.token_index, token.traits, imageCid);
     const metaBuffer = Buffer.from(JSON.stringify(metadata, null, 2));
-    const metaCid = await uploadFileToNFTStorage(metaBuffer, 'application/json', apiKey);
-    metadataCids.push(metaCid);
-
-    // Update token record with metadata URI
-    await supabase
-      .from('generated_tokens')
-      .update({ metadata_uri: `ipfs://${metaCid}`, status: 'pinned' })
+    lastCid = await uploadFile(metaBuffer, 'application/json', `${token.token_index}.json`);
+    await supabase.from('generated_tokens')
+      .update({ metadata_uri: `ipfs://${lastCid}`, status: 'pinned' })
       .eq('id', token.id);
   }
 
-  // Return the last CID as a collection-level reference (could be a CAR file CID in production)
-  return metadataCids[metadataCids.length - 1] ?? '';
+  return { cid: lastCid, service: serviceName };
 }
 
-module.exports = { pinToIPFS };
+module.exports = { pinToIPFS, testIPFS };

@@ -82,13 +82,30 @@ app.get('/api/thumb', async (req, res) => {
   res.send(buffer);
 });
 
+// GET /api/projects — list by creator_address
+app.get('/api/projects', async (req, res) => {
+  const { creator_address } = req.query;
+  if (!creator_address) return res.json([]);
+  const { data, error } = await supabase.from('projects').select('*')
+    .eq('creator_address', creator_address)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || []);
+});
+
 // POST /api/projects — create project
 app.post('/api/projects', async (req, res) => {
-  const { name, symbol, total_supply, royalty_percent } = req.body;
+  const { name, symbol, total_supply, royalty_percent, creator_address, current_step } = req.body;
   if (!name || !symbol || !total_supply) return res.status(400).json({ error: 'name, symbol, total_supply required' });
   const { data, error } = await supabase
     .from('projects')
-    .insert({ name, symbol, total_supply: Number(total_supply), royalty_percent: Number(royalty_percent) || 0 })
+    .insert({
+      name, symbol,
+      total_supply: Number(total_supply),
+      royalty_percent: Number(royalty_percent) || 0,
+      creator_address: creator_address || null,
+      current_step: Number(current_step) || 1,
+    })
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
@@ -100,6 +117,35 @@ app.get('/api/projects/:id', async (req, res) => {
   const { data, error } = await supabase.from('projects').select('*').eq('id', req.params.id).single();
   if (error) return res.status(404).json({ error: error.message });
   res.json(data);
+});
+
+// PATCH /api/projects/:id — update step, status, or other fields
+app.patch('/api/projects/:id', async (req, res) => {
+  const updates = {};
+  if (req.body.current_step !== undefined) updates.current_step = Number(req.body.current_step);
+  if (req.body.status !== undefined) updates.status = req.body.status;
+  updates.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:id — delete project and all storage files
+app.delete('/api/projects/:id', async (req, res) => {
+  const { id } = req.params;
+  const { data: layers } = await supabase.from('layers').select('id').eq('project_id', id);
+  if (layers && layers.length) {
+    const { data: variants } = await supabase.from('variants')
+      .select('file_path').in('layer_id', layers.map(l => l.id));
+    const filePaths = (variants || []).map(v => v.file_path).filter(Boolean);
+    if (filePaths.length) await supabase.storage.from('layers').remove(filePaths);
+  }
+  const { data: tokens } = await supabase.from('generated_tokens').select('image_path').eq('project_id', id);
+  const outPaths = (tokens || []).map(t => t.image_path).filter(Boolean);
+  if (outPaths.length) await supabase.storage.from('output').remove(outPaths);
+  const { error } = await supabase.from('projects').delete().eq('id', id);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // POST /api/projects/:id/layers — upload layer + variant images
@@ -186,6 +232,23 @@ app.delete('/api/projects/:id/variants/:variantId', async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   res.json({ ok: true });
 });
+
+// GET /api/projects/:id/incompatibilities — list incompatibility rules for a project
+app.get('/api/projects/:id/incompatibilities', async (req, res) => {
+  const variantIds = await getVariantIdsForProject(req.params.id);
+  if (variantIds.length === 0) return res.json([]);
+  const { data, error } = await supabase.from('incompatibilities')
+    .select('variant_a, variant_b').in('variant_a', variantIds);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || []);
+});
+
+async function getVariantIdsForProject(projectId) {
+  const { data: layers } = await supabase.from('layers').select('id').eq('project_id', projectId);
+  if (!layers || layers.length === 0) return [];
+  const { data: variants } = await supabase.from('variants').select('id').in('layer_id', layers.map(l => l.id));
+  return (variants || []).map(v => v.id);
+}
 
 // GET /api/projects/:id/layers — list layers with variants
 app.get('/api/projects/:id/layers', async (req, res) => {
@@ -295,13 +358,26 @@ app.get('/api/projects/:id/rarity', async (req, res) => {
   res.json(report);
 });
 
-// POST /api/projects/:id/ipfs — pin to NFT.storage
+// GET /api/ipfs/test — test IPFS service connection
+app.get('/api/ipfs/test', async (req, res) => {
+  try {
+    const { testIPFS } = require('./ipfs');
+    const result = await testIPFS();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/projects/:id/ipfs — pin to IPFS (NFT.storage or Pinata)
 app.post('/api/projects/:id/ipfs', async (req, res) => {
   try {
     const { pinToIPFS } = require('./ipfs');
-    const cid = await pinToIPFS(req.params.id);
+    const result = await pinToIPFS(req.params.id);
+    const cid = typeof result === 'string' ? result : result.cid;
+    const service = typeof result === 'object' ? result.service : undefined;
     await supabase.from('projects').update({ status: 'pinned', ipfs_cid: cid }).eq('id', req.params.id);
-    res.json({ cid });
+    res.json({ cid, service });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

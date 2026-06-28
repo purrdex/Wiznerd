@@ -3179,7 +3179,9 @@ export default function App() {
       const mnemonic = active.encryptedMnemonic
         ? await decryptMnemonic(active.encryptedMnemonic, key)
         : active.mnemonic!;
-      setWallet({ mnemonic, addresses: deriveAddresses(mnemonic, 50) });
+      const addresses = deriveAddresses(mnemonic, 50);
+      try { localStorage.setItem('chia_primary_address', addresses[0]?.address || ''); } catch {}
+      setWallet({ mnemonic, addresses });
       setScreen('wallet');
     } catch {
       localStorage.removeItem(WALLETS_KEY);
@@ -3212,6 +3214,7 @@ export default function App() {
       setShowBackupBanner(true);
     }
     setUnlockMode(null);
+    try { localStorage.setItem('chia_primary_address', addresses[0]?.address || ''); } catch {}
     setWallet({ mnemonic, addresses });
     setScreen('wallet');
   };
