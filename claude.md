@@ -11,12 +11,15 @@ No Chia SDK dependencies in the frontend — all crypto handled via local node R
 - Chia wallet daemon: localhost:9256 (SSL)
 
 ## Key Source Files
-- src/App.tsx — all UI screens and components
-- src/App.css — dark theme, mobile-first, 420px max-width
-- src/lib/keys.ts — BLS key derivation
-- src/lib/cats.ts — CAT token discovery, metadata, prices
-- src/lib/spend.ts — XCH sends via wallet daemon RPC
-- src/lib/node.ts — Chia full node RPC calls
+- src/main.tsx — React Router entry point (/ wallet, /create, /marketplace)
+- src/wallet/App.tsx — all wallet UI screens and components
+- src/wallet/App.css — dark theme, mobile-first, 420px max-width
+- src/wallet/lib/keys.ts — BLS key derivation
+- src/wallet/lib/cats.ts — CAT token discovery, metadata, prices
+- src/wallet/lib/spend.ts — XCH sends via wallet daemon RPC
+- src/wallet/lib/node.ts — Chia full node RPC calls
+- src/create/index.tsx — generative art studio (placeholder)
+- src/marketplace/index.tsx — NFT marketplace (placeholder)
 
 ## Running the App
 - Frontend: npm start (in chia-wallet/)
@@ -63,3 +66,16 @@ No Chia SDK dependencies in the frontend — all crypto handled via local node R
 feat: description (vX.X.X)
 fix: description (vX.X.X)
 test: description (vX.X.X)
+
+
+## Current State (last updated)
+- v0.13.0 complete — Platform restructure: React Router added, wallet moved to src/wallet/, placeholder /create and /marketplace routes added
+- All 17 tests passing, build clean at 660 KB / 190 KB gzip (react-router-dom adds ~95 KB; chunk warning is pre-existing)
+- Route / serves wallet app (unchanged behavior); /create and /marketplace are placeholder screens
+- src/wallet/App.tsx and src/wallet/lib/* are the wallet source; src/create/ and src/marketplace/ are new sections
+
+## Platform Security Strategy
+- Web: password-derived encryption (PBKDF2 + AES-256-GCM), salt in localStorage
+- iOS: iOS Keychain via react-native-keychain, Face ID/Touch ID, no password prompt
+- Android: Android Keystore via react-native-keychain, biometrics, no password prompt
+- Core wallet logic in src/lib/ is platform-agnostic TypeScript, ports directly to RN
