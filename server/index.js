@@ -7,11 +7,13 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 
 // ─── Supabase client (exported for use by generation.js / ipfs.js) ────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: ws } }
 );
 module.exports.supabase = supabase;
 
@@ -26,14 +28,25 @@ try {
   });
   connection.on('error', () => {}); // suppress unhandled error events
   generationQueue = new Queue('generation', { connection });
+  generationQueue.on('error', () => { generationQueue = null; });
 
-  // Inline worker — runs in same process for simplicity
+  // Inline worker — runs in same process
   const { generateFull } = require('./generation');
-  new Worker('generation', async job => {
+  const worker = new Worker('generation', async job => {
     await generateFull(job.data.projectId);
   }, { connection });
 
-  console.log('[server] BullMQ generation queue ready');
+  // If Redis version < 5, BullMQ rejects asynchronously — catch once, close to stop retries
+  let bullDisabled = false;
+  worker.on('error', err => {
+    if (bullDisabled) return;
+    bullDisabled = true;
+    generationQueue = null;
+    console.log('[server] BullMQ disabled (Redis < 5) — generation will run synchronously:', err.message);
+    worker.close(true).catch(() => {});
+  });
+
+  console.log('[server] BullMQ generation queue initialising…');
 } catch (e) {
   console.log('[server] Redis unavailable — generation will run synchronously:', e.message);
 }
