@@ -41,7 +41,16 @@ let generationQueue = null;
     generationQueue.on('error', () => { generationQueue = null; });
     const { generateFull } = require('./generation');
     new Worker('generation', async job => { await generateFull(job.data.projectId); }, { connection })
-      .on('error', err => console.warn('[server] BullMQ worker error:', err.message));
+      .on('error', err => console.warn('[server] BullMQ generation worker error:', err.message));
+
+    // Mint worker
+    const mintQueue = new Queue('mint', { connection });
+    const { setMintQueue } = require('./watcher');
+    setMintQueue(mintQueue);
+    const { mint } = require('./mint');
+    new Worker('mint', async job => { await mint(job.data.orderId, supabase); }, { connection })
+      .on('error', err => console.warn('[server] BullMQ mint worker error:', err.message));
+
     console.log('[server] BullMQ ready');
   } catch (e) {
     console.log('[server] BullMQ init error — generation will run synchronously:', e.message);
@@ -387,6 +396,9 @@ app.post('/api/projects/:id/ipfs', async (req, res) => {
   }
 });
 
+// ── Marketplace routes ────────────────────────────────────────────────────────
+require('./marketplace')(app, supabase);
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 async function ensureBuckets() {
   for (const [id, isPublic] of [['layers', false], ['output', true]]) {
@@ -400,4 +412,6 @@ const PORT = process.env.API_PORT || 3002;
 app.listen(PORT, async () => {
   console.log(`Wiznerd API server on http://localhost:${PORT}`);
   await ensureBuckets();
+  const { startWatcher } = require('./watcher');
+  startWatcher(supabase);
 });

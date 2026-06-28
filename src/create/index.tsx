@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './create.css';
 import { supabase } from '../lib/supabase';
 import {
@@ -79,6 +80,7 @@ function statusLabel(status: string, step: number): string {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function CreateScreen() {
+  const navigate = useNavigate();
   const creatorAddress = (() => {
     try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; }
   })();
@@ -110,6 +112,15 @@ export default function CreateScreen() {
   const [ipfsSpeedText, setIpfsSpeedText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  // Step 8 — launch / marketplace publish
+  const [mintPriceXch, setMintPriceXch] = useState('');
+  const [launchImmediate, setLaunchImmediate] = useState(true);
+  const [launchAt, setLaunchAt] = useState('');
+  const [allowlistText, setAllowlistText] = useState('');
+  const [revealType, setRevealType] = useState<'instant' | 'blind'>('instant');
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishError, setPublishError] = useState('');
 
   // Step 1 fields
   const [name, setName] = useState('');
@@ -475,6 +486,35 @@ export default function CreateScreen() {
         } catch { /* transient */ }
       }, 3000);
     } catch (e: unknown) { setError((e as Error).message); setBusy(false); }
+  }
+
+  async function handlePublish() {
+    if (!project) return;
+    const price = parseFloat(mintPriceXch);
+    if (isNaN(price) || price < 0) { setPublishError('Enter a valid mint price (0 for free)'); return; }
+    if (!launchImmediate && !launchAt) { setPublishError('Select a launch date or choose "Launch immediately"'); return; }
+    setPublishBusy(true); setPublishError('');
+    try {
+      const allowlist = allowlistText.split('\n').map(s => s.trim()).filter(s => s.startsWith('xch1'));
+      const res = await fetch(`${API_URL}/api/marketplace/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: project.id,
+          mint_price_xch: price,
+          launch_immediately: launchImmediate,
+          launch_at: launchImmediate ? null : launchAt,
+          allowlist,
+          reveal_type: revealType,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error || 'Publish failed'); }
+      navigate(`/marketplace/${project.id}/manage`);
+    } catch (e: unknown) {
+      setPublishError(e instanceof Error ? e.message : String(e));
+      setPublishBusy(false);
+    }
   }
 
   async function handleTestIPFS() {
@@ -1145,19 +1185,82 @@ export default function CreateScreen() {
 
           {/* ── Step 8: Launch ──────────────────────────────────────────────── */}
           {step === 8 && (
-            <div style={{ textAlign: 'center', padding: '32px 0' }}>
-              <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
-              <h2 style={{ margin: '0 0 12px', fontSize: 22, color: '#fff' }}>Collection Ready!</h2>
-              <p style={{ color: '#94a3b8', marginBottom: 8, lineHeight: 1.6, fontSize: 14 }}>
-                <strong style={{ color: '#e2e8f0' }}>{project?.name}</strong> has been generated and pinned to IPFS.
+            <div>
+              <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Launch on Marketplace</h2>
+              <p style={{ margin: '0 0 20px', fontSize: 13, color: '#94a3b8' }}>
+                Configure your mint and publish <strong style={{ color: '#e2e8f0' }}>{project?.name}</strong> to the Wiznerd Marketplace.
               </p>
-              {ipfsCid && <p style={{ color: '#94a3b8', fontSize: 12, fontFamily: 'monospace', marginBottom: 24 }}>CID: {ipfsCid}</p>}
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                <a href={`/marketplace?project=${project?.id}`}
-                  style={{ ...S.btnP, display: 'inline-block', textDecoration: 'none', fontSize: 14 }}>
-                  Launch on Marketplace →
-                </a>
-                <button style={S.btnS} onClick={() => { setShowDashboard(true); loadProjects(); }}>← My Projects</button>
+
+              {/* Mint price */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={S.label}>Mint price (XCH)</label>
+                <input style={S.input} type="number" min="0" step="0.001" placeholder="0.5"
+                  value={mintPriceXch} onChange={e => setMintPriceXch(e.target.value)} />
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Set to 0 for a free mint</div>
+              </div>
+
+              {/* Launch timing */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={S.label}>Launch timing</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14 }}>
+                    <input type="radio" checked={launchImmediate} onChange={() => setLaunchImmediate(true)} style={{ accentColor: '#f97316' }} />
+                    Launch immediately
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14 }}>
+                    <input type="radio" checked={!launchImmediate} onChange={() => setLaunchImmediate(false)} style={{ accentColor: '#f97316' }} />
+                    Schedule for later
+                  </label>
+                  {!launchImmediate && (
+                    <input style={{ ...S.input, marginTop: 4 }} type="datetime-local"
+                      value={launchAt} onChange={e => setLaunchAt(e.target.value)} />
+                  )}
+                </div>
+              </div>
+
+              {/* Reveal type */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={S.label}>Reveal type</label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {(['instant', 'blind'] as const).map(t => (
+                    <label key={t} style={{
+                      flex: 1, padding: '10px 14px', background: revealType === t ? 'rgba(249,115,22,0.1)' : '#0f1016',
+                      border: `1px solid ${revealType === t ? '#f97316' : '#2d2f3d'}`, borderRadius: 8,
+                      cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 4,
+                    }}>
+                      <input type="radio" checked={revealType === t} onChange={() => setRevealType(t)} style={{ display: 'none' }} />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>
+                        {t === 'instant' ? 'Instant Reveal' : 'Blind Mint'}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                        {t === 'instant' ? 'Buyers see their NFT immediately after mint'
+                          : 'NFTs are hidden until you reveal the collection'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Allowlist */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={S.label}>Allowlist (optional — one xch1 address per line)</label>
+                <textarea style={{ ...S.input, resize: 'vertical', minHeight: 80, fontFamily: 'monospace', fontSize: 12 }}
+                  placeholder={'xch1aaa...\nxch1bbb...'}
+                  value={allowlistText} onChange={e => setAllowlistText(e.target.value)} />
+                {allowlistText.trim() && (
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                    {allowlistText.split('\n').filter(s => s.trim().startsWith('xch1')).length} valid address(es)
+                  </div>
+                )}
+              </div>
+
+              {publishError && <div style={S.err}>{publishError}</div>}
+
+              <div style={S.row}>
+                <button style={S.btnS} onClick={() => setStep(7)}>← Back</button>
+                <button style={S.btnP} onClick={handlePublish} disabled={publishBusy}>
+                  {publishBusy ? 'Publishing…' : '🚀 Publish Collection'}
+                </button>
               </div>
             </div>
           )}
