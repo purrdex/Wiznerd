@@ -62,7 +62,12 @@ function generateTraits(layers, incompatibilities, usedKeys, maxAttempts = 500) 
     usedKeys.add(key);
     return traits;
   }
-  throw new Error(`Could not generate a unique valid combination after ${maxAttempts} attempts`);
+  const summary = layers.map(l => `${l.name}(${(l.variants||[]).length} variants)`).join(', ');
+  throw new Error(
+    `Could not generate a unique valid combination after ${maxAttempts} attempts. ` +
+    `You may have too few variants for the requested supply, or incompatibility rules block too many combinations. ` +
+    `Layers: ${summary}. Incompatibility rules: ${incompatibilities.length}.`
+  );
 }
 
 // ─── Canvas compositing ───────────────────────────────────────────────────────
@@ -125,23 +130,41 @@ async function getVariantIds(projectId) {
 
 async function generateSamples(projectId, count) {
   const { layers, incompatibilities } = await fetchProjectData(projectId);
+
+  const totalVariants = layers.reduce((s, l) => s + (l.variants || []).length, 0);
+  console.log(`[preview] project=${projectId} layers=${layers.length} variants=${totalVariants} incompatibilities=${incompatibilities.length}`);
+  layers.forEach(l => console.log(`  layer "${l.name}": ${(l.variants||[]).map(v => `${v.name}(w=${v.weight??100})`).join(', ')}`));
+
+  if (layers.length === 0) throw new Error('No layers found — upload at least one layer before previewing');
+  if (totalVariants === 0) throw new Error('Layers have no variants — upload PNG files for each layer');
+
   const previewDir = path.join(PREVIEW_DIR, projectId);
   if (!fs.existsSync(previewDir)) fs.mkdirSync(previewDir, { recursive: true });
 
-  const usedKeys = new Set();
   const urls = [];
 
   for (let i = 0; i < count; i++) {
-    const traits = generateTraits(layers, incompatibilities, usedKeys);
-    const filePath = path.join(previewDir, `${i}.png`);
+    // Previews don't enforce uniqueness — just find any valid (compatible) combination
+    let traits = null;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const candidate = pickTraits(layers, incompatibilities);
+      if (candidate) { traits = candidate; break; }
+    }
+    if (!traits) {
+      const summary = layers.map(l => `${l.name}(${(l.variants||[]).length})`).join(', ');
+      throw new Error(
+        `Cannot find a valid trait combination after 200 attempts. ` +
+        `Your incompatibility rules are too restrictive — they block every possible combination. ` +
+        `Layers: ${summary}. Rules: ${incompatibilities.length}. Remove some incompatibility rules and try again.`
+      );
+    }
 
+    const filePath = path.join(previewDir, `${i}.png`);
     if (createCanvas) {
       await compositeImage(layers, traits, filePath);
     } else {
-      // Placeholder: create a coloured 1x1 PNG when canvas unavailable
       fs.writeFileSync(filePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
     }
-
     urls.push(`http://localhost:3002/output/preview/${projectId}/${i}.png`);
   }
 

@@ -56,15 +56,27 @@ export default function CreateScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingLayer, setUploadingLayer] = useState(false);
 
+  // Step 3 — expanded layers
+  const [expandedLayers, setExpandedLayers] = useState<Set<string>>(new Set());
+  const toggleLayer = (id: string) => setExpandedLayers(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
   // Generation poll ref
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (genPollRef.current) clearInterval(genPollRef.current); }, []);
 
-  // Auto-set incompat selects when layers load
+  // Auto-set incompat selects when layers load; auto-expand all layers on step 3
   useEffect(() => {
     const first = layers.flatMap(l => l.variants)[0];
     if (first && !incompatA) { setIncompatA(first.id); setIncompatB(first.id); }
   }, [layers, incompatA]);
+
+  useEffect(() => {
+    if (step === 3) setExpandedLayers(new Set(layers.map(l => l.id)));
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch rarity data when entering step 6
   useEffect(() => {
@@ -328,35 +340,65 @@ export default function CreateScreen() {
           <div>
             <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Trait Configuration</h2>
             <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>
-              Set rarity weights (higher = more common) and mark incompatible variant pairs.
+              Click a layer to expand it. Set rarity weights (higher = more common) and mark incompatible variant pairs below.
             </p>
 
             {layers.map(layer => {
+              const isExpanded = expandedLayers.has(layer.id);
               const total = layer.variants.reduce((s, v) => s + (v.weight || 100), 0);
               return (
-                <div key={layer.id} style={{ marginBottom: 22 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#f97316', marginBottom: 10 }}>{layer.name}</div>
-                  {layer.variants.map(variant => (
-                    <div key={variant.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ flex: 1, fontSize: 13, color: '#94a3b8' }}>{variant.name}</span>
-                      <span style={S.label}>Wt</span>
-                      <input type="number" min={1} max={1000} value={variant.weight}
-                        onChange={e => setLayers(prev => prev.map(l => l.id === layer.id ? {
-                          ...l, variants: l.variants.map(v => v.id === variant.id ? { ...v, weight: Math.max(1, +e.target.value) } : v),
-                        } : l))}
-                        style={{ width: 68, padding: '6px 8px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}
-                      />
-                      <span style={{ fontSize: 11, color: '#475569', width: 36, textAlign: 'right' }}>
-                        {Math.round(variant.weight / total * 100)}%
+                <div key={layer.id} style={{ marginBottom: 8, border: '1px solid #1e2030', borderRadius: 8, overflow: 'hidden' }}>
+                  {/* Clickable layer header */}
+                  <div onClick={() => toggleLayer(layer.id)} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '12px 16px', cursor: 'pointer', background: '#0f1016', userSelect: 'none',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#f97316' }}>{layer.name}</span>
+                      <span style={{ fontSize: 11, color: '#475569' }}>
+                        {layer.variants.length} variant{layer.variants.length !== 1 ? 's' : ''}
                       </span>
                     </div>
-                  ))}
+                    <span style={{ color: '#475569', fontSize: 11 }}>{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+
+                  {/* Variants — visible when expanded */}
+                  {isExpanded && (
+                    <div style={{ padding: '10px 16px 14px', borderTop: '1px solid #1e2030' }}>
+                      {layer.variants.map(variant => (
+                        <div key={variant.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8,
+                          padding: '8px 10px', background: '#0a0b0f', borderRadius: 6,
+                        }}>
+                          {variant.file_path && (
+                            <img
+                              src={`${API_URL}/api/thumb?path=${encodeURIComponent(variant.file_path)}`}
+                              alt={variant.name}
+                              style={{ width: 44, height: 44, borderRadius: 4, objectFit: 'cover', flexShrink: 0, border: '1px solid #1e2030' }}
+                            />
+                          )}
+                          <span style={{ flex: 1, fontSize: 13, color: '#94a3b8' }}>{variant.name}</span>
+                          <span style={{ ...S.label, margin: 0 }}>Wt</span>
+                          <input type="number" min={1} max={1000} value={variant.weight || 100}
+                            onChange={e => setLayers(prev => prev.map(l => l.id === layer.id ? {
+                              ...l, variants: l.variants.map(v => v.id === variant.id
+                                ? { ...v, weight: Math.max(1, +e.target.value) } : v),
+                            } : l))}
+                            style={{ width: 68, padding: '6px 8px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}
+                          />
+                          <span style={{ fontSize: 11, color: '#475569', width: 36, textAlign: 'right' }}>
+                            {total > 0 ? Math.round((variant.weight || 100) / total * 100) : 0}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
 
             {/* Incompatibilities */}
-            <div style={{ borderTop: '1px solid #1e2030', paddingTop: 16, marginTop: 4 }}>
+            <div style={{ borderTop: '1px solid #1e2030', paddingTop: 16, marginTop: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Incompatibility Rules</div>
 
               {incompats.map((rule, i) => {

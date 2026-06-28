@@ -73,6 +73,18 @@ app.use('/output', express.static(OUTPUT_DIR));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
+// GET /api/thumb?path=<storagePath> — proxy a private layer image to the browser
+app.get('/api/thumb', async (req, res) => {
+  const storagePath = req.query.path;
+  if (!storagePath) return res.status(400).end();
+  const { data, error } = await supabase.storage.from('layers').download(storagePath);
+  if (error || !data) return res.status(404).end();
+  const buffer = Buffer.from(await data.arrayBuffer());
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(buffer);
+});
+
 // POST /api/projects — create project
 app.post('/api/projects', async (req, res) => {
   const { name, symbol, total_supply, royalty_percent } = req.body;
