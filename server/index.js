@@ -17,39 +17,36 @@ const supabase = createClient(
 );
 module.exports.supabase = supabase;
 
-// ─── BullMQ (optional — degrades gracefully if Redis unavailable) ─────────────
+// ─── BullMQ (optional — probe Redis version before touching BullMQ) ──────────
 let generationQueue = null;
-try {
-  const { Queue, Worker } = require('bullmq');
-  const IORedis = require('ioredis');
-  const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null,
-    lazyConnect: true,
-  });
-  connection.on('error', () => {}); // suppress unhandled error events
-  generationQueue = new Queue('generation', { connection });
-  generationQueue.on('error', () => { generationQueue = null; });
 
-  // Inline worker — runs in same process
-  const { generateFull } = require('./generation');
-  const worker = new Worker('generation', async job => {
-    await generateFull(job.data.projectId);
-  }, { connection });
-
-  // If Redis version < 5, BullMQ rejects asynchronously — catch once, close to stop retries
-  let bullDisabled = false;
-  worker.on('error', err => {
-    if (bullDisabled) return;
-    bullDisabled = true;
-    generationQueue = null;
-    console.log('[server] BullMQ disabled (Redis < 5) — generation will run synchronously:', err.message);
-    worker.close(true).catch(() => {});
-  });
-
-  console.log('[server] BullMQ generation queue initialising…');
-} catch (e) {
-  console.log('[server] Redis unavailable — generation will run synchronously:', e.message);
-}
+(async () => {
+  try {
+    const IORedis = require('ioredis');
+    const probe = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      maxRetriesPerRequest: 1, connectTimeout: 3000,
+    });
+    probe.on('error', () => {});
+    const info = await probe.info('server').catch(() => null);
+    await probe.quit().catch(() => {});
+    if (!info) return console.log('[server] Redis unavailable — generation will run synchronously');
+    const m = info.match(/redis_version:(\d+)/);
+    if (!m || parseInt(m[1]) < 5) {
+      return console.log(`[server] Redis ${m ? m[1] : '?'}.x < 5 — BullMQ skipped, generation will run synchronously`);
+    }
+    const { Queue, Worker } = require('bullmq');
+    const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });
+    connection.on('error', () => {});
+    generationQueue = new Queue('generation', { connection });
+    generationQueue.on('error', () => { generationQueue = null; });
+    const { generateFull } = require('./generation');
+    new Worker('generation', async job => { await generateFull(job.data.projectId); }, { connection })
+      .on('error', err => console.warn('[server] BullMQ worker error:', err.message));
+    console.log('[server] BullMQ ready');
+  } catch (e) {
+    console.log('[server] BullMQ init error — generation will run synchronously:', e.message);
+  }
+})();
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const app = express();
