@@ -119,13 +119,17 @@ app.post('/api/projects/:id/layers', upload.array('files'), async (req, res) => 
   if (layerErr) return res.status(400).json({ error: layerErr.message });
 
   const variants = [];
+  const storageErrors = [];
   for (const file of req.files || []) {
     const filePath = `${id}/${layer.id}/${file.originalname}`;
     const { error: uploadErr } = await supabase.storage
       .from('layers')
       .upload(filePath, file.buffer, { contentType: file.mimetype, upsert: true });
-    if (uploadErr) { console.warn('[upload]', uploadErr.message); continue; }
-
+    if (uploadErr) {
+      console.warn('[upload]', uploadErr.message);
+      storageErrors.push(`${file.originalname}: ${uploadErr.message}`);
+      continue;
+    }
     const variantName = path.parse(file.originalname).name;
     const { data: variant } = await supabase
       .from('variants')
@@ -135,7 +139,55 @@ app.post('/api/projects/:id/layers', upload.array('files'), async (req, res) => 
     if (variant) variants.push(variant);
   }
 
-  res.json({ layer, variants });
+  if (variants.length === 0 && storageErrors.length > 0) {
+    await supabase.from('layers').delete().eq('id', layer.id);
+    return res.status(500).json({ error: `Storage upload failed: ${storageErrors[0]}. Ensure the "layers" bucket exists in Supabase Storage.` });
+  }
+
+  res.json({ layer, variants, storageErrors: storageErrors.length ? storageErrors : undefined });
+});
+
+// PATCH /api/projects/:id/layers/:layerId — rename or reorder
+app.patch('/api/projects/:id/layers/:layerId', async (req, res) => {
+  const updates = {};
+  if (req.body.name !== undefined) updates.name = req.body.name;
+  if (req.body.z_index !== undefined) updates.z_index = Number(req.body.z_index);
+  const { data, error } = await supabase.from('layers').update(updates).eq('id', req.params.layerId).select().single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// DELETE /api/projects/:id/layers/:layerId — delete layer (cascades to variants)
+app.delete('/api/projects/:id/layers/:layerId', async (req, res) => {
+  const { error } = await supabase.from('layers').delete().eq('id', req.params.layerId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// POST /api/projects/:id/layers/:layerId/variants — add more variants to existing layer
+app.post('/api/projects/:id/layers/:layerId/variants', upload.array('files'), async (req, res) => {
+  const { id, layerId } = req.params;
+  const variants = [];
+  const errors = [];
+  for (const file of req.files || []) {
+    const filePath = `${id}/${layerId}/${file.originalname}`;
+    const { error: uploadErr } = await supabase.storage.from('layers').upload(filePath, file.buffer, { contentType: file.mimetype, upsert: true });
+    if (uploadErr) { errors.push(`${file.originalname}: ${uploadErr.message}`); continue; }
+    const variantName = path.parse(file.originalname).name;
+    const { data: variant } = await supabase.from('variants')
+      .insert({ layer_id: layerId, name: variantName, file_path: filePath })
+      .select().single();
+    if (variant) variants.push(variant);
+  }
+  if (variants.length === 0 && errors.length > 0) return res.status(400).json({ error: errors[0] });
+  res.json({ variants, errors: errors.length ? errors : undefined });
+});
+
+// DELETE /api/projects/:id/variants/:variantId
+app.delete('/api/projects/:id/variants/:variantId', async (req, res) => {
+  const { error } = await supabase.from('variants').delete().eq('id', req.params.variantId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // GET /api/projects/:id/layers — list layers with variants

@@ -51,10 +51,18 @@ export default function CreateScreen() {
   const [supply, setSupply] = useState(100);
   const [royalty, setRoyalty] = useState(5);
 
-  // Step 2 — layer upload
+  // Step 2 — layer upload & management
   const [newLayerName, setNewLayerName] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingLayer, setUploadingLayer] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [dragOverNew, setDragOverNew] = useState(false);
+  const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null);
+  const [expandedInStep2, setExpandedInStep2] = useState<Set<string>>(new Set());
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  const [editLayerNameVal, setEditLayerNameVal] = useState('');
+  const [addVariantTargetId, setAddVariantTargetId] = useState<string | null>(null);
+  const newLayerFileInputRef = useRef<HTMLInputElement>(null);
+  const addVariantFileInputRef = useRef<HTMLInputElement>(null);
 
   // Step 3 — expanded layers
   const [expandedLayers, setExpandedLayers] = useState<Set<string>>(new Set());
@@ -132,23 +140,98 @@ export default function CreateScreen() {
   }
 
   async function handleAddLayer() {
-    if (!newLayerName || !project) return;
-    const files = fileInputRef.current?.files;
-    if (!files || files.length === 0) { setError('Select at least one PNG file'); return; }
+    if (!newLayerName.trim() || !project) return;
+    if (pendingFiles.length === 0) { setError('Add at least one PNG file to this layer'); return; }
     setUploadingLayer(true); setError('');
     try {
       const formData = new FormData();
-      formData.append('layer_name', newLayerName);
+      formData.append('layer_name', newLayerName.trim());
       formData.append('z_index', String(layers.length));
-      for (const f of files) formData.append('files', f);
+      for (const f of pendingFiles) formData.append('files', f);
       const res = await fetch(`${API_URL}/api/projects/${project.id}/layers`, {
         method: 'POST', body: formData, signal: AbortSignal.timeout(60000),
       });
-      const data = await res.json() as { layer: Layer; variants: Variant[] };
-      if (!res.ok) throw new Error((data as unknown as { error: string }).error);
+      const data = await res.json() as { layer: Layer; variants: Variant[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed');
+      if (data.variants.length === 0) throw new Error('No variants were saved — verify the "layers" bucket exists in Supabase Storage with correct permissions');
       setLayers(prev => [...prev, { ...data.layer, variants: data.variants }]);
+      setExpandedInStep2(prev => new Set([...prev, data.layer.id]));
       setNewLayerName('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setPendingFiles([]);
+    } catch (e: unknown) { setError((e as Error).message); }
+    finally { setUploadingLayer(false); }
+  }
+
+  async function handleDeleteLayer(layerId: string) {
+    if (!project || !window.confirm('Delete this layer and all its variants?')) return;
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/api/projects/${project.id}/layers/${layerId}`, {
+        method: 'DELETE', signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      setLayers(prev => prev.filter(l => l.id !== layerId).map((l, i) => ({ ...l, z_index: i })));
+    } catch (e: unknown) { setError((e as Error).message); }
+  }
+
+  async function handleSaveLayerName(layerId: string) {
+    if (!project || !editLayerNameVal.trim()) { setEditingLayerId(null); return; }
+    try {
+      await fetch(`${API_URL}/api/projects/${project.id}/layers/${layerId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editLayerNameVal.trim() }),
+        signal: AbortSignal.timeout(10000),
+      });
+      setLayers(prev => prev.map(l => l.id === layerId ? { ...l, name: editLayerNameVal.trim() } : l));
+    } catch (e: unknown) { setError((e as Error).message); }
+    finally { setEditingLayerId(null); }
+  }
+
+  async function handleMoveLayer(layerId: string, dir: -1 | 1) {
+    if (!project) return;
+    const idx = layers.findIndex(l => l.id === layerId);
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= layers.length) return;
+    const next = [...layers];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    setLayers(next.map((l, i) => ({ ...l, z_index: i })));
+    await Promise.all([
+      fetch(`${API_URL}/api/projects/${project.id}/layers/${next[idx].id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ z_index: idx }), signal: AbortSignal.timeout(5000),
+      }),
+      fetch(`${API_URL}/api/projects/${project.id}/layers/${next[newIdx].id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ z_index: newIdx }), signal: AbortSignal.timeout(5000),
+      }),
+    ]);
+  }
+
+  async function handleDeleteVariant(layerId: string, variantId: string) {
+    if (!project) return;
+    try {
+      await fetch(`${API_URL}/api/projects/${project.id}/variants/${variantId}`, {
+        method: 'DELETE', signal: AbortSignal.timeout(10000),
+      });
+      setLayers(prev => prev.map(l => l.id === layerId
+        ? { ...l, variants: l.variants.filter(v => v.id !== variantId) } : l));
+    } catch (e: unknown) { setError((e as Error).message); }
+  }
+
+  async function handleAddVariants(layerId: string, files: File[]) {
+    if (!project || files.length === 0) return;
+    setUploadingLayer(true); setError('');
+    try {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+      const res = await fetch(`${API_URL}/api/projects/${project.id}/layers/${layerId}/variants`, {
+        method: 'POST', body: fd, signal: AbortSignal.timeout(60000),
+      });
+      const data = await res.json() as { variants: Variant[]; errors?: string[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed');
+      setLayers(prev => prev.map(l => l.id === layerId
+        ? { ...l, variants: [...l.variants, ...data.variants] } : l));
+      if (data.errors?.length) setError(`Some files failed: ${data.errors.join('; ')}`);
     } catch (e: unknown) { setError((e as Error).message); }
     finally { setUploadingLayer(false); }
   }
@@ -294,35 +377,150 @@ export default function CreateScreen() {
         {/* ── Step 2: Layer Upload ────────────────────────────────────────── */}
         {step === 2 && (
           <div>
-            <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Upload Layers</h2>
+            <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>Upload Layers</h2>
             <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>
-              Each layer is a trait category (Background, Eyes, Hat…). Upload PNG files — one per variant.
+              Layers stack bottom-to-top (z=0 = Background, highest = foreground accessories). Each PNG = one variant.
             </p>
 
+            {/* Hidden file inputs */}
+            <input ref={newLayerFileInputRef} type="file" accept="image/png" multiple style={{ display: 'none' }}
+              onChange={e => { if (e.target.files) { setPendingFiles(prev => [...prev, ...Array.from(e.target.files!)]); e.target.value = ''; } }} />
+            <input ref={addVariantFileInputRef} type="file" accept="image/png" multiple style={{ display: 'none' }}
+              onChange={e => {
+                if (e.target.files && addVariantTargetId) {
+                  handleAddVariants(addVariantTargetId, Array.from(e.target.files));
+                  e.target.value = '';
+                }
+              }} />
+
+            {/* Existing layers list */}
             {layers.length > 0 && (
-              <div style={{ marginBottom: 18 }}>
-                {layers.map((layer, idx) => (
-                  <div key={layer.id} style={{ background: '#0f1016', border: '1px solid #1e2030', borderRadius: 8, padding: '10px 14px', marginBottom: 6 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>
-                      Layer {idx + 1} — {layer.name}
+              <div style={{ marginBottom: 20 }}>
+                {layers.map((layer, idx) => {
+                  const isExp = expandedInStep2.has(layer.id);
+                  const isEd = editingLayerId === layer.id;
+                  return (
+                    <div key={layer.id} style={{ border: '1px solid #1e2030', borderRadius: 8, marginBottom: 8, overflow: 'hidden' }}>
+                      {/* Layer header row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: '#0f1016' }}>
+                        {/* Up / Down */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flexShrink: 0 }}>
+                          <button onClick={() => handleMoveLayer(layer.id, -1)} disabled={idx === 0}
+                            style={{ ...S.btnS, padding: '1px 5px', fontSize: 9, lineHeight: 1.2, opacity: idx === 0 ? 0.3 : 1 }}>▲</button>
+                          <button onClick={() => handleMoveLayer(layer.id, 1)} disabled={idx === layers.length - 1}
+                            style={{ ...S.btnS, padding: '1px 5px', fontSize: 9, lineHeight: 1.2, opacity: idx === layers.length - 1 ? 0.3 : 1 }}>▼</button>
+                        </div>
+                        {/* Index badge */}
+                        <span style={{ fontSize: 10, color: '#334155', background: '#1e2030', borderRadius: 4, padding: '2px 5px', flexShrink: 0 }}>{idx + 1}</span>
+                        {/* Name / edit */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {isEd ? (
+                            <input autoFocus value={editLayerNameVal}
+                              onChange={e => setEditLayerNameVal(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleSaveLayerName(layer.id); if (e.key === 'Escape') setEditingLayerId(null); }}
+                              onBlur={() => handleSaveLayerName(layer.id)}
+                              style={{ ...S.input, padding: '4px 8px', fontSize: 13 }} />
+                          ) : (
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{layer.name}
+                              <span style={{ fontWeight: 400, color: '#334155', fontSize: 11, marginLeft: 6 }}>
+                                {layer.variants.length} variant{layer.variants.length !== 1 ? 's' : ''}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                        {/* Action buttons */}
+                        {!isEd && (
+                          <button onClick={() => { setEditingLayerId(layer.id); setEditLayerNameVal(layer.name); }}
+                            style={{ ...S.btnS, padding: '3px 9px', fontSize: 11, flexShrink: 0 }}>Rename</button>
+                        )}
+                        <button onClick={() => handleDeleteLayer(layer.id)}
+                          style={{ ...S.btnS, padding: '3px 9px', fontSize: 11, color: '#f87171', borderColor: 'rgba(248,113,113,0.3)', flexShrink: 0 }}>Delete</button>
+                        <button
+                          onClick={() => setExpandedInStep2(prev => { const n = new Set(prev); n.has(layer.id) ? n.delete(layer.id) : n.add(layer.id); return n; })}
+                          style={{ ...S.btnS, padding: '3px 8px', fontSize: 11, flexShrink: 0 }}>{isExp ? '▲' : '▼'}</button>
+                      </div>
+
+                      {/* Expanded: variant list + add-more drop zone */}
+                      {isExp && (
+                        <div style={{ padding: '10px 12px', borderTop: '1px solid #1e2030' }}>
+                          {layer.variants.map(v => (
+                            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7, padding: '6px 8px', background: '#0a0b0f', borderRadius: 6 }}>
+                              {v.file_path && (
+                                <img src={`${API_URL}/api/thumb?path=${encodeURIComponent(v.file_path)}`} alt={v.name}
+                                  style={{ width: 40, height: 40, borderRadius: 4, objectFit: 'cover', flexShrink: 0, border: '1px solid #1e2030' }} />
+                              )}
+                              <input value={v.name}
+                                onChange={e => setLayers(prev => prev.map(l => l.id === layer.id
+                                  ? { ...l, variants: l.variants.map(vv => vv.id === v.id ? { ...vv, name: e.target.value } : vv) }
+                                  : l))}
+                                style={{ flex: 1, padding: '4px 8px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 5, color: '#e2e8f0', fontSize: 12 }} />
+                              <button onClick={() => handleDeleteVariant(layer.id, v.id)}
+                                style={{ ...S.btnS, padding: '3px 9px', fontSize: 11, color: '#f87171', borderColor: 'rgba(248,113,113,0.3)', flexShrink: 0 }}>Remove</button>
+                            </div>
+                          ))}
+                          {/* Drop zone for more variants */}
+                          <div
+                            onDragOver={e => { e.preventDefault(); setDragOverLayerId(layer.id); }}
+                            onDragLeave={() => setDragOverLayerId(null)}
+                            onDrop={e => { e.preventDefault(); setDragOverLayerId(null); handleAddVariants(layer.id, Array.from(e.dataTransfer.files).filter(f => f.type === 'image/png')); }}
+                            onClick={() => { setAddVariantTargetId(layer.id); addVariantFileInputRef.current?.click(); }}
+                            style={{
+                              border: `1px dashed ${dragOverLayerId === layer.id ? '#f97316' : '#2d2f3d'}`,
+                              borderRadius: 6, padding: '10px', textAlign: 'center', cursor: 'pointer',
+                              background: dragOverLayerId === layer.id ? 'rgba(249,115,22,0.05)' : 'transparent',
+                              marginTop: 6, fontSize: 12, color: '#475569', transition: 'all 0.15s',
+                            }}>
+                            {uploadingLayer ? 'Uploading…' : '+ Drop PNGs or click to add more variants'}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: 12, color: '#475569', marginTop: 2 }}>
-                      {layer.variants.length} variant{layer.variants.length !== 1 ? 's' : ''}: {layer.variants.map(v => v.name).join(', ')}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
-            <div style={{ border: '1px dashed #2d2f3d', borderRadius: 8, padding: 16, marginBottom: 12 }}>
+            {/* Add new layer */}
+            <div style={{ border: '1px solid #2d2f3d', borderRadius: 8, padding: 16, background: '#0f1016' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>New Layer</div>
               <input style={{ ...S.input, marginBottom: 10 }}
-                placeholder="Layer name (e.g. Background)"
-                value={newLayerName}
-                onChange={e => setNewLayerName(e.target.value)} />
-              <input ref={fileInputRef} type="file" accept="image/png" multiple
-                style={{ display: 'block', marginBottom: 10, fontSize: 12, color: '#64748b' }} />
-              <button style={S.btnS} onClick={handleAddLayer} disabled={uploadingLayer || !newLayerName}>
-                {uploadingLayer ? 'Uploading…' : '+ Add Layer'}
+                placeholder="Layer name (e.g. Background, Eyes, Hat)"
+                value={newLayerName} onChange={e => setNewLayerName(e.target.value)} />
+
+              {/* Drop zone */}
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOverNew(true); }}
+                onDragLeave={() => setDragOverNew(false)}
+                onDrop={e => { e.preventDefault(); setDragOverNew(false); setPendingFiles(prev => [...prev, ...Array.from(e.dataTransfer.files).filter(f => f.type === 'image/png')]); }}
+                onClick={() => newLayerFileInputRef.current?.click()}
+                style={{
+                  border: `2px dashed ${dragOverNew ? '#f97316' : '#2d2f3d'}`,
+                  borderRadius: 8, padding: '26px 16px', textAlign: 'center', cursor: 'pointer',
+                  background: dragOverNew ? 'rgba(249,115,22,0.05)' : '#0a0b0f',
+                  transition: 'all 0.15s ease', marginBottom: 10,
+                }}>
+                <div style={{ fontSize: 20, marginBottom: 6 }}>🖼️</div>
+                <div style={{ fontSize: 13, color: dragOverNew ? '#f97316' : '#64748b' }}>Drop PNG files here or click to browse</div>
+                <div style={{ fontSize: 11, color: '#334155', marginTop: 3 }}>Each PNG becomes one variant (red.png, blue.png…)</div>
+              </div>
+
+              {/* Pending file chips */}
+              {pendingFiles.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 12 }}>
+                  {pendingFiles.map((f, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', background: '#161720', border: '1px solid #2d2f3d', borderRadius: 5, fontSize: 11, color: '#94a3b8' }}>
+                      {f.name}
+                      <button onClick={e => { e.stopPropagation(); setPendingFiles(prev => prev.filter((_, j) => j !== i)); }}
+                        style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: 0, marginLeft: 2, fontSize: 14, lineHeight: 1 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button style={{ ...S.btnP, opacity: uploadingLayer || !newLayerName.trim() || pendingFiles.length === 0 ? 0.5 : 1 }}
+                onClick={handleAddLayer}
+                disabled={uploadingLayer || !newLayerName.trim() || pendingFiles.length === 0}>
+                {uploadingLayer ? 'Uploading…' : `+ Add Layer${pendingFiles.length > 0 ? ` (${pendingFiles.length} file${pendingFiles.length !== 1 ? 's' : ''})` : ''}`}
               </button>
             </div>
 
