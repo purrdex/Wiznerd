@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.0.0 — 2026-06-28 (Marketplace & Minting Engine)
+
+### Features
+- **Launch Step** (wizard step 8): mint price input, launch timing (immediate or scheduled), allowlist textarea, instant/blind reveal toggle, Publish Collection button — redirects to `/marketplace/:id/manage`
+- **Marketplace Browse** (`/marketplace`): grid of published collections, filter tabs (All / Live Now / Upcoming / Sold Out), search, live countdown timers, supply progress bars, XCH + USD prices
+- **Collection Mint Page** (`/marketplace/:id`): hero image, supply stats with Supabase Realtime counter, countdown timer, allowlist badge, MINT button → unique XCH payment address + QR code, live order status polling, minting spinner, NFT reveal on confirmation, gallery of recently minted tokens, blind-mint placeholder support
+- **Creator Management Dashboard** (`/marketplace/:id/manage`): live stats (mints today, total minted, remaining, revenue XCH + USD), pause/resume toggle, blind-mint reveal button, manual gift mint, orders table with status pills, CSV export
+- **Minting Engine**: `server/mint.js` — BullMQ `mint` worker, calls `nft_mint_nft` via wallet daemon, optimistic token reservation (SELECT FOR UPDATE equivalent), sold-out detection
+- **Payment Watcher**: `server/watcher.js` — polls Chia full node every 10s via `get_coin_records_by_puzzle_hash`, bech32m address → puzzle hash, dispatches mint on payment detected
+- **Supabase Realtime**: live supply counter on collection page, live order updates on management dashboard
+
+### Database
+- Migration `004_marketplace.sql`: `mint_price_mojo`, `launch_at`, `allowlist`, `reveal_type`, `marketplace_status`, `mints_paused` added to `projects`; `orders` table with RLS policies
+
+### Backend
+- `server/marketplace.js`: all `/api/marketplace/*` routes
+- `server/watcher.js`: payment detection daemon started on server boot
+- `server/mint.js`: NFT minting via wallet daemon with token locking
+
+---
+
 ## v0.14.0 — 2026-06-28 (Generative Art Engine)
 - feat: `supabase/migrations/001_initial.sql` — full schema: projects, layers, variants, incompatibilities, generated_tokens with RLS + realtime notes
 - feat: `server/index.js` — Express API server on port 3002 with full CORS allowlist; 8 routes: create project, upload layers, save variants/weights/incompatibilities, preview (5 samples), generate (BullMQ queue or synchronous fallback), status, rarity report, IPFS pin
