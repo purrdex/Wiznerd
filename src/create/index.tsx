@@ -223,8 +223,13 @@ export default function CreateScreen() {
     <div style={S.page}>
       {/* Header */}
       <div style={{ maxWidth: 720, margin: '0 auto 28px' }}>
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#fff' }}>🎨 Generative Art Studio</h1>
-        <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <img src="/tepe.png" alt="Wiznerd mascot" style={{ width: 56, height: 56, borderRadius: '50%' }} />
+          <div>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#fff' }}>Wiznerd Art Studio</h1>
+            <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 4, marginTop: 18 }}>
           {STEPS.map((label, i) => (
             <div key={i} style={{ flex: 1 }}>
