@@ -1,10 +1,19 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import './index.css'
-import App from './App.tsx'
+import WalletApp from './wallet/App'
+import CreateScreen from './create'
+import MarketplaceScreen from './marketplace'
+
+const router = createBrowserRouter([
+  { path: '/', element: <WalletApp /> },
+  { path: '/create', element: <CreateScreen /> },
+  { path: '/marketplace', element: <MarketplaceScreen /> },
+])
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <RouterProvider router={router} />
   </StrictMode>,
 )

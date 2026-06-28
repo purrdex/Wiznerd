@@ -17,7 +17,8 @@
     "bech32": "^2.0.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

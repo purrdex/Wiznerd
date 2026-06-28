@@ -241,22 +241,32 @@ export async function sendCatManual(
     `{"name":"${parentId}"}`);
   const parentCoin = parentData.coin_record.coin;
 
-  // 6. Extract parent's inner puzzle hash from its stored puzzle reveal
-  if (!coin.parentPuzzleReveal) throw new Error('parentPuzzleReveal missing from coin');
-  const parentRevealHex = coin.parentPuzzleReveal.startsWith('0x')
-    ? coin.parentPuzzleReveal.slice(2)
-    : coin.parentPuzzleReveal;
-  const [parentPuzzleSExp] = parseSExp(hexToBytes(parentRevealHex), 0);
-  // CAT curry args: [0]=CAT_MOD_HASH [1]=assetId [2]=inner_puzzle (a SExp, not an atom)
-  const parentInnerPuzzle = getCurryArg(parentPuzzleSExp, 2);
-  const parentInnerPuzzleHash = sha256tree(parentInnerPuzzle);
+  // 6. Extract parent's inner puzzle hash (only for non-genesis coins).
+  // For genesis/eve coins (coin.isGenesis=true), the parent is an XCH coin, so the
+  // CAT2 lineage proof uses 2-element form: (grandparent_id, parent_amount).
+  let parentInnerPuzzleHash: Uint8Array | null = null;
+  if (!coin.isGenesis) {
+    if (!coin.parentPuzzleReveal) throw new Error('parentPuzzleReveal missing from coin');
+    const parentRevealHex = coin.parentPuzzleReveal.startsWith('0x')
+      ? coin.parentPuzzleReveal.slice(2)
+      : coin.parentPuzzleReveal;
+    const [parentPuzzleSExp] = parseSExp(hexToBytes(parentRevealHex), 0);
+    // CAT curry args: [0]=CAT_MOD_HASH [1]=assetId [2]=inner_puzzle (a SExp, not an atom)
+    const parentInnerPuzzle = getCurryArg(parentPuzzleSExp, 2);
+    parentInnerPuzzleHash = sha256tree(parentInnerPuzzle);
+  }
 
   // 7. Build delegated puzzle: (q . conditions)
   const recipientPh = addressToPuzzleHash(recipientAddress);
   const CREATE_COIN = intAtom(51n);
-  const conditions: SExp[] = [mkList(CREATE_COIN, mkAtom(recipientPh), intAtom(amount))];
+  // Include the inner puzzle hash as a memo/hint so the node indexes the coin
+  // for get_coin_records_by_hint — without this the recipient and change coins
+  // are invisible to hint-based discovery and appear to vanish after a send.
+  const conditions: SExp[] = [
+    mkList(CREATE_COIN, mkAtom(recipientPh), intAtom(amount), mkList(mkAtom(recipientPh))),
+  ];
   if (change > 0n) {
-    conditions.push(mkList(CREATE_COIN, mkAtom(changePh), intAtom(change)));
+    conditions.push(mkList(CREATE_COIN, mkAtom(changePh), intAtom(change), mkList(mkAtom(changePh))));
   }
   const delegatedPuzzle = mkCons(mkAtom(new Uint8Array([1])), mkList(...conditions));
 
@@ -269,11 +279,11 @@ export async function sendCatManual(
   const grandparentId = parentCoin.parent_coin_info as string;
   const parentAmount = BigInt(parentCoin.amount as number);
 
-  const lineageProof = mkList(
-    bytes32Atom(grandparentId),
-    mkAtom(parentInnerPuzzleHash),
-    intAtom(parentAmount)
-  );
+  // Eve/genesis: 2-element proof (grandparent_id, parent_amount)
+  // Non-eve: 3-element proof (grandparent_id, parent_inner_ph, parent_amount)
+  const lineageProof = coin.isGenesis || !parentInnerPuzzleHash
+    ? mkList(bytes32Atom(grandparentId), intAtom(parentAmount))
+    : mkList(bytes32Atom(grandparentId), mkAtom(parentInnerPuzzleHash), intAtom(parentAmount));
 
   const outerPuzzleHashHex = coin.puzzleHash.startsWith('0x')
     ? coin.puzzleHash.slice(2)
