@@ -20,7 +20,7 @@ const S: Record<string, React.CSSProperties> = {
   card:   { background: '#161720', border: '1px solid #2d2f3d', borderRadius: 12, padding: 24, maxWidth: 720, margin: '0 auto' },
   input:  { width: '100%', boxSizing: 'border-box', padding: '10px 14px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 8, color: '#e2e8f0', fontSize: 14 },
   select: { width: '100%', boxSizing: 'border-box', padding: '9px 12px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 8, color: '#e2e8f0', fontSize: 13 },
-  btnP:   { padding: '11px 24px', background: '#6c47ff', border: 'none', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  btnP:   { padding: '11px 24px', background: '#f97316', border: 'none', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   btnS:   { padding: '9px 18px', background: 'none', border: '1px solid #2d2f3d', borderRadius: 8, color: '#94a3b8', fontSize: 13, cursor: 'pointer' },
   row:    { display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 },
   label:  { fontSize: 12, color: '#64748b', display: 'block', marginBottom: 4 },
@@ -223,10 +223,10 @@ export default function CreateScreen() {
     <div style={S.page}>
       {/* Header */}
       <div style={{ maxWidth: 720, margin: '0 auto 28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <img src="/tepe.png" alt="Wiznerd mascot" style={{ width: 56, height: 56, borderRadius: '50%' }} />
-          <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: '#fff' }}>Wiznerd Art Studio</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+          <img src="/tepe.png" alt="Wiznerd mascot" style={{ width: 64, height: 64, borderRadius: '50%' }} />
+          <div style={{ textAlign: 'center' }}>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: '#fff' }}>Wiznerd Art Studio</h1>
             <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
           </div>
         </div>
@@ -234,8 +234,8 @@ export default function CreateScreen() {
           {STEPS.map((label, i) => (
             <div key={i} style={{ flex: 1 }}>
               <div style={{ height: 4, borderRadius: 2, marginBottom: 4,
-                background: step > i + 1 ? '#6c47ff' : step === i + 1 ? '#a78bfa' : '#1e2030' }} />
-              <span style={{ fontSize: 9, color: step === i + 1 ? '#a78bfa' : '#334155', display: 'block', textAlign: 'center' }}>
+                background: step > i + 1 ? '#f97316' : step === i + 1 ? '#fb923c' : '#1e2030' }} />
+              <span style={{ fontSize: 9, color: step === i + 1 ? '#fb923c' : '#334155', display: 'block', textAlign: 'center' }}>
                 {label}
               </span>
             </div>
@@ -335,7 +335,7 @@ export default function CreateScreen() {
               const total = layer.variants.reduce((s, v) => s + (v.weight || 100), 0);
               return (
                 <div key={layer.id} style={{ marginBottom: 22 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#a78bfa', marginBottom: 10 }}>{layer.name}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#f97316', marginBottom: 10 }}>{layer.name}</div>
                   {layer.variants.map(variant => (
                     <div key={variant.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <span style={{ flex: 1, fontSize: 13, color: '#94a3b8' }}>{variant.name}</span>
@@ -446,11 +446,11 @@ export default function CreateScreen() {
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
                     <span style={{ color: '#94a3b8' }}>{genStatus}</span>
-                    <span style={{ color: '#a78bfa', fontWeight: 600 }}>{genProgress}%</span>
+                    <span style={{ color: '#fb923c', fontWeight: 600 }}>{genProgress}%</span>
                   </div>
                   <div style={{ height: 8, background: '#0f1016', borderRadius: 4, overflow: 'hidden' }}>
                     <div style={{ height: '100%', borderRadius: 4, transition: 'width 0.5s ease',
-                      width: `${genProgress}%`, background: 'linear-gradient(90deg, #6c47ff, #a78bfa)' }} />
+                      width: `${genProgress}%`, background: 'linear-gradient(90deg, #ea580c, #f97316)' }} />
                   </div>
                 </div>
                 {genStatus === 'Complete!' && (
@@ -484,7 +484,7 @@ export default function CreateScreen() {
                 const chartData = Object.entries(traitCounts).map(([n, count]) => ({ name: n, count }));
                 return (
                   <div key={layerName} style={{ marginBottom: 32 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#a78bfa', marginBottom: 10 }}>{layerName}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#f97316', marginBottom: 10 }}>{layerName}</div>
                     <ResponsiveContainer width="100%" height={150}>
                       <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
@@ -494,7 +494,7 @@ export default function CreateScreen() {
                           contentStyle={{ background: '#161720', border: '1px solid #2d2f3d', borderRadius: 6, fontSize: 12 }}
                           labelStyle={{ color: '#e2e8f0' }}
                         />
-                        <Bar dataKey="count" fill="#6c47ff" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -518,9 +518,9 @@ export default function CreateScreen() {
             </p>
 
             {ipfsCid ? (
-              <div style={{ background: 'rgba(108,71,255,0.08)', border: '1px solid rgba(108,71,255,0.3)', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
                 <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>IPFS CID</div>
-                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#a78bfa', wordBreak: 'break-all' }}>{ipfsCid}</div>
+                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#fb923c', wordBreak: 'break-all' }}>{ipfsCid}</div>
               </div>
             ) : (
               <button style={S.btnP} onClick={handleIpfsPin} disabled={busy}>
