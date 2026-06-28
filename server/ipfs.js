@@ -81,7 +81,6 @@ async function testIPFS() {
     }
   }
 
-  // NFT.storage: test with a tiny JSON upload
   try {
     const cid = await uploadToNFTStorage(Buffer.from('{"test":true}'), 'application/json', svc.key);
     return { ok: true, service: 'NFT.storage', cid };
@@ -97,25 +96,98 @@ async function pinToIPFS(projectId) {
 
   const supabase = getSupabase();
   const { data: project } = await supabase.from('projects').select('*').eq('id', projectId).single();
-  const { data: tokens } = await supabase.from('generated_tokens').select('*').eq('project_id', projectId).order('token_index');
+  const { data: tokens } = await supabase.from('generated_tokens')
+    .select('*').eq('project_id', projectId).order('token_index');
   if (!tokens || tokens.length === 0) throw new Error('No generated tokens found for this project');
 
+  const total = tokens.length;
+  const alreadyHaveImage = tokens.filter(t => t.image_cid).length;
+  const alreadyPinned = tokens.filter(t => t.status === 'pinned' && t.metadata_uri).length;
+
+  await supabase.from('projects').update({
+    ipfs_phase: 'images',
+    ipfs_images_done: alreadyHaveImage,
+    ipfs_meta_done: alreadyPinned,
+    ipfs_total: total,
+    ipfs_current_file: null,
+    ipfs_error: null,
+    ipfs_service: serviceName,
+  }).eq('id', projectId);
+
   const projectOutputDir = path.join(OUTPUT_DIR, projectId);
-  let lastCid = '';
+
+  // Phase 1: upload images (skip tokens that already have an image_cid)
+  const imageCids = new Map(tokens.filter(t => t.image_cid).map(t => [t.id, t.image_cid]));
+  let imagesDone = alreadyHaveImage;
 
   for (const token of tokens) {
-    const imgPath = path.join(projectOutputDir, `${token.token_index}.png`);
-    let imageCid = '';
-    if (fs.existsSync(imgPath)) {
-      imageCid = await uploadFile(fs.readFileSync(imgPath), 'image/png', `${token.token_index}.png`);
+    if (imageCids.has(token.id)) continue;
+
+    const filename = `token_${String(token.token_index).padStart(4, '0')}.png`;
+    await supabase.from('projects').update({ ipfs_current_file: filename }).eq('id', projectId);
+
+    try {
+      const imgPath = path.join(projectOutputDir, `${token.token_index}.png`);
+      let imageCid = '';
+      if (fs.existsSync(imgPath)) {
+        imageCid = await uploadFile(fs.readFileSync(imgPath), 'image/png', filename);
+      }
+      await supabase.from('generated_tokens').update({ image_cid: imageCid }).eq('id', token.id);
+      imageCids.set(token.id, imageCid);
+      imagesDone++;
+      await supabase.from('projects').update({ ipfs_images_done: imagesDone }).eq('id', projectId);
+    } catch (e) {
+      await supabase.from('projects').update({
+        ipfs_phase: 'error',
+        ipfs_error: `Failed to upload ${filename}: ${e.message}`,
+        ipfs_current_file: filename,
+      }).eq('id', projectId);
+      throw new Error(`Failed to upload ${filename}: ${e.message}`);
     }
-    const metadata = buildMetadata(project, token.token_index, token.traits, imageCid);
-    const metaBuffer = Buffer.from(JSON.stringify(metadata, null, 2));
-    lastCid = await uploadFile(metaBuffer, 'application/json', `${token.token_index}.json`);
-    await supabase.from('generated_tokens')
-      .update({ metadata_uri: `ipfs://${lastCid}`, status: 'pinned' })
-      .eq('id', token.id);
   }
+
+  // Phase 2: upload metadata JSON (skip already-pinned tokens)
+  await supabase.from('projects').update({ ipfs_phase: 'metadata', ipfs_current_file: null }).eq('id', projectId);
+
+  let lastCid = '';
+  let metaDone = alreadyPinned;
+
+  for (const token of tokens) {
+    if (token.status === 'pinned' && token.metadata_uri) {
+      lastCid = token.metadata_uri.replace('ipfs://', '');
+      continue;
+    }
+
+    const filename = `token_${String(token.token_index).padStart(4, '0')}.json`;
+    await supabase.from('projects').update({ ipfs_current_file: filename }).eq('id', projectId);
+
+    try {
+      const imageCid = imageCids.get(token.id) || '';
+      const metadata = buildMetadata(project, token.token_index, token.traits, imageCid);
+      const metaBuffer = Buffer.from(JSON.stringify(metadata, null, 2));
+      lastCid = await uploadFile(metaBuffer, 'application/json', filename);
+      await supabase.from('generated_tokens')
+        .update({ metadata_uri: `ipfs://${lastCid}`, status: 'pinned' })
+        .eq('id', token.id);
+      metaDone++;
+      await supabase.from('projects').update({ ipfs_meta_done: metaDone }).eq('id', projectId);
+    } catch (e) {
+      await supabase.from('projects').update({
+        ipfs_phase: 'error',
+        ipfs_error: `Failed to upload ${filename}: ${e.message}`,
+        ipfs_current_file: filename,
+      }).eq('id', projectId);
+      throw new Error(`Failed to upload ${filename}: ${e.message}`);
+    }
+  }
+
+  await supabase.from('projects').update({
+    ipfs_phase: 'complete',
+    ipfs_current_file: null,
+    ipfs_error: null,
+    status: 'pinned',
+    ipfs_cid: lastCid,
+  }).eq('id', projectId);
 
   return { cid: lastCid, service: serviceName };
 }

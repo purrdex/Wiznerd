@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import './create.css';
 import { supabase } from '../lib/supabase';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -17,6 +18,15 @@ interface Project {
 interface ProjectSummary {
   id: string; name: string; symbol: string; total_supply: number;
   status: string; current_step: number; created_at: string;
+}
+type IpfsPhase = 'images' | 'metadata' | 'complete' | 'error';
+interface IpfsProgressState {
+  phase: IpfsPhase | null;
+  imagesDone: number;
+  metaDone: number;
+  total: number;
+  currentFile: string | null;
+  error: string | null;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -96,6 +106,8 @@ export default function CreateScreen() {
   const [ipfsService, setIpfsService] = useState('');
   const [ipfsTestStatus, setIpfsTestStatus] = useState<{ ok: boolean; service?: string | null; error?: string } | null>(null);
   const [ipfsTestBusy, setIpfsTestBusy] = useState(false);
+  const [ipfsProgress, setIpfsProgress] = useState<IpfsProgressState>({ phase: null, imagesDone: 0, metaDone: 0, total: 0, currentFile: null, error: null });
+  const [ipfsSpeedText, setIpfsSpeedText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -127,6 +139,10 @@ export default function CreateScreen() {
   // Generation poll ref
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (genPollRef.current) clearInterval(genPollRef.current); }, []);
+
+  // IPFS speed-tracking refs
+  const ipfsUploadLogRef = useRef<{ total: number; time: number }[]>([]);
+  const ipfsStartTimeRef = useRef<number | null>(null);
 
   // ── Background fix ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -185,6 +201,88 @@ export default function CreateScreen() {
           setGenStatus('Error'); setError('Generation failed — check server logs'); setBusy(false);
         }
       }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [step, project]);
+
+  // IPFS progress: load persisted state + live Realtime updates on step 7
+  useEffect(() => {
+    if (step !== 7 || !project) return;
+
+    // Load current state (handles page refresh mid-upload or after completion)
+    fetch(`${API_URL}/api/projects/${project.id}`, { signal: AbortSignal.timeout(5000) })
+      .then(r => r.json())
+      .then((p: Record<string, unknown>) => {
+        const phase = p.ipfs_phase as IpfsPhase | undefined;
+        if (phase) {
+          setIpfsProgress({
+            phase,
+            imagesDone: (p.ipfs_images_done as number) || 0,
+            metaDone: (p.ipfs_meta_done as number) || 0,
+            total: (p.ipfs_total as number) || 0,
+            currentFile: (p.ipfs_current_file as string | null) || null,
+            error: (p.ipfs_error as string | null) || null,
+          });
+        }
+        if (p.ipfs_cid) setIpfsCid(p.ipfs_cid as string);
+        if (p.ipfs_service) setIpfsService(p.ipfs_service as string);
+      }).catch(() => {});
+
+    ipfsUploadLogRef.current = [];
+    ipfsStartTimeRef.current = null;
+
+    const channel = supabase.channel(`ipfs-progress-${project.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${project.id}` }, payload => {
+        const p = payload.new as Record<string, unknown>;
+        const phase = p.ipfs_phase as IpfsPhase | undefined;
+        if (!phase) return;
+
+        const imagesDone = (p.ipfs_images_done as number) || 0;
+        const metaDone = (p.ipfs_meta_done as number) || 0;
+        const total = (p.ipfs_total as number) || 0;
+
+        setIpfsProgress({
+          phase,
+          imagesDone,
+          metaDone,
+          total,
+          currentFile: (p.ipfs_current_file as string | null) || null,
+          error: (p.ipfs_error as string | null) || null,
+        });
+
+        // Speed calculation: track total files uploaded across both phases
+        const totalDone = (phase === 'metadata' || phase === 'complete' ? total : 0) +
+                          (phase === 'images' ? imagesDone : metaDone);
+        const now = Date.now();
+        if (!ipfsStartTimeRef.current && totalDone > 0) ipfsStartTimeRef.current = now;
+        const log = ipfsUploadLogRef.current;
+        log.push({ total: totalDone, time: now });
+        if (log.length > 10) log.shift();
+        if (log.length >= 2) {
+          const oldest = log[0];
+          const newest = log[log.length - 1];
+          const elapsed = (newest.time - oldest.time) / 1000;
+          if (elapsed > 0) {
+            const rate = (newest.total - oldest.total) / elapsed;
+            const grandTotal = total * 2;
+            const remaining = grandTotal - totalDone;
+            const eta = rate > 0 ? remaining / rate : null;
+            const rateStr = rate >= 1 ? `${rate.toFixed(1)} files/sec` : `${(rate * 60).toFixed(1)} files/min`;
+            const etaStr = eta !== null
+              ? (eta > 60 ? `~${Math.ceil(eta / 60)} min remaining` : `~${Math.ceil(eta)} sec remaining`)
+              : '';
+            setIpfsSpeedText(etaStr ? `${rateStr} — ${etaStr}` : rateStr);
+          }
+        }
+
+        if (phase === 'complete') {
+          setBusy(false);
+          if (p.ipfs_cid) setIpfsCid(p.ipfs_cid as string);
+          if (p.ipfs_service) setIpfsService(p.ipfs_service as string);
+        } else if (phase === 'error') {
+          setBusy(false);
+        }
+      }).subscribe();
+
     return () => { supabase.removeChannel(channel); };
   }, [step, project]);
 
@@ -391,14 +489,26 @@ export default function CreateScreen() {
   async function handleIpfsPin() {
     if (!project) return;
     setBusy(true); setError('');
+    setIpfsProgress({ phase: 'images', imagesDone: 0, metaDone: 0, total: 0, currentFile: null, error: null });
+    setIpfsSpeedText('');
+    ipfsUploadLogRef.current = [];
+    ipfsStartTimeRef.current = null;
     try {
       const res = await fetch(`${API_URL}/api/projects/${project.id}/ipfs`, { method: 'POST', signal: AbortSignal.timeout(300000) });
       const data = await res.json() as { cid?: string; service?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? 'IPFS pin failed');
-      setIpfsCid(data.cid ?? '');
-      setIpfsService(data.service ?? '');
-      await advanceStep(8);
-    } catch (e: unknown) { setError((e as Error).message); }
+      // Realtime handles the progress + completion state; sync fallback in case Realtime is slow
+      if (data.service) setIpfsService(data.service);
+      if (data.cid) {
+        setIpfsCid(data.cid);
+        setIpfsProgress(prev => prev.phase !== 'complete' && prev.phase !== 'error'
+          ? { ...prev, phase: 'complete' } : prev);
+      }
+    } catch (e: unknown) {
+      const msg = (e as Error).message;
+      setError(msg);
+      setIpfsProgress(prev => ({ ...prev, phase: 'error', error: msg }));
+    }
     finally { setBusy(false); }
   }
 
@@ -411,7 +521,7 @@ export default function CreateScreen() {
 
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div style={S.page}>
+    <div style={S.page} className="create-page">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ maxWidth: 720, margin: '0 auto 28px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
@@ -913,43 +1023,122 @@ export default function CreateScreen() {
             <div>
               <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Pin to IPFS</h2>
               <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b' }}>
-                Upload all images and CHIP-0007 metadata to IPFS for permanent hosting.
-                Set <code style={{ fontSize: 11 }}>PINATA_JWT</code> or <code style={{ fontSize: 11 }}>NFT_STORAGE_KEY</code> in <code style={{ fontSize: 11 }}>server/.env</code>.
+                Your collection will be permanently hosted on IPFS.
               </p>
 
+              {/* Test connection row */}
               <div style={{ background: '#0f1016', border: '1px solid #1e2030', borderRadius: 8, padding: 14, marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 13, color: '#94a3b8', flex: 1 }}>
-                    {ipfsTestStatus?.service ? `Detected: ${ipfsTestStatus.service}` : 'Test connection before uploading'}
+                    {ipfsTestStatus?.service ? `Detected: ${ipfsTestStatus.service}` : 'Verify your connection before uploading'}
                   </span>
                   <button style={{ ...S.btnS, padding: '6px 14px', fontSize: 12 }} onClick={handleTestIPFS} disabled={ipfsTestBusy}>
                     {ipfsTestBusy ? 'Testing…' : 'Test Connection'}
                   </button>
                 </div>
                 {ipfsTestStatus && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: ipfsTestStatus.ok ? '#4ade80' : '#f87171' }}>
+                  <div style={{ marginTop: 8, fontSize: 12, color: ipfsTestStatus.ok ? '#4ade80' : '#fbbf24' }}>
                     {ipfsTestStatus.ok
                       ? `✓ Connected via ${ipfsTestStatus.service}`
-                      : `✗ ${ipfsTestStatus.error}`}
+                      : 'IPFS service unavailable. Please contact support.'}
                   </div>
                 )}
               </div>
 
-              {ipfsCid ? (
-                <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 8, padding: '12px 16px', marginBottom: 16 }}>
-                  {ipfsService && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Uploaded via {ipfsService}</div>}
-                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>IPFS CID</div>
-                  <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#fb923c', wordBreak: 'break-all' }}>{ipfsCid}</div>
+              {/* Upload progress — shown while uploading or after completion */}
+              {ipfsProgress.phase && (
+                <div style={{ marginBottom: 16 }}>
+                  {/* Phase 1: Images */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
+                      <span style={{ color: ipfsProgress.phase === 'images' ? '#e2e8f0' : '#64748b' }}>
+                        {ipfsProgress.phase === 'images' ? '↑ Uploading images…'
+                          : ipfsProgress.imagesDone > 0 ? `✓ Images (${ipfsProgress.imagesDone}/${ipfsProgress.total})`
+                          : 'Images'}
+                      </span>
+                      <span style={{ color: '#64748b', fontSize: 12 }}>
+                        {ipfsProgress.imagesDone}/{ipfsProgress.total} ({Math.round(ipfsProgress.imagesDone / Math.max(1, ipfsProgress.total) * 100)}%)
+                      </span>
+                    </div>
+                    <div style={{ height: 6, background: '#0f1016', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%', borderRadius: 3, transition: 'width 0.3s ease',
+                        width: `${ipfsProgress.imagesDone / Math.max(1, ipfsProgress.total) * 100}%`,
+                        background: ipfsProgress.phase === 'images' ? 'linear-gradient(90deg, #ea580c, #f97316)' : '#4ade80',
+                      }} />
+                    </div>
+                  </div>
+
+                  {/* Phase 2: Metadata */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
+                      <span style={{ color: ipfsProgress.phase === 'metadata' ? '#e2e8f0' : '#64748b' }}>
+                        {ipfsProgress.phase === 'metadata' ? '↑ Uploading metadata…'
+                          : ipfsProgress.metaDone === ipfsProgress.total && ipfsProgress.total > 0 ? `✓ Metadata (${ipfsProgress.metaDone}/${ipfsProgress.total})`
+                          : 'Metadata'}
+                      </span>
+                      <span style={{ color: '#64748b', fontSize: 12 }}>
+                        {ipfsProgress.metaDone}/{ipfsProgress.total} ({Math.round(ipfsProgress.metaDone / Math.max(1, ipfsProgress.total) * 100)}%)
+                      </span>
+                    </div>
+                    <div style={{ height: 6, background: '#0f1016', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%', borderRadius: 3, transition: 'width 0.3s ease',
+                        width: `${ipfsProgress.metaDone / Math.max(1, ipfsProgress.total) * 100}%`,
+                        background: ipfsProgress.phase === 'metadata' ? 'linear-gradient(90deg, #ea580c, #f97316)'
+                          : ipfsProgress.metaDone === ipfsProgress.total && ipfsProgress.total > 0 ? '#4ade80' : '#1e2030',
+                      }} />
+                    </div>
+                  </div>
+
+                  {/* Current file + speed */}
+                  {ipfsProgress.phase !== 'complete' && ipfsProgress.phase !== 'error' && (
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {ipfsProgress.currentFile && <span>Uploading: {ipfsProgress.currentFile}</span>}
+                      {ipfsSpeedText && <span>{ipfsSpeedText}</span>}
+                    </div>
+                  )}
+
+                  {/* Completion */}
+                  {ipfsProgress.phase === 'complete' && (
+                    <div style={{ marginTop: 8, padding: 14, background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.25)', borderRadius: 8 }}>
+                      <div style={{ fontSize: 18, marginBottom: 6 }}>✓</div>
+                      <div style={{ fontSize: 13, color: '#4ade80', marginBottom: ipfsCid ? 10 : 0 }}>
+                        All {ipfsProgress.total} images and {ipfsProgress.total} metadata files pinned to IPFS
+                        {ipfsService && <span style={{ color: '#64748b', fontSize: 11, marginLeft: 6 }}>via {ipfsService}</span>}
+                      </div>
+                      {ipfsCid && (
+                        <div style={{ fontSize: 12 }}>
+                          <span style={{ color: '#64748b' }}>Base URI: </span>
+                          <span style={{ fontFamily: 'monospace', color: '#fb923c', wordBreak: 'break-all' }}>ipfs://{ipfsCid}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {ipfsProgress.phase === 'error' && (
+                    <div style={{ marginTop: 8, padding: 14, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 8 }}>
+                      <div style={{ fontSize: 13, color: '#f87171', marginBottom: 10 }}>
+                        Upload failed{ipfsProgress.currentFile ? ` at ${ipfsProgress.currentFile}` : ''}.
+                        Previously uploaded files will be skipped on retry.
+                      </div>
+                      <button style={S.btnP} onClick={handleIpfsPin} disabled={busy}>Retry Upload</button>
+                    </div>
+                  )}
                 </div>
-              ) : (
+              )}
+
+              {/* Pin button — only shown when not in progress */}
+              {(!ipfsProgress.phase || ipfsProgress.phase === 'error') && ipfsProgress.phase !== 'error' && (
                 <button style={S.btnP} onClick={handleIpfsPin} disabled={busy}>
-                  {busy ? `Uploading via ${ipfsService || 'IPFS'}…` : '📌 Pin to IPFS'}
+                  {busy ? '📌 Uploading…' : '📌 Pin to IPFS'}
                 </button>
               )}
 
               <div style={S.row}>
-                <button style={S.btnS} onClick={() => setStep(6)}>← Back</button>
-                {ipfsCid && <button style={S.btnP} onClick={() => advanceStep(8)}>Launch →</button>}
+                <button style={S.btnS} onClick={() => setStep(6)} disabled={busy}>← Back</button>
+                {ipfsProgress.phase === 'complete' && <button style={S.btnP} onClick={() => advanceStep(8)}>Launch →</button>}
               </div>
             </div>
           )}

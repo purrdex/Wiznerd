@@ -1,0 +1,9 @@
+.create-page a,
+.create-page a:visited {
+  color: #f97316;
+  text-decoration: none;
+}
+
+.create-page a:hover {
+  color: #ffab40;
+}

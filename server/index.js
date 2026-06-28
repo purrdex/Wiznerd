@@ -371,12 +371,16 @@ app.get('/api/ipfs/test', async (req, res) => {
 
 // POST /api/projects/:id/ipfs — pin to IPFS (NFT.storage or Pinata)
 app.post('/api/projects/:id/ipfs', async (req, res) => {
+  // Prevent concurrent uploads for the same project
+  const { data: proj } = await supabase.from('projects').select('ipfs_phase').eq('id', req.params.id).single();
+  if (proj?.ipfs_phase === 'images' || proj?.ipfs_phase === 'metadata') {
+    return res.status(409).json({ error: 'Upload already in progress — check the progress bar' });
+  }
   try {
     const { pinToIPFS } = require('./ipfs');
     const result = await pinToIPFS(req.params.id);
     const cid = typeof result === 'string' ? result : result.cid;
     const service = typeof result === 'object' ? result.service : undefined;
-    await supabase.from('projects').update({ status: 'pinned', ipfs_cid: cid }).eq('id', req.params.id);
     res.json({ cid, service });
   } catch (e) {
     res.status(500).json({ error: e.message });
