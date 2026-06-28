@@ -70,16 +70,17 @@ alter table incompatibilities enable row level security;
 alter table generated_tokens  enable row level security;
 
 -- Allow all for service_role key (server uses this)
+-- Use TO role syntax, not auth.role() JWT check — service_role bypasses RLS at the DB level
 create policy "service_role full access on projects"
-  on projects for all using (auth.role() = 'service_role');
+  on projects for all to service_role using (true) with check (true);
 create policy "service_role full access on layers"
-  on layers for all using (auth.role() = 'service_role');
+  on layers for all to service_role using (true) with check (true);
 create policy "service_role full access on variants"
-  on variants for all using (auth.role() = 'service_role');
+  on variants for all to service_role using (true) with check (true);
 create policy "service_role full access on incompatibilities"
-  on incompatibilities for all using (auth.role() = 'service_role');
+  on incompatibilities for all to service_role using (true) with check (true);
 create policy "service_role full access on generated_tokens"
-  on generated_tokens for all using (auth.role() = 'service_role');
+  on generated_tokens for all to service_role using (true) with check (true);
 
 -- Allow anon read for public browsing
 create policy "anon read projects"
