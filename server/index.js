@@ -397,7 +397,35 @@ app.post('/api/projects/:id/ipfs', async (req, res) => {
 });
 
 // ── Marketplace routes ────────────────────────────────────────────────────────
-require('./marketplace')(app, supabase);
+try { require('./marketplace')(app, supabase); } catch (e) { console.error('[server] marketplace routes failed to load:', e.message); }
+
+// POST /api/projects/:id/publish — publish a collection to the marketplace
+app.post('/api/projects/:id/publish', async (req, res) => {
+  try {
+    const { mint_price_mojo, launch_at, reveal_type, allowlist } = req.body;
+    const marketplace_status = launch_at ? 'scheduled' : 'live';
+
+    const { data, error } = await supabase
+      .from('projects')
+      .update({
+        mint_price_mojo: Number(mint_price_mojo) || 0,
+        launch_at: launch_at || null,
+        reveal_type: reveal_type || 'instant',
+        allowlist: allowlist || [],
+        marketplace_status,
+        current_step: 8,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ success: false, error: error.message });
+    res.json({ success: true, project_id: data.id, marketplace_url: `/marketplace/${data.id}` });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 async function ensureBuckets() {
@@ -412,6 +440,16 @@ const PORT = process.env.API_PORT || 3002;
 app.listen(PORT, async () => {
   console.log(`Wiznerd API server on http://localhost:${PORT}`);
   await ensureBuckets();
-  const { startWatcher } = require('./watcher');
-  startWatcher(supabase);
+  try { const { startWatcher } = require('./watcher'); startWatcher(supabase); } catch (e) { console.warn('[server] watcher failed to start:', e.message); }
+});
+
+// ─── Global error handlers (must be last) ────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error('[server] unhandled error:', err.message);
+  res.status(err.status || 500).json({ success: false, error: err.message || 'Internal server error' });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, error: `Route not found: ${req.method} ${req.path}` });
 });

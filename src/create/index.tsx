@@ -495,22 +495,22 @@ export default function CreateScreen() {
     if (!launchImmediate && !launchAt) { setPublishError('Select a launch date or choose "Launch immediately"'); return; }
     setPublishBusy(true); setPublishError('');
     try {
+      const mint_price_mojo = Math.round(price * 1e12);
       const allowlist = allowlistText.split('\n').map(s => s.trim()).filter(s => s.startsWith('xch1'));
-      const res = await fetch(`${API_URL}/api/marketplace/publish`, {
+      const res = await fetch(`${API_URL}/api/projects/${project.id}/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: project.id,
-          mint_price_xch: price,
-          launch_immediately: launchImmediate,
+          mint_price_mojo,
           launch_at: launchImmediate ? null : launchAt,
           allowlist,
           reveal_type: revealType,
         }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) { const j = await res.json(); throw new Error(j.error || 'Publish failed'); }
-      navigate(`/marketplace/${project.id}/manage`);
+      const json = await res.json().catch(() => ({ success: false, error: 'Server returned non-JSON response' }));
+      if (!res.ok || !json.success) throw new Error(json.error || 'Publish failed');
+      navigate(`/marketplace/${project.id}`);
     } catch (e: unknown) {
       setPublishError(e instanceof Error ? e.message : String(e));
       setPublishBusy(false);
