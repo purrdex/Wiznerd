@@ -38,7 +38,7 @@ const S: Record<string, React.CSSProperties> = {
   btnP:   { padding: '11px 24px', background: '#f97316', border: 'none', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   btnS:   { padding: '9px 18px', background: 'none', border: '1px solid #2d2f3d', borderRadius: 8, color: '#94a3b8', fontSize: 13, cursor: 'pointer' },
   row:    { display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 },
-  label:  { fontSize: 12, color: '#64748b', display: 'block', marginBottom: 4 },
+  label:  { fontSize: 12, color: '#9ca3af', display: 'block', marginBottom: 4 },
   err:    { background: 'rgba(220,50,50,0.1)', border: '1px solid rgba(220,50,50,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#f87171' },
 };
 
@@ -528,7 +528,7 @@ export default function CreateScreen() {
           <img src="/tepe.png" alt="Wiznerd mascot" style={{ width: 64, height: 64, borderRadius: '50%' }} />
           <div style={{ textAlign: 'center' }}>
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: '#fff' }}>Wiznerd Art Studio</h1>
-            <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
+            <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
           </div>
         </div>
 
@@ -539,7 +539,7 @@ export default function CreateScreen() {
                 <div key={i} style={{ flex: 1 }}>
                   <div style={{ height: 4, borderRadius: 2, marginBottom: 4,
                     background: step > i + 1 ? '#f97316' : step === i + 1 ? '#fb923c' : '#1e2030' }} />
-                  <span style={{ fontSize: 9, color: step === i + 1 ? '#fb923c' : '#334155', display: 'block', textAlign: 'center' }}>{label}</span>
+                  <span style={{ fontSize: 9, color: step === i + 1 ? '#fb923c' : '#6b7280', display: 'block', textAlign: 'center' }}>{label}</span>
                 </div>
               ))}
             </div>
@@ -554,7 +554,7 @@ export default function CreateScreen() {
       {showDashboard && (
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
           {!creatorAddress && (
-            <div style={{ ...S.card, marginBottom: 16, textAlign: 'center', padding: 16, fontSize: 13, color: '#475569' }}>
+            <div style={{ ...S.card, marginBottom: 16, textAlign: 'center', padding: 16, fontSize: 13, color: '#94a3b8' }}>
               Open the wallet first — your wallet address is used to identify your projects.
             </div>
           )}
@@ -563,12 +563,12 @@ export default function CreateScreen() {
             <div style={{ ...S.card, marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <h2 style={{ margin: 0, fontSize: 16 }}>My Projects</h2>
-                <span style={{ fontSize: 11, color: '#334155', fontFamily: 'monospace' }}>{creatorAddress.slice(0, 20)}…</span>
+                <span style={{ fontSize: 11, color: '#f97316', fontFamily: 'monospace' }}>{creatorAddress.slice(0, 20)}…</span>
               </div>
               {loadingProjects ? (
-                <div style={{ fontSize: 13, color: '#475569' }}>Loading…</div>
+                <div style={{ fontSize: 13, color: '#94a3b8' }}>Loading…</div>
               ) : projects.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#475569' }}>No projects yet — create your first one below.</div>
+                <div style={{ fontSize: 13, color: '#94a3b8' }}>No projects yet — create your first one below.</div>
               ) : (
                 <div>
                   {projects.map(proj => (
@@ -576,9 +576,9 @@ export default function CreateScreen() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
                           {proj.name}
-                          <span style={{ fontSize: 10, color: '#334155', marginLeft: 6 }}>{proj.symbol}</span>
+                          <span style={{ fontSize: 10, color: '#6b7280', marginLeft: 6 }}>{proj.symbol}</span>
                         </div>
-                        <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
                           Supply: {proj.total_supply} · {statusLabel(proj.status, proj.current_step)}
                           <span style={{ marginLeft: 8 }}>{new Date(proj.created_at).toLocaleDateString()}</span>
                         </div>
@@ -670,7 +670,7 @@ export default function CreateScreen() {
           {step === 2 && (
             <div>
               <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>Upload Layers</h2>
-              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>
+              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#94a3b8' }}>
                 Layers stack bottom-to-top (z=0 = Background, highest = foreground accessories). Each PNG = one variant.
               </p>
 
@@ -693,7 +693,7 @@ export default function CreateScreen() {
                             <button onClick={() => handleMoveLayer(layer.id, 1)} disabled={idx === layers.length - 1}
                               style={{ ...S.btnS, padding: '1px 5px', fontSize: 9, lineHeight: 1.2, opacity: idx === layers.length - 1 ? 0.3 : 1 }}>▼</button>
                           </div>
-                          <span style={{ fontSize: 10, color: '#334155', background: '#1e2030', borderRadius: 4, padding: '2px 5px', flexShrink: 0 }}>{idx + 1}</span>
+                          <span style={{ fontSize: 10, color: '#6b7280', background: '#1e2030', borderRadius: 4, padding: '2px 5px', flexShrink: 0 }}>{idx + 1}</span>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             {isEd ? (
                               <input autoFocus value={editLayerNameVal} onChange={e => setEditLayerNameVal(e.target.value)}
@@ -702,7 +702,7 @@ export default function CreateScreen() {
                                 style={{ ...S.input, padding: '4px 8px', fontSize: 13 }} />
                             ) : (
                               <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{layer.name}
-                                <span style={{ fontWeight: 400, color: '#334155', fontSize: 11, marginLeft: 6 }}>({layer.variants.length} variants)</span>
+                                <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 11, marginLeft: 6 }}>({layer.variants.length} variants)</span>
                               </span>
                             )}
                           </div>
@@ -740,7 +740,7 @@ export default function CreateScreen() {
                                 border: `1px dashed ${dragOverLayerId === layer.id ? '#f97316' : '#2d2f3d'}`,
                                 borderRadius: 6, padding: '10px', textAlign: 'center', cursor: 'pointer',
                                 background: dragOverLayerId === layer.id ? 'rgba(249,115,22,0.05)' : 'transparent',
-                                marginTop: 6, fontSize: 12, color: '#475569', transition: 'all 0.15s',
+                                marginTop: 6, fontSize: 12, color: '#94a3b8', transition: 'all 0.15s',
                               }}>
                               {uploadingLayer ? 'Uploading…' : '+ Drop PNGs or click to add more variants'}
                             </div>
@@ -753,7 +753,7 @@ export default function CreateScreen() {
               )}
 
               <div style={{ border: '1px solid #2d2f3d', borderRadius: 8, padding: 16, background: '#0f1016' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>New Layer</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>New Layer</div>
                 <input style={{ ...S.input, marginBottom: 10 }} placeholder="Layer name (e.g. Background, Eyes, Hat)"
                   value={newLayerName} onChange={e => setNewLayerName(e.target.value)} />
                 <div
@@ -768,8 +768,8 @@ export default function CreateScreen() {
                     transition: 'all 0.15s ease', marginBottom: 10,
                   }}>
                   <div style={{ fontSize: 20, marginBottom: 6 }}>🖼️</div>
-                  <div style={{ fontSize: 13, color: dragOverNew ? '#f97316' : '#64748b' }}>Drop PNG files here or click to browse</div>
-                  <div style={{ fontSize: 11, color: '#334155', marginTop: 3 }}>Each PNG becomes one variant (red.png, blue.png…)</div>
+                  <div style={{ fontSize: 13, color: dragOverNew ? '#f97316' : '#94a3b8' }}>Drop PNG files here or click to browse</div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>Each PNG becomes one variant (red.png, blue.png…)</div>
                 </div>
                 {pendingFiles.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 12 }}>
@@ -777,7 +777,7 @@ export default function CreateScreen() {
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', background: '#161720', border: '1px solid #2d2f3d', borderRadius: 5, fontSize: 11, color: '#94a3b8' }}>
                         {f.name}
                         <button onClick={e => { e.stopPropagation(); setPendingFiles(prev => prev.filter((_, j) => j !== i)); }}
-                          style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: 0, marginLeft: 2, fontSize: 14, lineHeight: 1 }}>×</button>
+                          style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0, marginLeft: 2, fontSize: 14, lineHeight: 1 }}>×</button>
                       </div>
                     ))}
                   </div>
@@ -806,7 +806,7 @@ export default function CreateScreen() {
                   </span>
                 )}
               </div>
-              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>
+              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#94a3b8' }}>
                 Click a layer to expand it. Set rarity weights (higher = more common) and mark incompatible variant pairs below.
               </p>
 
@@ -818,9 +818,9 @@ export default function CreateScreen() {
                     <div onClick={() => toggleLayer(layer.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', background: '#0f1016', userSelect: 'none' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 600, color: '#f97316' }}>{layer.name}</span>
-                        <span style={{ fontSize: 11, color: '#475569' }}>{layer.variants.length} variant{layer.variants.length !== 1 ? 's' : ''}</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8' }}>{layer.variants.length} variant{layer.variants.length !== 1 ? 's' : ''}</span>
                       </div>
-                      <span style={{ color: '#475569', fontSize: 11 }}>{isExpanded ? '▲' : '▼'}</span>
+                      <span style={{ color: '#94a3b8', fontSize: 11 }}>{isExpanded ? '▲' : '▼'}</span>
                     </div>
                     {isExpanded && (
                       <div style={{ padding: '10px 16px 14px', borderTop: '1px solid #1e2030' }}>
@@ -837,7 +837,7 @@ export default function CreateScreen() {
                                 ...l, variants: l.variants.map(v => v.id === variant.id ? { ...v, weight: Math.max(1, +e.target.value) } : v),
                               } : l))}
                               style={{ width: 68, padding: '6px 8px', background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }} />
-                            <span style={{ fontSize: 11, color: '#475569', width: 36, textAlign: 'right' }}>
+                            <span style={{ fontSize: 11, color: '#94a3b8', width: 36, textAlign: 'right' }}>
                               {total > 0 ? Math.round((variant.weight || 100) / total * 100) : 0}%
                             </span>
                           </div>
@@ -865,7 +865,7 @@ export default function CreateScreen() {
                     <select style={{ ...S.select, flex: 1 }} value={incompatA} onChange={e => setIncompatA(e.target.value)}>
                       {allVariants.map(v => <option key={v.id} value={v.id}>{v.layerName}: {v.name}</option>)}
                     </select>
-                    <span style={{ color: '#475569', fontSize: 12 }}>×</span>
+                    <span style={{ color: '#94a3b8', fontSize: 12 }}>×</span>
                     <select style={{ ...S.select, flex: 1 }} value={incompatB} onChange={e => setIncompatB(e.target.value)}>
                       {allVariants.map(v => <option key={v.id} value={v.id}>{v.layerName}: {v.name}</option>)}
                     </select>
@@ -885,7 +885,7 @@ export default function CreateScreen() {
           {step === 4 && (
             <div>
               <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Preview</h2>
-              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>Generate 5 sample NFTs to verify your layers and rarity weights.</p>
+              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#94a3b8' }}>Generate 5 sample NFTs to verify your layers and rarity weights.</p>
               {previews.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 20 }}>
                   {previews.map((url, i) => (
@@ -909,20 +909,20 @@ export default function CreateScreen() {
           {step === 5 && (
             <div>
               <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Generate Collection</h2>
-              <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b' }}>
+              <p style={{ margin: '0 0 16px', fontSize: 13, color: '#94a3b8' }}>
                 Composite all {project?.total_supply} unique NFT images.
               </p>
 
               {!genStatus && (
                 <div style={{ background: '#0f1016', border: '1px solid #1e2030', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     Combination Analysis
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
                     {layers.map(l => (
                       <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                         <span style={{ color: '#94a3b8' }}>{l.name}</span>
-                        <span style={{ color: '#64748b' }}>{l.variants.length} variant{l.variants.length !== 1 ? 's' : ''}</span>
+                        <span style={{ color: '#94a3b8' }}>{l.variants.length} variant{l.variants.length !== 1 ? 's' : ''}</span>
                       </div>
                     ))}
                   </div>
@@ -990,9 +990,9 @@ export default function CreateScreen() {
           {step === 6 && (
             <div>
               <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Rarity Report</h2>
-              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#64748b' }}>Trait distribution across the generated collection.</p>
+              <p style={{ margin: '0 0 18px', fontSize: 13, color: '#94a3b8' }}>Trait distribution across the generated collection.</p>
               {Object.keys(rarityData).length === 0 ? (
-                <div style={{ color: '#475569', fontSize: 13 }}>Loading rarity data…</div>
+                <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading rarity data…</div>
               ) : (
                 Object.entries(rarityData).map(([layerName, traitCounts]) => {
                   const chartData = Object.entries(traitCounts).map(([n, count]) => ({ name: n, count }));
@@ -1002,8 +1002,8 @@ export default function CreateScreen() {
                       <ResponsiveContainer width="100%" height={150}>
                         <BarChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
-                          <XAxis dataKey="name" tick={{ fill: '#475569', fontSize: 11 }} />
-                          <YAxis tick={{ fill: '#475569', fontSize: 11 }} />
+                          <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                          <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
                           <Tooltip contentStyle={{ background: '#161720', border: '1px solid #2d2f3d', borderRadius: 6, fontSize: 12 }} labelStyle={{ color: '#e2e8f0' }} />
                           <Bar dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} />
                         </BarChart>
@@ -1022,7 +1022,7 @@ export default function CreateScreen() {
           {step === 7 && (
             <div>
               <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>Pin to IPFS</h2>
-              <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b' }}>
+              <p style={{ margin: '0 0 16px', fontSize: 13, color: '#94a3b8' }}>
                 Your collection will be permanently hosted on IPFS.
               </p>
 
@@ -1051,12 +1051,12 @@ export default function CreateScreen() {
                   {/* Phase 1: Images */}
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-                      <span style={{ color: ipfsProgress.phase === 'images' ? '#e2e8f0' : '#64748b' }}>
+                      <span style={{ color: ipfsProgress.phase === 'images' ? '#e2e8f0' : '#94a3b8' }}>
                         {ipfsProgress.phase === 'images' ? '↑ Uploading images…'
                           : ipfsProgress.imagesDone > 0 ? `✓ Images (${ipfsProgress.imagesDone}/${ipfsProgress.total})`
                           : 'Images'}
                       </span>
-                      <span style={{ color: '#64748b', fontSize: 12 }}>
+                      <span style={{ color: '#94a3b8', fontSize: 12 }}>
                         {ipfsProgress.imagesDone}/{ipfsProgress.total} ({Math.round(ipfsProgress.imagesDone / Math.max(1, ipfsProgress.total) * 100)}%)
                       </span>
                     </div>
@@ -1072,12 +1072,12 @@ export default function CreateScreen() {
                   {/* Phase 2: Metadata */}
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
-                      <span style={{ color: ipfsProgress.phase === 'metadata' ? '#e2e8f0' : '#64748b' }}>
+                      <span style={{ color: ipfsProgress.phase === 'metadata' ? '#e2e8f0' : '#94a3b8' }}>
                         {ipfsProgress.phase === 'metadata' ? '↑ Uploading metadata…'
                           : ipfsProgress.metaDone === ipfsProgress.total && ipfsProgress.total > 0 ? `✓ Metadata (${ipfsProgress.metaDone}/${ipfsProgress.total})`
                           : 'Metadata'}
                       </span>
-                      <span style={{ color: '#64748b', fontSize: 12 }}>
+                      <span style={{ color: '#94a3b8', fontSize: 12 }}>
                         {ipfsProgress.metaDone}/{ipfsProgress.total} ({Math.round(ipfsProgress.metaDone / Math.max(1, ipfsProgress.total) * 100)}%)
                       </span>
                     </div>
@@ -1093,7 +1093,7 @@ export default function CreateScreen() {
 
                   {/* Current file + speed */}
                   {ipfsProgress.phase !== 'complete' && ipfsProgress.phase !== 'error' && (
-                    <div style={{ fontSize: 11, color: '#475569', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {ipfsProgress.currentFile && <span>Uploading: {ipfsProgress.currentFile}</span>}
                       {ipfsSpeedText && <span>{ipfsSpeedText}</span>}
                     </div>
@@ -1105,11 +1105,11 @@ export default function CreateScreen() {
                       <div style={{ fontSize: 18, marginBottom: 6 }}>✓</div>
                       <div style={{ fontSize: 13, color: '#4ade80', marginBottom: ipfsCid ? 10 : 0 }}>
                         All {ipfsProgress.total} images and {ipfsProgress.total} metadata files pinned to IPFS
-                        {ipfsService && <span style={{ color: '#64748b', fontSize: 11, marginLeft: 6 }}>via {ipfsService}</span>}
+                        {ipfsService && <span style={{ color: '#94a3b8', fontSize: 11, marginLeft: 6 }}>via {ipfsService}</span>}
                       </div>
                       {ipfsCid && (
                         <div style={{ fontSize: 12 }}>
-                          <span style={{ color: '#64748b' }}>Base URI: </span>
+                          <span style={{ color: '#94a3b8' }}>Base URI: </span>
                           <span style={{ fontFamily: 'monospace', color: '#fb923c', wordBreak: 'break-all' }}>ipfs://{ipfsCid}</span>
                         </div>
                       )}
@@ -1148,10 +1148,10 @@ export default function CreateScreen() {
             <div style={{ textAlign: 'center', padding: '32px 0' }}>
               <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
               <h2 style={{ margin: '0 0 12px', fontSize: 22, color: '#fff' }}>Collection Ready!</h2>
-              <p style={{ color: '#64748b', marginBottom: 8, lineHeight: 1.6, fontSize: 14 }}>
+              <p style={{ color: '#94a3b8', marginBottom: 8, lineHeight: 1.6, fontSize: 14 }}>
                 <strong style={{ color: '#e2e8f0' }}>{project?.name}</strong> has been generated and pinned to IPFS.
               </p>
-              {ipfsCid && <p style={{ color: '#475569', fontSize: 12, fontFamily: 'monospace', marginBottom: 24 }}>CID: {ipfsCid}</p>}
+              {ipfsCid && <p style={{ color: '#94a3b8', fontSize: 12, fontFamily: 'monospace', marginBottom: 24 }}>CID: {ipfsCid}</p>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <a href={`/marketplace?project=${project?.id}`}
                   style={{ ...S.btnP, display: 'inline-block', textDecoration: 'none', fontSize: 14 }}>

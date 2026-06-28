@@ -1,9 +1,42 @@
+/* ── Wiznerd Art Studio — dark theme defaults ──────────────────────────────── */
+/* Scoped to .create-page so styles don't bleed into the wallet screen.
+   Note: these only affect elements without an inline color style.           */
+
+.create-page {
+  color: #e2e8f0;
+}
+
+.create-page h1,
+.create-page h2,
+.create-page h3,
+.create-page h4 {
+  color: #ffffff;
+}
+
+.create-page p {
+  color: #94a3b8;
+}
+
+/* Links */
 .create-page a,
 .create-page a:visited {
   color: #f97316;
   text-decoration: none;
 }
-
 .create-page a:hover {
   color: #ffab40;
+}
+
+/* Placeholder text */
+.create-page input::placeholder,
+.create-page textarea::placeholder,
+.create-page select::placeholder {
+  color: #6b7280;
+  opacity: 1;
+}
+
+/* Ensure option text is readable */
+.create-page option {
+  background: #0f1016;
+  color: #e2e8f0;
 }
