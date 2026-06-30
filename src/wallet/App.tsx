@@ -46,6 +46,7 @@ interface WalletEntry {
   name: string;
   mnemonic?: string;          // legacy plaintext (migration only)
   encryptedMnemonic?: string; // v1: AES-256-GCM JSON blob
+  primaryAddress?: string;    // cached xch1... for cross-page switching
 }
 
 interface AddressEntry {
@@ -3180,8 +3181,17 @@ export default function App() {
         ? await decryptMnemonic(active.encryptedMnemonic, key)
         : active.mnemonic!;
       const addresses = deriveAddresses(mnemonic, 50);
-      try { localStorage.setItem('chia_primary_address', addresses[0]?.address || ''); } catch {}
+      const primary = addresses[0]?.address || '';
+      try { localStorage.setItem('chia_primary_address', primary); } catch {}
+      // Cache so profile page can switch wallets without decrypting
+      if (primary && !active.primaryAddress) {
+        const patched = list.map(w => w.id === active.id ? { ...w, primaryAddress: primary } : w);
+        setWalletList(patched);
+        localStorage.setItem(WALLETS_KEY, JSON.stringify(patched));
+      }
       setWallet({ mnemonic, addresses });
+      const returnUrl = sessionStorage.getItem('chia_return_url');
+      if (returnUrl) { sessionStorage.removeItem('chia_return_url'); window.location.replace(returnUrl); return; }
       setScreen('wallet');
     } catch {
       localStorage.removeItem(WALLETS_KEY);
@@ -3202,6 +3212,7 @@ export default function App() {
       id: crypto.randomUUID(),
       name: `Wallet ${walletList.length + 1}`,
       encryptedMnemonic: encrypted,
+      primaryAddress: addresses[0]?.address || '',
     };
     const next = [...walletList, newEntry];
     setWalletList(next);
@@ -3216,6 +3227,8 @@ export default function App() {
     setUnlockMode(null);
     try { localStorage.setItem('chia_primary_address', addresses[0]?.address || ''); } catch {}
     setWallet({ mnemonic, addresses });
+    const returnUrl = sessionStorage.getItem('chia_return_url');
+    if (returnUrl) { sessionStorage.removeItem('chia_return_url'); window.location.replace(returnUrl); return; }
     setScreen('wallet');
   };
 
@@ -3271,7 +3284,16 @@ export default function App() {
     const mnemonic = entry.encryptedMnemonic && sessionKey
       ? await decryptMnemonic(entry.encryptedMnemonic, sessionKey)
       : entry.mnemonic!;
-    setWallet({ mnemonic, addresses: deriveAddresses(mnemonic, 50) });
+    const addresses = deriveAddresses(mnemonic, 50);
+    const primary = addresses[0]?.address || '';
+    // Cache primary address so the profile page can switch without decrypting
+    if (primary && !entry.primaryAddress) {
+      const updated = walletList.map(w => w.id === id ? { ...w, primaryAddress: primary } : w);
+      setWalletList(updated);
+      localStorage.setItem(WALLETS_KEY, JSON.stringify(updated));
+    }
+    try { localStorage.setItem('chia_primary_address', primary); } catch {}
+    setWallet({ mnemonic, addresses });
     setActiveWalletId(id);
     localStorage.setItem(ACTIVE_WALLET_KEY, id);
     setScreen('wallet');

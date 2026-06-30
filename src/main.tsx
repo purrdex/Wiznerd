@@ -7,11 +7,15 @@ import CreateScreen from './create'
 import MarketplaceScreen from './marketplace'
 import CollectionScreen from './marketplace/Collection'
 import ManageScreen from './marketplace/Manage'
+import ProfileScreen from './marketplace/Profile'
+import OffersScreen from './marketplace/Offers'
 
 const router = createBrowserRouter([
   { path: '/', element: <WalletApp /> },
   { path: '/create', element: <CreateScreen /> },
   { path: '/marketplace', element: <MarketplaceScreen /> },
+  { path: '/marketplace/offers', element: <OffersScreen /> },
+  { path: '/marketplace/profile', element: <ProfileScreen /> },
   { path: '/marketplace/:id', element: <CollectionScreen /> },
   { path: '/marketplace/:id/manage', element: <ManageScreen /> },
 ])
