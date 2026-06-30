@@ -523,6 +523,25 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const { offer_type, price_mojo } = req.body;
     if (!offer_type || !price_mojo) return res.status(400).json({ error: 'offer_type and price_mojo required' });
 
+    const LISTING_FEE_MOJO   = Number(process.env.LISTING_FEE_MOJO || 1_000_000_000); // 0.001 XCH default
+    const PLATFORM_ADDRESS   = process.env.PLATFORM_WALLET_ADDRESS || null;
+
+    // Collect listing fee before creating offer (asks only; bids are free)
+    if (offer_type === 'ask' && PLATFORM_ADDRESS && LISTING_FEE_MOJO > 0) {
+      try {
+        const feeRes = await walletRpc('send_transaction', {
+          wallet_id: 1,
+          amount: LISTING_FEE_MOJO,
+          address: PLATFORM_ADDRESS,
+          fee: 0,
+          memos: ['wiznerd-listing-fee'],
+        });
+        if (!feeRes.success) throw new Error(feeRes.error || 'listing fee tx failed');
+      } catch (e) {
+        return res.status(402).json({ error: `Listing fee required: ${e.message}` });
+      }
+    }
+
     const priceMojo = Math.round(Number(price_mojo));
     if (!priceMojo || priceMojo <= 0) return res.status(400).json({ error: 'Invalid price' });
 
@@ -709,22 +728,29 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const { project_id, mint_price_xch, launch_immediately, launch_at, allowlist, reveal_type } = req.body;
     if (!project_id) return res.status(400).json({ error: 'project_id required' });
 
-    const mint_price_mojo = Math.round((Number(mint_price_xch) || 0) * 1e12);
-    const marketplace_status = launch_immediately !== false ? 'live' : 'scheduled';
+    const PLATFORM_FEE_PCT     = Number(process.env.PLATFORM_FEE_PERCENT || 2.5) / 100;
+    const PLATFORM_ADDRESS     = process.env.PLATFORM_WALLET_ADDRESS || null;
 
-    // Use the creator's own address as the payment address.
-    // Do NOT use get_next_address from the node wallet — the node wallet's minting
-    // transactions create change that lands back at node-derived addresses, causing
-    // the watcher to detect those change coins as fake buyer payments.
+    const creator_price_mojo   = Math.round((Number(mint_price_xch) || 0) * 1e12);
+    const platform_fee_mojo    = PLATFORM_ADDRESS ? Math.round(creator_price_mojo * PLATFORM_FEE_PCT) : 0;
+    // Buyer pays creator_price + fee; payment goes to platform address (or creator if no platform address)
+    const total_price_mojo     = creator_price_mojo + platform_fee_mojo;
+    const marketplace_status   = launch_immediately !== false ? 'live' : 'scheduled';
+
     const { data: proj } = await supabase
       .from('projects').select('creator_address').eq('id', project_id).single();
-    const payment_address = proj?.creator_address;
-    if (!payment_address) return res.status(400).json({ error: 'Project has no creator_address — set it before publishing' });
+    const creator_address = proj?.creator_address;
+    if (!creator_address) return res.status(400).json({ error: 'Project has no creator_address — set it before publishing' });
+
+    // If we have a platform address, payment comes to us and we track creator payout owed
+    const payment_address = PLATFORM_ADDRESS || creator_address;
 
     const { data, error } = await supabase
       .from('projects')
       .update({
-        mint_price_mojo,
+        mint_price_mojo:    total_price_mojo,
+        creator_price_mojo: creator_price_mojo,
+        platform_fee_mojo:  platform_fee_mojo,
         payment_address,
         launch_at: launch_immediately !== false ? null : (launch_at || null),
         allowlist: allowlist || [],
@@ -737,7 +763,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       .select().single();
 
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    res.json({ ...data, platform_fee_mojo, creator_price_mojo, platform_fee_pct: PLATFORM_FEE_PCT * 100 });
   });
 
   // ── Orders ────────────────────────────────────────────────────────────────────

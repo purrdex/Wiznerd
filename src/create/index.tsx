@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './create.css';
+import TopNav from '../components/TopNav';
 import { supabase } from '../lib/supabase';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -15,11 +16,14 @@ interface Project {
   id: string; name: string; symbol: string;
   total_supply: number; royalty_percent: number; status: string;
   current_step?: number; creator_address?: string;
+  description?: string; collection_image_url?: string; collection_image_path?: string;
 }
 interface ProjectSummary {
   id: string; name: string; symbol: string; total_supply: number;
   status: string; current_step: number; created_at: string;
+  description?: string;
 }
+interface DidProfile { name: string; description: string; website: string; twitter: string; logo: string; }
 type IpfsPhase = 'images' | 'metadata' | 'complete' | 'error';
 interface IpfsProgressState {
   phase: IpfsPhase | null;
@@ -125,8 +129,18 @@ export default function CreateScreen() {
   // Step 1 fields
   const [name, setName] = useState('');
   const [symbol, setSymbol] = useState('');
+  const [description, setDescription] = useState('');
   const [supply, setSupply] = useState(100);
   const [royalty, setRoyalty] = useState(5);
+  const [collectionImageFile, setCollectionImageFile] = useState<File | null>(null);
+  const [collectionImagePreview, setCollectionImagePreview] = useState('');
+  const collectionImageInputRef = useRef<HTMLInputElement>(null);
+
+  // DID profile (platform-level, in dashboard)
+  const [didProfile, setDidProfile] = useState<DidProfile>({ name: '', description: '', website: '', twitter: '', logo: '' });
+  const [didProfileOpen, setDidProfileOpen] = useState(false);
+  const [didProfileBusy, setDidProfileBusy] = useState(false);
+  const [didProfileMsg, setDidProfileMsg] = useState('');
 
   // Step 2 — layer upload & management
   const [newLayerName, setNewLayerName] = useState('');
@@ -315,13 +329,16 @@ export default function CreateScreen() {
   async function handleResumeProject(proj: ProjectSummary) {
     setError(''); setBusy(true);
     try {
-      const [layersRes, incompatRes] = await Promise.all([
+      const [projectRes, layersRes, incompatRes] = await Promise.all([
+        fetch(`${API_URL}/api/projects/${proj.id}`, { signal: AbortSignal.timeout(10000) }),
         fetch(`${API_URL}/api/projects/${proj.id}/layers`, { signal: AbortSignal.timeout(10000) }),
         fetch(`${API_URL}/api/projects/${proj.id}/incompatibilities`, { signal: AbortSignal.timeout(10000) }),
       ]);
+      const projectData = await projectRes.json() as Project;
       const layersData = await layersRes.json() as Layer[];
       const incompatData = await incompatRes.json() as { variant_a: string; variant_b: string }[];
-      setProject(proj as unknown as Project);
+      setProject(projectData);
+      setDescription(projectData.description || '');
       setLayers(layersData || []);
       setIncompats((incompatData || []).map(r => ({ a: r.variant_a, b: r.variant_b })));
       setStep(Math.max(1, proj.current_step || 1));
@@ -338,18 +355,40 @@ export default function CreateScreen() {
     } catch (e: unknown) { setError((e as Error).message); }
   }
 
+  async function handleSaveDidProfile() {
+    setDidProfileBusy(true); setDidProfileMsg('');
+    try {
+      const res = await fetch(`${API_URL}/api/admin/did-profile`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(didProfile),
+        signal: AbortSignal.timeout(90000),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'Update failed');
+      setDidProfileMsg('Submitted to blockchain — changes visible once confirmed (1-2 min)');
+    } catch (e: unknown) { setDidProfileMsg((e as Error).message); }
+    finally { setDidProfileBusy(false); }
+  }
+
   // ─── Wizard handlers ─────────────────────────────────────────────────────────
   async function handleCreateProject() {
-    if (!name || !symbol) return;
+    if (!name || !symbol || !description) return;
     setBusy(true); setError('');
     try {
       const res = await fetch(`${API_URL}/api/projects`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, symbol, total_supply: supply, royalty_percent: royalty, creator_address: creatorAddress, current_step: 2 }),
+        body: JSON.stringify({ name, symbol, description, total_supply: supply, royalty_percent: royalty, creator_address: creatorAddress, current_step: 2 }),
         signal: AbortSignal.timeout(10000),
       });
       const data = await res.json() as Project & { error?: string };
       if (!res.ok) throw new Error(data.error ?? 'Create failed');
+      if (collectionImageFile) {
+        const fd = new FormData();
+        fd.append('image', collectionImageFile);
+        await fetch(`${API_URL}/api/projects/${data.id}/collection-image`, {
+          method: 'POST', body: fd, signal: AbortSignal.timeout(30000),
+        });
+      }
       setProject(data);
       setStep(2);
       setShowDashboard(false);
@@ -561,15 +600,14 @@ export default function CreateScreen() {
 
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div style={S.page} className="create-page">
+    <div style={{ ...S.page, padding: 0 }} className="create-page">
+      <TopNav />
+      <div style={{ padding: 24 }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ maxWidth: 720, margin: '0 auto 28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-          <img src="/tepe.png" alt="Wiznerd mascot" style={{ width: 64, height: 64, borderRadius: '50%' }} />
-          <div style={{ textAlign: 'center' }}>
-            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: '#fff' }}>Wiznerd Art Studio</h1>
+        <div style={{ textAlign: 'center', paddingTop: 8 }}>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: '#fff' }}>Art Studio</h1>
             <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: 13 }}>Create, configure, and launch your Chia NFT collection</p>
-          </div>
         </div>
 
         {!showDashboard && (
@@ -650,6 +688,15 @@ export default function CreateScreen() {
                 <span style={S.label}>Symbol</span>
                 <input style={S.input} placeholder="e.g. WZNRD" value={symbol} maxLength={8} onChange={e => setSymbol(e.target.value.toUpperCase())} />
               </div>
+              <div>
+                <span style={S.label}>Description <span style={{ color: '#6b7280' }}>(shown on MintGarden, SpaceScan)</span></span>
+                <textarea
+                  style={{ ...S.input, resize: 'vertical', minHeight: 72 }}
+                  placeholder="Describe your collection — what makes it unique?"
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <span style={S.label}>Total supply</span>
@@ -660,10 +707,72 @@ export default function CreateScreen() {
                   <input style={S.input} type="number" value={royalty} min={0} max={15} onChange={e => setRoyalty(Math.max(0, Math.min(15, +e.target.value)))} />
                 </div>
               </div>
-              <button style={{ ...S.btnP, marginTop: 4 }} onClick={handleCreateProject} disabled={busy || !name || !symbol}>
+              <div>
+                <span style={S.label}>Collection image <span style={{ color: '#6b7280' }}>(optional)</span></span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {collectionImagePreview && (
+                    <img src={collectionImagePreview} alt="collection" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: '1px solid #2d2f3d', flexShrink: 0 }} />
+                  )}
+                  <button style={{ ...S.btnS, fontSize: 12 }} onClick={() => collectionImageInputRef.current?.click()}>
+                    {collectionImagePreview ? 'Change image' : 'Upload image'}
+                  </button>
+                  {collectionImagePreview && (
+                    <button style={{ ...S.btnS, fontSize: 12 }} onClick={() => { setCollectionImageFile(null); setCollectionImagePreview(''); }}>Remove</button>
+                  )}
+                </div>
+              </div>
+              <button style={{ ...S.btnP, marginTop: 4 }} onClick={handleCreateProject} disabled={busy || !name || !symbol || !description}>
                 {busy ? 'Creating…' : 'Create Project →'}
               </button>
             </div>
+          </div>
+
+          {/* DID profile */}
+          <div style={{ ...S.card, marginTop: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }} onClick={() => setDidProfileOpen(o => !o)}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>Platform Profile (DID)</div>
+                <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>Name, bio, links shown on MintGarden and SpaceScan next to "Minted by"</div>
+              </div>
+              <span style={{ color: '#9ca3af', fontSize: 18 }}>{didProfileOpen ? '▲' : '▼'}</span>
+            </div>
+            {didProfileOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span style={S.label}>Platform name</span>
+                    <input style={S.input} placeholder="e.g. Wiznerd" value={didProfile.name} onChange={e => setDidProfile(p => ({ ...p, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <span style={S.label}>Twitter handle</span>
+                    <input style={S.input} placeholder="@wiznerd" value={didProfile.twitter} onChange={e => setDidProfile(p => ({ ...p, twitter: e.target.value }))} />
+                  </div>
+                </div>
+                <div>
+                  <span style={S.label}>Description / bio</span>
+                  <textarea style={{ ...S.input, resize: 'vertical', minHeight: 60 }} placeholder="What is your platform?" value={didProfile.description} onChange={e => setDidProfile(p => ({ ...p, description: e.target.value }))} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <span style={S.label}>Website URL</span>
+                    <input style={S.input} placeholder="https://wiznerd.io" value={didProfile.website} onChange={e => setDidProfile(p => ({ ...p, website: e.target.value }))} />
+                  </div>
+                  <div>
+                    <span style={S.label}>Logo (IPFS URL)</span>
+                    <input style={S.input} placeholder="ipfs://..." value={didProfile.logo} onChange={e => setDidProfile(p => ({ ...p, logo: e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: '#9ca3af', background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 6, padding: '8px 12px' }}>
+                  This writes metadata on-chain to your minting DID — costs a small XCH fee and takes 1-2 min to confirm.
+                </div>
+                {didProfileMsg && (
+                  <div style={{ fontSize: 13, color: didProfileMsg.includes('Submitted') ? '#4ade80' : '#f87171' }}>{didProfileMsg}</div>
+                )}
+                <button style={{ ...S.btnP, alignSelf: 'flex-start' }} onClick={handleSaveDidProfile} disabled={didProfileBusy}>
+                  {didProfileBusy ? 'Submitting…' : 'Save to Blockchain'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -686,6 +795,15 @@ export default function CreateScreen() {
                   <span style={S.label}>Symbol</span>
                   <input style={S.input} placeholder="e.g. WZNRD" value={symbol} maxLength={8} onChange={e => setSymbol(e.target.value.toUpperCase())} />
                 </div>
+                <div>
+                  <span style={S.label}>Description <span style={{ color: '#6b7280' }}>(shown on MintGarden, SpaceScan)</span></span>
+                  <textarea
+                    style={{ ...S.input, resize: 'vertical', minHeight: 72 }}
+                    placeholder="Describe your collection — what makes it unique?"
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                  />
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
                     <span style={S.label}>Total supply</span>
@@ -696,7 +814,28 @@ export default function CreateScreen() {
                     <input style={S.input} type="number" value={royalty} min={0} max={15} onChange={e => setRoyalty(Math.max(0, Math.min(15, +e.target.value)))} />
                   </div>
                 </div>
-                <button style={{ ...S.btnP, marginTop: 4 }} onClick={handleCreateProject} disabled={busy || !name || !symbol}>
+                <div>
+                  <span style={S.label}>Collection image <span style={{ color: '#6b7280' }}>(optional — thumbnail shown on explorers)</span></span>
+                  <input ref={collectionImageInputRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }}
+                    onChange={e => {
+                      const f = e.target.files?.[0] ?? null;
+                      setCollectionImageFile(f);
+                      setCollectionImagePreview(f ? URL.createObjectURL(f) : '');
+                      e.target.value = '';
+                    }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {collectionImagePreview && (
+                      <img src={collectionImagePreview} alt="collection" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: '1px solid #2d2f3d', flexShrink: 0 }} />
+                    )}
+                    <button style={{ ...S.btnS, fontSize: 12 }} onClick={() => collectionImageInputRef.current?.click()}>
+                      {collectionImagePreview ? 'Change image' : 'Upload image'}
+                    </button>
+                    {collectionImagePreview && (
+                      <button style={{ ...S.btnS, fontSize: 12 }} onClick={() => { setCollectionImageFile(null); setCollectionImagePreview(''); }}>Remove</button>
+                    )}
+                  </div>
+                </div>
+                <button style={{ ...S.btnP, marginTop: 4 }} onClick={handleCreateProject} disabled={busy || !name || !symbol || !description}>
                   {busy ? 'Creating…' : 'Create Project →'}
                 </button>
               </div>
@@ -1266,6 +1405,7 @@ export default function CreateScreen() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

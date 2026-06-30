@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import './App.css';
+import TopNav from '../components/TopNav';
 import type { DerivedAddress } from './lib/keys';
 import { formatMojoToXch, isValidXchAddress } from './lib/utils';
 import {
@@ -3371,15 +3372,15 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="header">
-        <div className="logo">
-          <span style={{marginRight: 6}}>🧙‍♂️</span>Wiznerd Wallet
-          {isWallet && walletList.length > 1 && activeWalletName && (
-            <span style={{fontSize:11,color:'var(--text-secondary)',marginLeft:8,fontWeight:400}}>{activeWalletName}</span>
+      <TopNav activePath="/" />
+      {isWallet && (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',padding:'4px 16px',borderBottom:'1px solid var(--border)',minHeight:28}}>
+          {walletList.length > 1 && activeWalletName && (
+            <span style={{fontSize:11,color:'var(--text-secondary)',marginRight:'auto'}}>{activeWalletName}</span>
           )}
+          <NodeBadge status={nodeStatus}/>
         </div>
-        {isWallet && <NodeBadge status={nodeStatus}/>}
-      </div>
+      )}
 
       {isWallet && showBackupBanner && (
         <div style={{background:'rgba(224,179,0,0.08)',borderBottom:'1px solid rgba(224,179,0,0.35)',

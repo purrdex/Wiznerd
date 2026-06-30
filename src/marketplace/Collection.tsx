@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import './marketplace.css';
 import { supabase } from '../lib/supabase';
+import TopNav from '../components/TopNav';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
 const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
@@ -16,6 +17,8 @@ interface Collection {
   ipfs_cid: string | null; minted_count: number; payment_address: string | null;
   description?: string; collection_image_url?: string; collection_image_path?: string;
   source?: string;
+  creator_price_mojo?: number;
+  platform_fee_mojo?: number;
 }
 
 interface GalleryItem {
@@ -258,18 +261,15 @@ export default function CollectionScreen() {
 
   return (
     <div className="mp-page">
-      {/* Nav */}
-      <nav className="mp-nav">
-        <a href="/" className="mp-nav-logo">Wiznerd<span>.</span></a>
-        <a href="/marketplace" className="mp-nav-link">← Marketplace</a>
-        <a href="/marketplace/profile" className="mp-nav-link">My NFTs</a>
-        {coll.creator_address === walletAddress && (
-          <button className="mp-nav-link" style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+      <TopNav />
+      {coll.creator_address === walletAddress && (
+        <div style={{ padding: '6px 24px', background: '#0f1016', borderBottom: '1px solid #1e2030' }}>
+          <button className="mp-nav-link" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f97316', fontSize: 13 }}
             onClick={() => navigate(`/marketplace/${id}/manage`)}>
-            Manage →
+            Manage this collection →
           </button>
-        )}
-      </nav>
+        </div>
+      )}
 
       {/* Hero image — prefer collection image, fall back to first generated token */}
       <div className="mp-hero">
@@ -411,6 +411,13 @@ export default function CollectionScreen() {
               </div>
               {xchPrice > 0 && Number(xch) > 0 && (
                 <div className="mp-mint-price-usd">≈ ${(Number(xch) * xchPrice).toFixed(2)} USD</div>
+              )}
+              {coll.platform_fee_mojo != null && coll.platform_fee_mojo > 0 && coll.creator_price_mojo != null && (
+                <div style={{ fontSize: 11, color: '#4b5563', marginTop: 6, lineHeight: 1.6 }}>
+                  <span style={{ color: '#6b7280' }}>{formatXch(coll.creator_price_mojo)} XCH to creator</span>
+                  {' + '}
+                  <span style={{ color: '#f97316' }}>{formatXch(coll.platform_fee_mojo)} XCH platform fee</span>
+                </div>
               )}
 
               <div className="mp-progress-bar">
@@ -730,6 +737,11 @@ export default function CollectionScreen() {
                         ? 'Set your asking price. The offer will be created using your local wallet and listed immediately.'
                         : 'Set the XCH amount you want to offer for this NFT.'}
                     </p>
+                    {offerPanel === 'ask' && (
+                      <div style={{ fontSize: 11, color: '#f97316', marginBottom: 8 }}>
+                        Listing fee: 0.001 XCH · paid to Wiznerd platform
+                      </div>
+                    )}
                     <div className="mp-offer-price-row">
                       <input
                         className="mp-offer-price-input"

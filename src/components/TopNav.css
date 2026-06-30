@@ -1,0 +1,141 @@
+/* ── Wiznerd Top Nav ─────────────────────────────────────────────────────────── */
+
+.wiz-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px;
+  height: 56px;
+  background: #0a0b0f;
+  border-bottom: 1px solid #1e2030;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Brand */
+.wiz-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.wiz-brand-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #f97316;
+}
+.wiz-brand-name {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+.wiz-brand-dot { color: #f97316; }
+
+/* Desktop links */
+.wiz-links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+.wiz-link {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.wiz-link:hover  { color: #e2e8f0; background: rgba(255,255,255,0.04); }
+.wiz-link.active { color: #f97316; font-weight: 600; }
+
+/* Wallet switcher */
+.wiz-wallet-switcher { position: relative; flex-shrink: 0; }
+.wiz-wallet-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 20px; cursor: pointer;
+  background: #111218; border: 1px solid #2d2f3d; color: #e2e8f0;
+  font-size: 12px; transition: border-color 0.15s;
+  white-space: nowrap;
+}
+.wiz-wallet-btn:hover { border-color: #f97316; }
+.wiz-wallet-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #22d3ee; flex-shrink: 0;
+}
+.wiz-wallet-name { font-weight: 600; }
+.wiz-wallet-addr { color: #4b5563; font-family: monospace; font-size: 11px; }
+.wiz-wallet-caret { color: #4b5563; font-size: 9px; }
+
+.wiz-wallet-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
+  background: #111218; border: 1px solid #2d2f3d; border-radius: 10px;
+  padding: 6px; min-width: 220px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.wiz-wallet-item {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 8px 10px; border-radius: 6px;
+  background: none; border: none; color: #94a3b8; font-size: 13px;
+  cursor: pointer; text-align: left;
+  transition: background 0.1s, color 0.1s;
+}
+.wiz-wallet-item:hover { background: #1e2030; color: #e2e8f0; }
+.wiz-wallet-item.active { color: #fff; font-weight: 600; }
+.wiz-wallet-item-name { font-size: 13px; }
+.wiz-wallet-item-addr { font-size: 10px; color: #4b5563; font-family: monospace; margin-top: 1px; }
+.wiz-wallet-check { color: #f97316; font-size: 12px; }
+.wiz-wallet-locked { font-size: 11px; }
+.wiz-wallet-divider { height: 1px; background: #1e2030; margin: 4px 0; }
+
+/* Hamburger (mobile only) */
+.wiz-hamburger { display: none; position: relative; margin-left: auto; }
+.wiz-hamburger-btn {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 8px; background: none; border: none; cursor: pointer;
+}
+.wiz-hamburger-btn span {
+  display: block; width: 20px; height: 2px; background: #94a3b8;
+  border-radius: 2px; transition: transform 0.2s, opacity 0.2s;
+}
+.wiz-hamburger-btn.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.wiz-hamburger-btn.open span:nth-child(2) { opacity: 0; }
+.wiz-hamburger-btn.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+.wiz-mobile-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 200;
+  background: #111218; border: 1px solid #2d2f3d; border-radius: 10px;
+  padding: 8px; min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column;
+}
+.wiz-mobile-link {
+  padding: 10px 12px; border-radius: 6px; font-size: 14px; font-weight: 500;
+  color: #94a3b8; text-decoration: none; cursor: pointer;
+  background: none; border: none; text-align: left;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: background 0.1s, color 0.1s;
+}
+.wiz-mobile-link:hover { background: #1e2030; color: #e2e8f0; }
+.wiz-mobile-link.active { color: #f97316; font-weight: 600; }
+
+/* Responsive */
+@media (max-width: 640px) {
+  .wiz-links        { display: none; }
+  .wiz-wallet-switcher { display: none; }
+  .wiz-hamburger    { display: block; }
+  .wiz-nav          { padding: 0 16px; }
+}
+
+@media (min-width: 641px) {
+  .wiz-hamburger { display: none; }
+}

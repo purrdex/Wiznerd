@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './marketplace.css';
+import TopNav from '../components/TopNav';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
 const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
@@ -92,12 +93,7 @@ export default function OffersPage() {
 
   return (
     <div className="mp-page">
-      <nav className="mp-nav">
-        <a href="/" className="mp-nav-logo">Wiznerd<span>.</span></a>
-        <a href="/marketplace" className="mp-nav-link">← Marketplace</a>
-        <a href="/marketplace/offers" className="mp-nav-link active">Offer Board</a>
-        <a href="/marketplace/profile" className="mp-nav-link">My NFTs</a>
-      </nav>
+      <TopNav />
 
       <div className="mp-hero-bar">
         <div className="mp-hero-inner">

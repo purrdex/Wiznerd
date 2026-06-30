@@ -55,7 +55,7 @@ test.describe('Wiznerd Wallet', () => {
 
   test('app loads with header', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('text=Wiznerd Wallet')).toBeVisible();
+    await expect(page.locator('text=Wiznerd.')).toBeVisible();
   });
 
   test('setup screen shows on fresh load', async ({ page }) => {
