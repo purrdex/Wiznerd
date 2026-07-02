@@ -104,7 +104,7 @@ app.get('/api/projects', async (req, res) => {
 
 // POST /api/projects — create project
 app.post('/api/projects', async (req, res) => {
-  const { name, symbol, total_supply, royalty_percent, creator_address, current_step } = req.body;
+  const { name, symbol, total_supply, royalty_percent, creator_address, current_step, description } = req.body;
   if (!name || !symbol || !total_supply) return res.status(400).json({ error: 'name, symbol, total_supply required' });
   const { data, error } = await supabase
     .from('projects')
@@ -114,6 +114,7 @@ app.post('/api/projects', async (req, res) => {
       royalty_percent: Number(royalty_percent) || 0,
       creator_address: creator_address || null,
       current_step: Number(current_step) || 1,
+      description: description || null,
     })
     .select()
     .single();
@@ -133,10 +134,63 @@ app.patch('/api/projects/:id', async (req, res) => {
   const updates = {};
   if (req.body.current_step !== undefined) updates.current_step = Number(req.body.current_step);
   if (req.body.status !== undefined) updates.status = req.body.status;
+  if (req.body.description !== undefined) updates.description = req.body.description || null;
   updates.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
+});
+
+// POST /api/projects/:id/collection-image — upload collection thumbnail to Supabase
+app.post('/api/projects/:id/collection-image', upload.single('image'), async (req, res) => {
+  const { id } = req.params;
+  if (!req.file) return res.status(400).json({ error: 'image required' });
+  const storagePath = `${id}/collection.png`;
+  const { error } = await supabase.storage.from('output').upload(storagePath, req.file.buffer, {
+    contentType: 'image/png',
+    upsert: true,
+  });
+  if (error) return res.status(400).json({ error: error.message });
+  // Clear collection_image_url so it gets re-pinned to IPFS on next IPFS phase
+  await supabase.from('projects').update({ collection_image_path: storagePath, collection_image_url: null }).eq('id', id);
+  const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/output/${storagePath}`;
+  res.json({ url: publicUrl, path: storagePath });
+});
+
+// POST /api/admin/did-profile — update the minting DID's on-chain metadata
+app.post('/api/admin/did-profile', async (req, res) => {
+  const { name, description, website, twitter, logo } = req.body;
+  const proxy = process.env.PROXY_URL || 'http://localhost:3001';
+  try {
+    const walletsRes = await fetch(`${proxy}/wallet/get_wallets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000),
+    });
+    const walletsJson = await walletsRes.json();
+    const didWallet = (walletsJson.wallets || []).find(w => w.type === 8);
+    if (!didWallet) return res.status(400).json({ error: 'No DID wallet found — create one in the Chia GUI first' });
+
+    const metadata = {};
+    if (name) metadata.name = name;
+    if (description) metadata.description = description;
+    if (website) metadata.website = website;
+    if (twitter) metadata.twitter = twitter.replace('@', '');
+    if (logo) metadata.logo = logo;
+
+    const updateRes = await fetch(`${proxy}/wallet/did_update_metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet_id: didWallet.id, metadata, fee: 0 }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const updateJson = await updateRes.json();
+    if (!updateJson.success) return res.status(400).json({ error: updateJson.error || 'DID update failed' });
+    res.json({ ok: true, wallet_id: didWallet.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // DELETE /api/projects/:id — delete project and all storage files
@@ -440,7 +494,16 @@ const PORT = process.env.API_PORT || 3002;
 app.listen(PORT, async () => {
   console.log(`Wiznerd API server on http://localhost:${PORT}`);
   await ensureBuckets();
+
+  // Reset any orders/tokens stuck in-flight from a previous crash
+  const { count: stuckOrders } = await supabase.from('orders').update({ status: 'failed' }).eq('status', 'minting').select('*', { count: 'exact', head: true });
+  const { count: stuckTokens } = await supabase.from('generated_tokens').update({ buyer_address: null }).eq('buyer_address', '__reserved__').select('*', { count: 'exact', head: true });
+  if (stuckOrders) console.log(`[server] reset ${stuckOrders} stuck minting order(s)`);
+  if (stuckTokens) console.log(`[server] released ${stuckTokens} reserved token(s)`);
+
   try { const { startWatcher } = require('./watcher'); startWatcher(supabase); } catch (e) { console.warn('[server] watcher failed to start:', e.message); }
+  try { const { start } = require('./indexer'); start(); } catch (e) { console.warn('[server] indexer failed to start:', e.message); }
+  try { const { start: startTrending } = require('./trending'); startTrending(supabase); } catch (e) { console.warn('[server] trending job failed to start:', e.message); }
 });
 
 // ─── Global error handlers (must be last) ────────────────────────────────────

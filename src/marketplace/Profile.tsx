@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './marketplace.css';
 import TopNav from '../components/TopNav';
@@ -23,12 +23,6 @@ interface ProfileCollection {
   count: number;
 }
 
-interface StoredWallet {
-  id: string;
-  name: string;
-  primaryAddress?: string;
-}
-
 function shortAddr(addr: string) {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
@@ -37,91 +31,6 @@ function formatXch(mojo: number) {
   return (mojo / 1e12).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-function WalletSwitcher({ onSwitch }: { onSwitch: (address: string) => void }) {
-  const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const [wallets, setWallets] = useState<StoredWallet[]>([]);
-  const [activeId, setActiveId] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    try {
-      setWallets(JSON.parse(localStorage.getItem('chia_wallets') || '[]'));
-      setActiveId(localStorage.getItem('chia_active_wallet') || '');
-    } catch {}
-  }, []);
-
-  const active = wallets.find(w => w.id === activeId);
-  const activeAddr = (() => { try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; } })();
-
-  useEffect(() => {
-    if (!open) return;
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  function switchTo(w: StoredWallet) {
-    setOpen(false);
-    if (w.id === activeId) return;
-    if (!w.primaryAddress) {
-      // Address not yet cached — send to wallet to unlock, then return here
-      localStorage.setItem('chia_active_wallet', w.id);
-      sessionStorage.setItem('chia_return_url', '/marketplace/profile');
-      navigate('/');
-      return;
-    }
-    localStorage.setItem('chia_active_wallet', w.id);
-    localStorage.setItem('chia_primary_address', w.primaryAddress);
-    setActiveId(w.id);
-    onSwitch(w.primaryAddress);
-  }
-
-  if (!wallets.length) return null;
-
-  return (
-    <div className="mp-wallet-switcher" ref={ref}>
-      <button className="mp-wallet-btn" onClick={() => setOpen(o => !o)}>
-        <span className="mp-wallet-btn-dot" />
-        <span className="mp-wallet-btn-name">{active?.name || 'My Wallet'}</span>
-        {activeAddr && <span className="mp-wallet-btn-addr">{shortAddr(activeAddr)}</span>}
-        <span className="mp-wallet-btn-caret">{open ? '▲' : '▼'}</span>
-      </button>
-
-      {open && (
-        <div className="mp-wallet-dropdown">
-          {wallets.map(w => (
-            <button
-              key={w.id}
-              className={`mp-wallet-dropdown-item${w.id === activeId ? ' active' : ''}`}
-              onClick={() => switchTo(w)}
-            >
-              <div>
-                <div className="mp-wallet-dropdown-name">{w.name}</div>
-                {w.primaryAddress && (
-                  <div style={{ fontSize: 10, color: '#4b5563', fontFamily: 'monospace' }}>
-                    {shortAddr(w.primaryAddress)}
-                  </div>
-                )}
-              </div>
-              {w.id === activeId
-                ? <span className="mp-wallet-dropdown-check">✓</span>
-                : !w.primaryAddress && <span style={{ fontSize: 10, color: '#4b5563' }}>unlock first</span>
-              }
-            </button>
-          ))}
-          <div className="mp-wallet-dropdown-divider" />
-          <button className="mp-wallet-dropdown-item mp-wallet-dropdown-settings"
-            onClick={() => { setOpen(false); navigate('/'); }}>
-            Manage wallets →
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function ProfilePage() {
   const navigate = useNavigate();

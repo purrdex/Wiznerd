@@ -21,6 +21,10 @@ interface Listing {
   source: 'wiznerd' | 'external';
   external_url?: string;
   indexed_count?: number;
+  trending_score?: number;
+  volume_24h_mojo?: number;
+  sales_24h?: number;
+  mint_24h?: number;
 }
 
 function formatXch(mojo: number): string {
@@ -49,7 +53,8 @@ function Countdown({ launchAt }: { launchAt: string }) {
 
 type FilterKey = 'all' | 'trending' | 'wiznerd' | 'chia' | 'live' | 'upcoming' | 'soldout';
 const FILTER_LABELS: Record<FilterKey, string> = {
-  all: 'All', trending: 'Trending', wiznerd: 'Wiznerd', chia: 'Chia Network',
+  all: 'All', trending: 'Trending',
+  wiznerd: 'Wiznerd', chia: 'Chia Network',
   live: 'Live Now', upcoming: 'Upcoming', soldout: 'Sold Out',
 };
 
@@ -82,15 +87,40 @@ export default function MarketplaceScreen() {
 
   const allListings = [...wiznerdListings, ...externalListings];
 
-  const visible = allListings.filter(c => {
-    if (filter === 'wiznerd')  return c.source === 'wiznerd';
-    if (filter === 'chia')     return c.source === 'external';
-    if (filter === 'live')     return c.marketplace_status === 'live';
-    if (filter === 'upcoming') return c.marketplace_status === 'scheduled';
-    if (filter === 'soldout')  return c.marketplace_status === 'sold_out';
-    if (filter === 'trending') return c.source === 'external' && (c.indexed_count ?? 0) > 0;
-    return true;
-  });
+  const visible = (() => {
+    let list = allListings.filter(c => {
+      if (filter === 'wiznerd')  return c.source === 'wiznerd';
+      if (filter === 'chia')     return c.source === 'external';
+      if (filter === 'live')     return c.marketplace_status === 'live';
+      if (filter === 'upcoming') return c.marketplace_status === 'scheduled';
+      if (filter === 'soldout')  return c.marketplace_status === 'sold_out';
+      if (filter === 'trending') return (c.trending_score ?? 0) > 0;
+      return true;
+    });
+
+    if (filter === 'trending') {
+      list = [...list].sort((a, b) => (b.trending_score ?? 0) - (a.trending_score ?? 0));
+    } else if (filter === 'all') {
+      list = [...list].sort((a, b) => {
+        const aTrend = (a.trending_score ?? 0) > 0;
+        const bTrend = (b.trending_score ?? 0) > 0;
+        const aMint  = a.source === 'wiznerd' && a.marketplace_status === 'live';
+        const bMint  = b.source === 'wiznerd' && b.marketplace_status === 'live';
+
+        // Tier 1: trending
+        if (aTrend !== bTrend) return aTrend ? -1 : 1;
+        if (aTrend && bTrend)  return (b.trending_score ?? 0) - (a.trending_score ?? 0);
+
+        // Tier 2: actively minting Wiznerd collections
+        if (aMint !== bMint) return aMint ? -1 : 1;
+
+        // Tier 3: everything else by minted_count
+        return (b.minted_count ?? 0) - (a.minted_count ?? 0);
+      });
+    }
+
+    return list;
+  })();
 
   function handleCardClick(c: Listing) {
     navigate(`/marketplace/${c.id}`);
@@ -122,12 +152,9 @@ export default function MarketplaceScreen() {
 
       {/* Filters */}
       <div className="mp-filters">
-        {(Object.keys(FILTER_LABELS) as FilterKey[]).map(f => (
+        {(['all', 'trending', 'live', 'upcoming'] as FilterKey[]).map(f => (
           <button key={f} className={`mp-filter-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
             {FILTER_LABELS[f]}
-            {f === 'wiznerd' && wiznerdListings.length > 0 && (
-              <span className="mp-filter-count">{wiznerdListings.length}</span>
-            )}
           </button>
         ))}
       </div>
@@ -169,14 +196,24 @@ export default function MarketplaceScreen() {
                     <span className="mp-usd">≈ ${(Number(xch) * xchPrice).toFixed(2)}</span>
                   )}
                 </div>
-                {c.source === 'external' && (c.indexed_count ?? 0) > 0 && (
+                {c.source === 'external' && (
                   <div className="mp-card-foot">
-                    <span style={{ color: '#22d3ee', fontSize: 11 }}>
-                      {c.indexed_count!.toLocaleString()} indexed
-                    </span>
-                    {(c.indexed_count ?? 0) > 100 && (
-                      <span className="mp-badge mp-badge-live" style={{ fontSize: 10 }}>🔥</span>
-                    )}
+                    {(c.trending_score ?? 0) > 0 ? (
+                      <>
+                        <span style={{ color: '#22d3ee', fontSize: 11 }}>
+                          {c.sales_24h ?? 0} trades 24h
+                        </span>
+                        {(c.volume_24h_mojo ?? 0) > 0 && (
+                          <span style={{ color: '#a0aec0', fontSize: 11 }}>
+                            {formatXch(c.volume_24h_mojo!)} XCH
+                          </span>
+                        )}
+                      </>
+                    ) : (c.indexed_count ?? 0) > 0 ? (
+                      <span style={{ color: '#4a5568', fontSize: 11 }}>
+                        {(c.indexed_count ?? 0).toLocaleString()} supply
+                      </span>
+                    ) : null}
                   </div>
                 )}
                 {c.total_supply > 0 && c.source === 'wiznerd' && (

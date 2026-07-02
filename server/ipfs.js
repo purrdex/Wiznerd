@@ -1,25 +1,32 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 function getSupabase() { return require('./index').supabase; }
 
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
-function buildMetadata(project, tokenIndex, traits, imageCid) {
+function buildMetadata(project, tokenIndex, traits, imageRef) {
+  const collectionAttrs = [
+    { type: 'description', value: project.description || project.name },
+  ];
+  if (project.collection_image_url) {
+    collectionAttrs.push({ type: 'icon', value: project.collection_image_url });
+  }
   return {
     format: 'CHIP-0007',
     name: `${project.name} #${tokenIndex + 1}`,
-    description: `${project.name} — token ${tokenIndex + 1} of ${project.total_supply}`,
-    image: `ipfs://${imageCid}`,
+    description: project.description || `${project.name} — a collection of ${project.total_supply} unique NFTs on Chia`,
+    sensitive_content: false,
+    series_number: tokenIndex + 1,
+    series_total: project.total_supply,
+    image: `ipfs://${imageRef}`,
     attributes: Object.entries(traits).map(([trait_type, value]) => ({ trait_type, value })),
     collection: {
       name: project.name,
       id: project.id,
-      attributes: [
-        { type: 'royalty', value: String(Math.round(project.royalty_percent * 100)) },
-        { type: 'trading_price_percentage', value: String(project.royalty_percent) },
-      ],
+      attributes: collectionAttrs,
     },
   };
 }
@@ -47,6 +54,26 @@ async function uploadToPinata(buffer, mimeType, filename, pinataJwt) {
     signal: AbortSignal.timeout(120000),
   });
   if (!res.ok) throw new Error(`Pinata ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  return json.IpfsHash;
+}
+
+// Upload all files as a single IPFS directory — returns the directory CID.
+// Each file is accessible at ipfs://{dirCid}/{file.name}
+async function uploadDirectoryToPinata(files, dirName, pinataJwt) {
+  const fd = new FormData();
+  for (const { name, buffer, mimeType } of files) {
+    fd.append('file', new Blob([buffer], { type: mimeType }), `${dirName}/${name}`);
+  }
+  fd.append('pinataMetadata', JSON.stringify({ name: dirName }));
+  fd.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
+  const res = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${pinataJwt}` },
+    body: fd,
+    signal: AbortSignal.timeout(300000),
+  });
+  if (!res.ok) throw new Error(`Pinata directory upload ${res.status}: ${await res.text()}`);
   const json = await res.json();
   return json.IpfsHash;
 }
@@ -101,13 +128,11 @@ async function pinToIPFS(projectId) {
   if (!tokens || tokens.length === 0) throw new Error('No generated tokens found for this project');
 
   const total = tokens.length;
-  const alreadyHaveImage = tokens.filter(t => t.image_cid).length;
-  const alreadyPinned = tokens.filter(t => t.status === 'pinned' && t.metadata_uri).length;
 
   await supabase.from('projects').update({
     ipfs_phase: 'images',
-    ipfs_images_done: alreadyHaveImage,
-    ipfs_meta_done: alreadyPinned,
+    ipfs_images_done: 0,
+    ipfs_meta_done: 0,
     ipfs_total: total,
     ipfs_current_file: null,
     ipfs_error: null,
@@ -116,51 +141,145 @@ async function pinToIPFS(projectId) {
 
   const projectOutputDir = path.join(OUTPUT_DIR, projectId);
 
-  // Phase 1: upload images (skip tokens that already have an image_cid)
+  // Pin collection image first (before any phase) so buildMetadata can include it
+  if (project.collection_image_path && !project.collection_image_url) {
+    try {
+      await supabase.from('projects').update({ ipfs_current_file: 'Pinning collection image...' }).eq('id', projectId);
+      const { data: imgData } = await supabase.storage.from('output').download(project.collection_image_path);
+      if (imgData) {
+        const imgBuf = Buffer.from(await imgData.arrayBuffer());
+        let collectionCid;
+        if (svc.service === 'pinata') {
+          collectionCid = await uploadToPinata(imgBuf, 'image/png', 'collection.png', svc.key);
+        } else {
+          collectionCid = await uploadToNFTStorage(imgBuf, 'image/png', svc.key);
+        }
+        project.collection_image_url = `ipfs://${collectionCid}`;
+        await supabase.from('projects').update({ collection_image_url: project.collection_image_url }).eq('id', projectId);
+      }
+    } catch (e) {
+      console.warn('[ipfs] collection image pin failed (non-fatal):', e.message);
+    }
+  }
+
+  if (svc.service === 'pinata') {
+    // === Pinata: directory-based upload (one CID for whole collection) ===
+
+    // Phase 1: collect all images and upload as a directory
+    await supabase.from('projects').update({ ipfs_current_file: 'Reading images...' }).eq('id', projectId);
+
+    const imageFiles = [];
+    const dataHashes = {};
+    for (const token of tokens) {
+      const imgPath = path.join(projectOutputDir, `${token.token_index}.png`);
+      if (fs.existsSync(imgPath)) {
+        const buf = fs.readFileSync(imgPath);
+        imageFiles.push({ name: `${token.token_index}.png`, buffer: buf, mimeType: 'image/png' });
+        dataHashes[token.token_index] = crypto.createHash('sha256').update(buf).digest('hex');
+      }
+    }
+
+    await supabase.from('projects').update({
+      ipfs_current_file: `Uploading ${imageFiles.length} images as IPFS directory...`,
+    }).eq('id', projectId);
+
+    const imageDirCid = await uploadDirectoryToPinata(imageFiles, project.name, svc.key);
+
+    // image_cid stored as "{dirCid}/{index}.png" so mint.js can build gateway URLs directly
+    for (const token of tokens) {
+      if (dataHashes[token.token_index] !== undefined) {
+        await supabase.from('generated_tokens')
+          .update({
+            image_cid: `${imageDirCid}/${token.token_index}.png`,
+            data_hash: dataHashes[token.token_index],
+          })
+          .eq('id', token.id);
+      }
+    }
+    await supabase.from('projects').update({ ipfs_images_done: imageFiles.length }).eq('id', projectId);
+
+    // Phase 2: build metadata JSONs and upload as a directory
+    await supabase.from('projects').update({
+      ipfs_phase: 'metadata',
+      ipfs_current_file: 'Building metadata...',
+    }).eq('id', projectId);
+
+    const metaFiles = [];
+    const metaHashes = {};
+    for (const token of tokens) {
+      const imageRef = `${imageDirCid}/${token.token_index}.png`;
+      const metadata = buildMetadata(project, token.token_index, token.traits, imageRef);
+      const buf = Buffer.from(JSON.stringify(metadata, null, 2));
+      metaHashes[token.token_index] = crypto.createHash('sha256').update(buf).digest('hex');
+      metaFiles.push({ name: `${token.token_index}.json`, buffer: buf, mimeType: 'application/json' });
+    }
+
+    await supabase.from('projects').update({
+      ipfs_current_file: `Uploading ${metaFiles.length} metadata files as IPFS directory...`,
+    }).eq('id', projectId);
+
+    const metaDirCid = await uploadDirectoryToPinata(metaFiles, `${project.name}-meta`, svc.key);
+
+    for (const token of tokens) {
+      await supabase.from('generated_tokens')
+        .update({
+          metadata_uri: `ipfs://${metaDirCid}/${token.token_index}.json`,
+          meta_hash: metaHashes[token.token_index] || null,
+          status: 'pinned',
+        })
+        .eq('id', token.id);
+    }
+    await supabase.from('projects').update({ ipfs_meta_done: total }).eq('id', projectId);
+
+    await supabase.from('projects').update({
+      ipfs_phase: 'complete',
+      ipfs_current_file: null,
+      ipfs_error: null,
+      status: 'pinned',
+      ipfs_cid: metaDirCid,
+    }).eq('id', projectId);
+
+    return { cid: metaDirCid, service: serviceName };
+  }
+
+  // === NFT.storage fallback: individual file upload ===
   const imageCids = new Map(tokens.filter(t => t.image_cid).map(t => [t.id, t.image_cid]));
-  let imagesDone = alreadyHaveImage;
+  let imagesDone = tokens.filter(t => t.image_cid).length;
 
   for (const token of tokens) {
     if (imageCids.has(token.id)) continue;
-
     const filename = `token_${String(token.token_index).padStart(4, '0')}.png`;
     await supabase.from('projects').update({ ipfs_current_file: filename }).eq('id', projectId);
-
     try {
       const imgPath = path.join(projectOutputDir, `${token.token_index}.png`);
       let imageCid = '';
+      let dataHash = '';
       if (fs.existsSync(imgPath)) {
-        imageCid = await uploadFile(fs.readFileSync(imgPath), 'image/png', filename);
+        const imgBuf = fs.readFileSync(imgPath);
+        imageCid = await uploadFile(imgBuf, 'image/png', filename);
+        dataHash = crypto.createHash('sha256').update(imgBuf).digest('hex');
       }
-      await supabase.from('generated_tokens').update({ image_cid: imageCid }).eq('id', token.id);
+      await supabase.from('generated_tokens').update({ image_cid: imageCid, data_hash: dataHash }).eq('id', token.id);
       imageCids.set(token.id, imageCid);
       imagesDone++;
       await supabase.from('projects').update({ ipfs_images_done: imagesDone }).eq('id', projectId);
     } catch (e) {
-      await supabase.from('projects').update({
-        ipfs_phase: 'error',
-        ipfs_error: `Failed to upload ${filename}: ${e.message}`,
-        ipfs_current_file: filename,
-      }).eq('id', projectId);
-      throw new Error(`Failed to upload ${filename}: ${e.message}`);
+      await supabase.from('projects').update({ ipfs_phase: 'error', ipfs_error: e.message }).eq('id', projectId);
+      throw e;
     }
   }
 
-  // Phase 2: upload metadata JSON (skip already-pinned tokens)
   await supabase.from('projects').update({ ipfs_phase: 'metadata', ipfs_current_file: null }).eq('id', projectId);
-
   let lastCid = '';
-  let metaDone = alreadyPinned;
+  let metaDone = tokens.filter(t => t.status === 'pinned' && t.metadata_uri).length;
 
   for (const token of tokens) {
     if (token.status === 'pinned' && token.metadata_uri) {
       lastCid = token.metadata_uri.replace('ipfs://', '');
       continue;
     }
-
     const filename = `token_${String(token.token_index).padStart(4, '0')}.json`;
     await supabase.from('projects').update({ ipfs_current_file: filename }).eq('id', projectId);
-
     try {
       const imageCid = imageCids.get(token.id) || '';
       const metadata = buildMetadata(project, token.token_index, token.traits, imageCid);
@@ -172,12 +291,8 @@ async function pinToIPFS(projectId) {
       metaDone++;
       await supabase.from('projects').update({ ipfs_meta_done: metaDone }).eq('id', projectId);
     } catch (e) {
-      await supabase.from('projects').update({
-        ipfs_phase: 'error',
-        ipfs_error: `Failed to upload ${filename}: ${e.message}`,
-        ipfs_current_file: filename,
-      }).eq('id', projectId);
-      throw new Error(`Failed to upload ${filename}: ${e.message}`);
+      await supabase.from('projects').update({ ipfs_phase: 'error', ipfs_error: e.message }).eq('id', projectId);
+      throw e;
     }
   }
 

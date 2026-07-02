@@ -688,7 +688,7 @@ function passwordStrength(pw: string): { label: string; color: string } | null {
   return { label: 'Strong', color: '#4daa87' };
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey, onChangePassword }:
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
     onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;

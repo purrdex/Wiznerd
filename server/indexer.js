@@ -79,7 +79,23 @@ async function fetchMetadata(uri) {
 
 // ── Process a single candidate coin ──────────────────────────────────────────
 
-async function processCoin(id, blockHeight) {
+// Extract sale price by looking for XCH coins landing at the seller's address
+// in the same block as the NFT transfer. Offer file spends are atomic so the
+// XCH payment to the seller always appears in the same block as the NFT move.
+function extractSalePrice(blockAdditions, sellerPuzzleHash) {
+  if (!blockAdditions?.length || !sellerPuzzleHash) return null;
+  const sellerHex = sellerPuzzleHash.replace('0x', '').toLowerCase();
+  const xchToSeller = blockAdditions.filter(a => {
+    const ph = (a.coin.puzzle_hash || '').replace('0x', '').toLowerCase();
+    const amount = BigInt(a.coin.amount || 0);
+    return ph === sellerHex && amount > 1n; // >1 mojo = XCH, not a singleton
+  });
+  if (!xchToSeller.length) return null;
+  // Sum all XCH outputs to seller (royalties may split payment into multiple coins)
+  return xchToSeller.reduce((sum, a) => sum + Number(a.coin.amount), 0);
+}
+
+async function processCoin(id, blockHeight, blockAdditions = []) {
   const db = getSupabase();
 
   // Ask wallet daemon to decode as NFT — fails fast if it's not an NFT
@@ -154,6 +170,16 @@ async function processCoin(id, blockHeight) {
     }, { onConflict: 'collection_id' });
   }
 
+  // Check previous owner before upserting — detect transfers
+  const { data: existing } = await db
+    .from('indexed_nfts')
+    .select('owner_puzzle_hash')
+    .eq('nft_id', nftId)
+    .maybeSingle();
+
+  const prevOwner = existing?.owner_puzzle_hash || null;
+  const isTransfer = prevOwner && ownerPuzzleHash && prevOwner !== ownerPuzzleHash;
+
   // Upsert NFT record
   await db.from('indexed_nfts').upsert({
     nft_id:            nftId,
@@ -170,6 +196,23 @@ async function processCoin(id, blockHeight) {
     traits,
     updated_at:        new Date().toISOString(),
   }, { onConflict: 'nft_id' });
+
+  // Record transfer if ownership changed; attempt on-chain price extraction
+  if (isTransfer) {
+    const priceMojo = extractSalePrice(blockAdditions, prevOwner);
+    await db.from('nft_transfers').insert({
+      nft_id:           nftId,
+      collection_id:    collectionId,
+      from_puzzle_hash: prevOwner,
+      to_puzzle_hash:   ownerPuzzleHash,
+      price_mojo:       priceMojo,
+      block_height:     blockHeight,
+      transferred_at:   new Date().toISOString(),
+      source:           'onchain',
+    });
+    const priceXch = priceMojo ? `${(priceMojo / 1e12).toFixed(4)} XCH` : 'price unknown';
+    console.log(`[indexer] transfer ${nftId.slice(0, 20)}… ${prevOwner.slice(0, 8)}→${(ownerPuzzleHash || '').slice(0, 8)} · ${priceXch}`);
+  }
 
   console.log(`[indexer] NFT ${nftId.slice(0, 20)}… | collection: ${collectionId?.slice(0, 16) || 'none'} | block ${blockHeight}`);
 }
@@ -193,7 +236,7 @@ async function processBlock(height) {
 
   for (const record of candidates) {
     const id = coinId(record.coin);
-    await processCoin(id, height);
+    await processCoin(id, height, additions); // pass full additions for price extraction
     await new Promise(r => setTimeout(r, COIN_DELAY));
   }
 }

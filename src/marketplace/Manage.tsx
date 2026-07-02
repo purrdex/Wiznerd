@@ -52,7 +52,7 @@ export default function ManageScreen() {
   const [giftMsg, setGiftMsg] = useState('');
   const [toggleBusy, setToggleBusy] = useState(false);
   const [revealBusy, setRevealBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error] = useState('');
 
   const loadAll = useCallback(async () => {
     if (!id) return;

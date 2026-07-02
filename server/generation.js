@@ -199,6 +199,7 @@ async function generateFull(projectId) {
     const storagePath = `${projectId}/${i}.png`;
     const fileBuffer = fs.readFileSync(filePath);
     await supabase.storage.from('output').upload(storagePath, fileBuffer, { contentType: 'image/png', upsert: true });
+    const dataHash = require('crypto').createHash('sha256').update(fileBuffer).digest('hex');
 
     // Insert generated_token record
     await supabase.from('generated_tokens').insert({
@@ -206,6 +207,7 @@ async function generateFull(projectId) {
       token_index: i,
       traits: traitsJson,
       image_path: storagePath,
+      data_hash: dataHash,
       status: 'generated',
     });
 

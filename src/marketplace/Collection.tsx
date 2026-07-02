@@ -33,9 +33,16 @@ interface NftOffer {
   id: string;
   offer_type: 'ask' | 'bid';
   price_mojo: number;
+  price_token: string;
   maker_puzzle_hash: string | null;
   created_at: string;
   expires_at: string | null;
+}
+
+interface CatWallet {
+  wallet_id: number;
+  name: string;
+  asset_id: string;
 }
 
 interface NftHistory {
@@ -61,7 +68,25 @@ interface NftDetail {
 function formatXch(mojo: number): string {
   const v = Number(mojo) / 1e12;
   if (v === 0) return '0';
+  if (v >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (v >= 1)    return v.toFixed(2).replace(/\.?0+$/, '');
   return v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+// Format a price regardless of token type
+// CAT amounts are stored in mojos (1 CAT = 1000 mojos for most CATs)
+// but we display them as whole units (amount / 1000)
+function formatTokenPrice(amount: number, token: string): string {
+  if (token === 'xch') return `${formatXch(amount)} XCH`;
+  // CAT mojos: most CATs use 1000 base units = 1 display unit
+  const display = Number(amount) / 1000;
+  return display % 1 === 0 ? `${display}` : display.toFixed(3).replace(/0+$/, '');
+}
+
+function tokenSymbol(token: string, catWallets: CatWallet[]): string {
+  if (token === 'xch') return 'XCH';
+  const cat = catWallets.find(c => c.asset_id === token);
+  return cat ? cat.name.split(' ').pop() || cat.name : token.slice(0, 6) + '…';
 }
 
 function useCountdown(launchAt: string | null) {
@@ -103,13 +128,20 @@ export default function CollectionScreen() {
   const [nftDetailLoading, setNftDetailLoading] = useState(false);
   const [offerPanel, setOfferPanel] = useState<null | 'ask' | 'bid'>(null);
   const [offerPrice, setOfferPrice] = useState('');
+  const [offerToken, setOfferToken] = useState('xch');
+  const [catWallets, setCatWallets] = useState<CatWallet[]>([]);
   const [offerSubmitting, setOfferSubmitting] = useState(false);
   const [offerError, setOfferError] = useState<string | null>(null);
   const [takeTarget, setTakeTarget] = useState<NftOffer | null>(null);
   const [takePending, setTakePending] = useState(false);
   const [xchPrice, setXchPrice] = useState(0);
   const [mintedCount, setMintedCount] = useState(0);
-  const [collStats, setCollStats] = useState<{ indexed_count: number; unique_holders: number; floor_mojo: number | null; listed_count: number } | null>(null);
+  const [collStats, setCollStats] = useState<{
+    indexed_count: number; unique_holders: number;
+    floor_mojo: number | null; listed_count: number;
+    volume_24h_mojo: number; volume_7d_mojo: number; volume_all_mojo: number;
+    sales_24h: number; sales_7d: number; sales_all: number;
+  } | null>(null);
 
   const msLeft = useCountdown(coll?.launch_at ?? null);
   const isLive = coll?.marketplace_status === 'live' && (!coll.launch_at || msLeft <= 0);
@@ -174,14 +206,15 @@ export default function CollectionScreen() {
     } catch { /* ignore */ }
   }, []);
 
-  function closeModal() {
-    setSelectedNft(null); setNftDetail(null);
-    setOfferPanel(null); setOfferPrice(''); setOfferError(null);
-    setTakeTarget(null);
-  }
+  const loadCatWallets = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/api/wallet/cats`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) { const d = await r.json(); setCatWallets(d.cats || []); }
+    } catch { /* wallet daemon may not be running */ }
+  }, []);
 
   function resetOfferPanel() {
-    setOfferPanel(null); setOfferPrice(''); setOfferError(null);
+    setOfferPanel(null); setOfferPrice(''); setOfferError(null); setOfferToken('xch');
   }
 
   const reloadDetail = useCallback((nftId: string) => {
@@ -204,7 +237,7 @@ export default function CollectionScreen() {
   }, [selectedNft?.nft_id]);
 
   // One-time loads
-  useEffect(() => { loadColl(); loadPrice(); loadTraits(); }, [loadColl, loadPrice, loadTraits]);
+  useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); }, [loadColl, loadPrice, loadTraits, loadCatWallets]);
 
   useEffect(() => {
     if (!id) return;
@@ -344,7 +377,7 @@ export default function CollectionScreen() {
                 )}
                 {collStats && collStats.indexed_count > 0 && (
                   <div className="mp-stat">
-                    <div className="mp-stat-label">Indexed</div>
+                    <div className="mp-stat-label">Supply</div>
                     <div className="mp-stat-val">{collStats.indexed_count.toLocaleString()}</div>
                   </div>
                 )}
@@ -369,6 +402,24 @@ export default function CollectionScreen() {
                   <div className="mp-stat">
                     <div className="mp-stat-label">Listed</div>
                     <div className="mp-stat-val">{collStats.listed_count}</div>
+                  </div>
+                )}
+                {collStats && collStats.volume_all_mojo > 0 && (
+                  <div className="mp-stat">
+                    <div className="mp-stat-label">XCH Vol</div>
+                    <div className="mp-stat-val">{formatXch(collStats.volume_all_mojo)} XCH</div>
+                  </div>
+                )}
+                {collStats && collStats.sales_all > 0 && (
+                  <div className="mp-stat">
+                    <div className="mp-stat-label">Sales</div>
+                    <div className="mp-stat-val">{collStats.sales_all.toLocaleString()}</div>
+                  </div>
+                )}
+                {collStats && collStats.volume_7d_mojo > 0 && (
+                  <div className="mp-stat">
+                    <div className="mp-stat-label">7d Vol</div>
+                    <div className="mp-stat-val">{formatXch(collStats.volume_7d_mojo)} XCH</div>
                   </div>
                 )}
               </>
@@ -640,8 +691,11 @@ export default function CollectionScreen() {
                     return (
                       <div key={o.id} className="mp-nft-modal-offer-row">
                         <span className="mp-nft-modal-offer-type">{o.offer_type === 'ask' ? 'Ask' : 'Bid'}</span>
-                        <span className="mp-nft-modal-offer-price">{formatXch(o.price_mojo)} XCH</span>
-                        {xchPrice > 0 && (
+                        <span className="mp-nft-modal-offer-price">
+                          {formatTokenPrice(o.price_mojo, o.price_token || 'xch')}
+                          {' '}{tokenSymbol(o.price_token || 'xch', catWallets)}
+                        </span>
+                        {(o.price_token === 'xch' || !o.price_token) && xchPrice > 0 && (
                           <span className="mp-nft-modal-offer-usd">
                             ${(Number(o.price_mojo) / 1e12 * xchPrice).toFixed(2)}
                           </span>
@@ -701,7 +755,7 @@ export default function CollectionScreen() {
                     ) : (
                       existingAsk ? (
                         <button className="mp-nft-modal-btn" onClick={() => setTakeTarget(existingAsk)}>
-                          Buy Now · {formatXch(existingAsk.price_mojo)} XCH
+                          Buy Now · {formatTokenPrice(existingAsk.price_mojo, existingAsk.price_token || 'xch')} {tokenSymbol(existingAsk.price_token || 'xch', catWallets)}
                         </button>
                       ) : null
                     )}
@@ -722,9 +776,13 @@ export default function CollectionScreen() {
 
               {/* Offer creation panel */}
               {offerPanel && (() => {
-                const priceMojo = Math.round(parseFloat(offerPrice || '0') * 1e12);
-                const usd = xchPrice > 0 && priceMojo > 0
-                  ? ` ≈ $${(priceMojo / 1e12 * xchPrice).toFixed(2)}`
+                const isXch = offerToken === 'xch';
+                // Convert typed amount to base units: XCH → mojos (*1e12), CAT → CAT mojos (*1000)
+                const priceAmount = isXch
+                  ? Math.round(parseFloat(offerPrice || '0') * 1e12)
+                  : Math.round(parseFloat(offerPrice || '0') * 1000);
+                const usd = isXch && xchPrice > 0 && priceAmount > 0
+                  ? ` ≈ $${(priceAmount / 1e12 * xchPrice).toFixed(2)}`
                   : '';
                 return (
                   <div className="mp-offer-panel">
@@ -735,7 +793,7 @@ export default function CollectionScreen() {
                     <p className="mp-offer-panel-hint">
                       {offerPanel === 'ask'
                         ? 'Set your asking price. The offer will be created using your local wallet and listed immediately.'
-                        : 'Set the XCH amount you want to offer for this NFT.'}
+                        : 'Set the amount you want to offer for this NFT.'}
                     </p>
                     {offerPanel === 'ask' && (
                       <div style={{ fontSize: 11, color: '#f97316', marginBottom: 8 }}>
@@ -747,17 +805,26 @@ export default function CollectionScreen() {
                         className="mp-offer-price-input"
                         type="number"
                         min="0"
-                        step="0.001"
-                        placeholder="0.000"
+                        step={isXch ? '0.001' : '1'}
+                        placeholder={isXch ? '0.000' : '0'}
                         value={offerPrice}
                         onChange={e => { setOfferPrice(e.target.value); setOfferError(null); }}
                       />
-                      <span className="mp-offer-price-unit">XCH{usd}</span>
+                      <select
+                        className="mp-offer-token-select"
+                        value={offerToken}
+                        onChange={e => { setOfferToken(e.target.value); setOfferPrice(''); setOfferError(null); }}
+                      >
+                        <option value="xch">XCH{usd}</option>
+                        {catWallets.map(cat => (
+                          <option key={cat.asset_id} value={cat.asset_id}>{cat.name}</option>
+                        ))}
+                      </select>
                     </div>
                     {offerError && <div className="mp-offer-panel-error">{offerError}</div>}
                     <div className="mp-offer-panel-actions">
                       <button className="mp-nft-modal-btn"
-                        disabled={offerSubmitting || !priceMojo}
+                        disabled={offerSubmitting || !priceAmount}
                         onClick={async () => {
                           if (!selectedNft?.nft_id) return;
                           setOfferSubmitting(true); setOfferError(null);
@@ -767,7 +834,7 @@ export default function CollectionScreen() {
                               {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ offer_type: offerPanel, price_mojo: priceMojo }),
+                                body: JSON.stringify({ offer_type: offerPanel, price_mojo: priceAmount, token_id: offerToken }),
                                 signal: AbortSignal.timeout(35000),
                               }
                             );
@@ -797,8 +864,8 @@ export default function CollectionScreen() {
                   </div>
                   <p className="mp-offer-panel-hint">
                     {takeTarget.offer_type === 'ask'
-                      ? <>You are buying <strong>{selectedNft?.name || 'this NFT'}</strong> for <strong>{formatXch(takeTarget.price_mojo)} XCH</strong>{xchPrice > 0 ? ` ($${(Number(takeTarget.price_mojo) / 1e12 * xchPrice).toFixed(2)})` : ''}. This will submit the transaction to the Chia blockchain immediately.</>
-                      : <>You are accepting a bid of <strong>{formatXch(takeTarget.price_mojo)} XCH</strong> for <strong>{selectedNft?.name || 'this NFT'}</strong>.</>
+                      ? <>You are buying <strong>{selectedNft?.name || 'this NFT'}</strong> for <strong>{formatTokenPrice(takeTarget.price_mojo, takeTarget.price_token || 'xch')} {tokenSymbol(takeTarget.price_token || 'xch', catWallets)}</strong>{(takeTarget.price_token === 'xch' || !takeTarget.price_token) && xchPrice > 0 ? ` ($${(Number(takeTarget.price_mojo) / 1e12 * xchPrice).toFixed(2)})` : ''}. This will submit the transaction to the Chia blockchain immediately.</>
+                      : <>You are accepting a bid of <strong>{formatTokenPrice(takeTarget.price_mojo, takeTarget.price_token || 'xch')} {tokenSymbol(takeTarget.price_token || 'xch', catWallets)}</strong> for <strong>{selectedNft?.name || 'this NFT'}</strong>.</>
                     }
                   </p>
                   {offerError && <div className="mp-offer-panel-error">{offerError}</div>}

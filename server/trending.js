@@ -1,0 +1,144 @@
+'use strict';
+// Trending score background job — recalculates every 15 minutes.
+//
+// Score formula:
+//   mint_vol_24h  = mint_24h × floor_price        (primary market proxy)
+//   total_vol_24h = secondary_vol_24h + mint_vol_24h
+//   total_sales_24h = secondary_sales_24h + mint_24h
+//   acceleration  = total_vol_24h / (vol_7d/7 + 1) (>1 = surging, <1 = cooling)
+//   score         = total_vol_24h × sqrt(1 + acceleration) × log(1 + total_sales_24h)
+//
+// mint_24h is derived from indexed_nfts.updated_at in the last 24h:
+//   the live indexer sets updated_at when it processes a new/transferred NFT,
+//   so this captures newly minted items as well as active transfers.
+
+const RECALC_MS = 15 * 60 * 1000;
+
+function computeScore(vol24h, vol7d, sales24h, mint24h, floorMojo) {
+  // mint_24h excluded: indexed_nfts.updated_at fires on every re-index, not just new mints,
+  // producing wildly inflated counts. Use secondary-market data only until we have created_at.
+  void mint24h; void floorMojo;
+  if (vol24h === 0 && sales24h === 0) return 0;
+  const baseline     = (vol7d / 7) + 1;
+  const acceleration = vol24h / baseline;
+  return vol24h * Math.sqrt(1 + acceleration) * Math.log(1 + sales24h);
+}
+
+async function recalculate(supabase) {
+  const now   = new Date();
+  const ago24 = new Date(now - 86_400_000).toISOString();
+  const ago7d = new Date(now - 7 * 86_400_000).toISOString();
+
+  // ── 1. Aggregate 7-day transfers across all collections ─────────────────────
+  const xferStats = new Map(); // collection_id → { vol24h, vol7d, sales24h, sales7d }
+
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('nft_transfers')
+      .select('collection_id, price_mojo, transferred_at')
+      .gte('transferred_at', ago7d)
+      .not('collection_id', 'is', null)
+      .range(from, from + 999);
+    if (error) { console.error('[trending] xfer fetch error:', error.message); break; }
+    if (!data?.length) break;
+
+    for (const r of data) {
+      const id = r.collection_id;
+      if (!xferStats.has(id)) xferStats.set(id, { vol24h: 0, vol7d: 0, sales24h: 0, sales7d: 0 });
+      const s = xferStats.get(id);
+      const is24h = r.transferred_at >= ago24;
+      s.sales7d++;
+      if (is24h) s.sales24h++;
+      if (r.price_mojo != null) {
+        s.vol7d += Number(r.price_mojo);
+        if (is24h) s.vol24h += Number(r.price_mojo);
+      }
+    }
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  // ── 2. Count recently active NFTs per collection (mint + transfer activity) ─
+  const mintCounts = new Map(); // collection_id → count
+
+  from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('indexed_nfts')
+      .select('collection_id')
+      .gte('updated_at', ago24)
+      .not('collection_id', 'is', null)
+      .range(from, from + 999);
+    if (error) { console.error('[trending] nft fetch error:', error.message); break; }
+    if (!data?.length) break;
+    for (const r of data) mintCounts.set(r.collection_id, (mintCounts.get(r.collection_id) || 0) + 1);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  // ── 3. Load all collections ──────────────────────────────────────────────────
+  let collections = [];
+  from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('indexed_collections')
+      .select('collection_id, floor_price_mojo')
+      .range(from, from + 999);
+    if (error) { console.error('[trending] col fetch error:', error.message); break; }
+    if (!data?.length) break;
+    collections.push(...data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  // ── 4. Compute scores ────────────────────────────────────────────────────────
+  const updates = collections.map(col => {
+    const id   = col.collection_id;
+    const s    = xferStats.get(id) || { vol24h: 0, vol7d: 0, sales24h: 0, sales7d: 0 };
+    const mint = mintCounts.get(id) || 0;
+    return {
+      collection_id:   id,
+      trending_score:  computeScore(s.vol24h, s.vol7d, s.sales24h, mint, col.floor_price_mojo),
+      volume_24h_mojo: s.vol24h,
+      volume_7d_mojo:  s.vol7d,
+      sales_24h:       s.sales24h,
+      sales_7d:        s.sales7d,
+      mint_24h:        mint,
+    };
+  });
+
+  // ── 5. Batch upsert ──────────────────────────────────────────────────────────
+  let written = 0;
+  for (let i = 0; i < updates.length; i += 200) {
+    const batch = updates.slice(i, i + 200);
+    const { error } = await supabase
+      .from('indexed_collections')
+      .upsert(batch, { onConflict: 'collection_id' });
+    if (error) console.error('[trending] upsert error:', error.message);
+    else written += batch.length;
+  }
+
+  const active = updates.filter(u => u.trending_score > 0).length;
+  console.log(`[trending] updated ${written} collections · ${active} with score > 0`);
+}
+
+function start(supabase) {
+  console.log('[trending] starting score job (15 min interval)');
+  recalculate(supabase).catch(e => console.error('[trending] initial run error:', e.message));
+  return setInterval(() => {
+    recalculate(supabase).catch(e => console.error('[trending] recalc error:', e.message));
+  }, RECALC_MS);
+}
+
+module.exports = { start, recalculate };
+
+if (require.main === module) {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+  const { createClient } = require('@supabase/supabase-js');
+  const ws = require('ws');
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, { realtime: { transport: ws } });
+  recalculate(supabase)
+    .then(() => process.exit(0))
+    .catch(e => { console.error(e); process.exit(1); });
+}

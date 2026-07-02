@@ -13,10 +13,10 @@ const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
 const PROXY      = process.env.PROXY_URL || 'http://localhost:3001';
-const CONCURRENCY  = 2;    // parallel NFT lookups (lower = safer for MG rate limits)
-const COIN_DELAY   = 200;  // ms between wallet RPC calls per worker
-const MG_DELAY     = 800;  // ms between MintGarden discovery pages
-const MG_NFT_DELAY = 400;  // ms between per-NFT MintGarden fetches per worker
+const CONCURRENCY  = 3;    // parallel NFT lookups
+const COIN_DELAY   = 100;  // ms between wallet RPC calls per worker
+const MG_DELAY     = 600;  // ms between MintGarden discovery pages
+const MG_NFT_DELAY = 150;  // ms between per-NFT MintGarden fetches per worker
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -221,7 +221,7 @@ async function processNftFromMG(encodedId, collectionId) {
   const nftName  = meta.name || nft.name || null;
   const seriesNumber = meta.series_number ?? null;
 
-  await supabase.from('indexed_nfts').upsert({
+  const { error: upsertErr } = await supabase.from('indexed_nfts').upsert({
     nft_id:            nftId,
     collection_id:     collectionId,
     token_index:       seriesNumber != null ? seriesNumber - 1 : null,
@@ -234,6 +234,7 @@ async function processNftFromMG(encodedId, collectionId) {
     updated_at:        new Date().toISOString(),
   }, { onConflict: 'nft_id' });
 
+  if (upsertErr) throw new Error(`Supabase: ${upsertErr.message}`);
   return Object.keys(traits).length;
 }
 
@@ -270,9 +271,12 @@ async function backfillCollectionFromMG(collectionId) {
 // ── MintGarden NFT ID discovery ───────────────────────────────────────────────
 // Only used to get the list of NFT IDs — no trait data from here.
 
-async function* getAllNftIds(collectionId) {
+async function* getAllNftIds(collectionId, maxItems = 60000) {
   let cursor = null;
   let page = 0;
+  let totalYielded = 0;
+  const seenCursors = new Set();
+
   while (true) {
     const url = cursor
       ? `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48&page=${encodeURIComponent(cursor)}`
@@ -283,9 +287,15 @@ async function* getAllNftIds(collectionId) {
     const json = await res.json();
 
     const ids = (json.items || []).map(n => n.encoded_id).filter(Boolean);
-    yield* ids;
+    if (!ids.length) break; // empty page = done
 
+    yield* ids;
+    totalYielded += ids.length;
+
+    if (totalYielded >= maxItems) { console.warn(`\n  Hit max ${maxItems} — stopping discovery`); break; }
     if (!json.next) break;
+    if (seenCursors.has(json.next)) { console.warn('\n  Circular pagination detected — stopping'); break; }
+    seenCursors.add(json.next);
     cursor = json.next;
     page++;
     await new Promise(r => setTimeout(r, MG_DELAY));
@@ -312,6 +322,7 @@ async function runWithConcurrency(items, fn, concurrency) {
       } catch (e) {
         errors++;
         done++;
+        if (errors <= 3) console.error(`\n  ERROR [${item}]: ${e.message}`);
       }
       await new Promise(r => setTimeout(r, COIN_DELAY));
     }
@@ -354,10 +365,11 @@ async function backfillCollection(collectionId) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const flags = { all: false, minCount: 0, id: null, mg: false };
+  const flags = { all: false, minCount: 0, id: null, mg: false, test: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--all') flags.all = true;
     else if (args[i] === '--mg') flags.mg = true;
+    else if (args[i] === '--test') flags.test = true;
     else if (args[i] === '--min-count' && args[i + 1]) { flags.minCount = parseInt(args[++i], 10); }
     else if (!args[i].startsWith('--')) flags.id = args[i];
   }
@@ -400,6 +412,45 @@ async function main() {
     console.error('  node server/nft-backfill.js --all --min-count 500       # on-chain, all large collections');
     console.error('  node server/nft-backfill.js --all --mg                  # MintGarden source, all collections');
     process.exit(1);
+  }
+
+  // --test: fetch first NFT ID from MintGarden, dump raw response, try one upsert
+  if (flags.test && flags.id) {
+    console.log('\n── TEST MODE — one NFT ──');
+    const firstPage = await fetch(
+      `https://api.mintgarden.io/collections/${encodeURIComponent(flags.id)}/nfts?size=1`,
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) }
+    );
+    const pg = await firstPage.json();
+    const encodedId = pg.items?.[0]?.encoded_id;
+    if (!encodedId) { console.error('No NFTs returned from MintGarden'); process.exit(1); }
+    console.log('encoded_id:', encodedId);
+
+    const nftRes = await fetch(`https://api.mintgarden.io/nfts/${encodeURIComponent(encodedId)}`,
+      { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    console.log('MG status:', nftRes.status);
+    const nft = await nftRes.json();
+    console.log('Top-level keys:', Object.keys(nft));
+    console.log('nft.id:', nft.id);
+    console.log('nft.data keys:', nft.data ? Object.keys(nft.data) : 'no data');
+    console.log('metadata_json:', JSON.stringify(nft.data?.metadata_json, null, 2)?.slice(0, 400));
+    console.log('owner_address:', nft.owner_address);
+
+    const meta = nft.data?.metadata_json || {};
+    const traits = Array.isArray(meta.attributes)
+      ? Object.fromEntries(meta.attributes.filter(a => a.trait_type).map(a => [a.trait_type, String(a.value)]))
+      : {};
+    console.log('traits parsed:', traits);
+
+    const nftId = nft.id ? `0x${nft.id}` : encodedId;
+    const { error } = await supabase.from('indexed_nfts').upsert({
+      nft_id: nftId, collection_id: flags.id, traits,
+      owner_puzzle_hash: nft.owner_address?.id || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'nft_id' });
+    if (error) console.error('Supabase upsert error:', error);
+    else console.log('Supabase upsert OK — check DB for nft_id:', nftId);
+    return;
   }
 
   const runFn = flags.mg ? backfillCollectionFromMG : backfillCollection;
