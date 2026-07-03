@@ -1,5 +1,58 @@
 # Changelog
 
+## v1.4.0 — 2026-07-02 (Quick Wins: Polish & Discovery)
+
+### QW1 — Verified badges
+- Blue ✓ badge on browse cards for verified collections (`verified` column in `indexed_collections`)
+
+### QW2 — Per-trait rarity % in NFT modal
+- Each trait chip now shows rarity percentage (e.g. "Background: Forest — 12.3%"), calculated from collection-wide trait counts vs indexed supply
+
+### QW3 — Sort dropdown on collection gallery
+- "Token order" and "Rarity: rarest first" options; sort propagated server-side so pagination stays consistent
+
+### QW4 — Grid size toggle (large / compact)
+- Large/compact toggle on gallery header; preference persisted in `localStorage`
+- Compact mode: smaller tiles, hidden hover-traits, tighter gap
+
+### QW5 — Creator address links to profile
+- Creator address in collection header is now a clickable link to `/marketplace/profile?address=...`
+
+### QW6 — Listed count on browse cards
+- Active asks per collection aggregated in trending job and surfaced on browse cards ("X listed")
+- Migration `019_listed_count.sql`: adds `listed_count` column to `indexed_collections`
+
+### QW7 — Allowlist CSV upload in creator wizard
+- "Upload CSV" button in step 8 parses xch1 addresses from any CSV/TXT file and merges into the allowlist textarea; deduplicates on import
+
+### QW8 — Revenue sparkline in creator dashboard
+- 30-day daily revenue area chart (recharts AreaChart) above the orders table; computed client-side from existing orders state
+
+### QW9 — Wallet-agnostic USP copy on mint panel
+- "No browser extension needed — works with any Chia wallet · Sage · Chia Light · Nucle · CLI" added below QR code
+
+### QW10 — Floor price delta indicator
+- Floor stat shows ↑/↓ % vs 7-day average sale price when meaningful (>1% delta); computed from existing `collStats.volume_7d_mojo / sales_7d`
+
+### Backend
+- Gallery endpoint: returns `rarity_rank` per item; accepts `?sort=rarity` param
+- Trending job: aggregates `listed_count` per collection from `nft_offers → indexed_nfts`
+- External browse API: exposes `listed_count` and `verified`
+
+---
+
+## v1.3.0 — 2026-07-01 (Trending, Dexie Backfill, Multi-Token Offers)
+- feat: Dexie volume backfill (`server/dexie-backfill.js`) — 355k trades across 1000+ collections
+- feat: Trending score job (`server/trending.js`) — 15-min background job; score = vol24h × √(1+acceleration) × log(1+sales24h)
+- feat: Multi-token offers — CAT wallet picker in offer panel; `nft_offers`/`nft_transfers` support non-XCH tokens
+- feat: Marketplace All page sorted: trending → live minting → minted_count
+- fix: Paginated `fetchVolume()` removes Supabase 1000-row cap on stats
+- fix: Partial unique index → full unique index for PostgREST upsert compatibility (migration 016)
+- fix: `mint_24h` excluded from trending score (was inflating counts via re-indexing)
+- fix: Watcher retry loop capped at 5 attempts; bogus orders auto-cancelled; skipped coins logged once
+
+---
+
 ## v1.0.0 — 2026-06-28 (Marketplace & Minting Engine)
 
 ### Features

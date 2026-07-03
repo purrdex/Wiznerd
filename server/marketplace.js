@@ -82,7 +82,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     try {
       let query = supabase
         .from('indexed_collections')
-        .select('collection_id,name,description,thumbnail_url,total_supply,minted_count,floor_price_mojo,source,external_url,verified,trending_score,volume_24h_mojo,volume_7d_mojo,sales_24h,sales_7d,mint_24h')
+        .select('collection_id,name,description,thumbnail_url,total_supply,minted_count,floor_price_mojo,source,external_url,verified,trending_score,volume_24h_mojo,volume_7d_mojo,sales_24h,sales_7d,mint_24h,listed_count')
         .order('minted_count', { ascending: false })
         .limit(200);
 
@@ -111,6 +111,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         sales_24h:          col.sales_24h        || 0,
         sales_7d:           col.sales_7d         || 0,
         mint_24h:           col.mint_24h         || 0,
+        listed_count:       col.listed_count     || 0,
       }));
 
       if (!search) {
@@ -210,14 +211,19 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     // MintGarden only for browse (no traits) when DB is empty.
     {
       const offset = (cursor && cursor !== '__more__') ? parseInt(cursor, 10) : 0;
+      const sort = req.query.sort || 'default';
       let query = supabase
         .from('indexed_nfts')
-        .select('nft_id,token_index,name,image_url,traits,metadata_uri,owner_puzzle_hash')
+        .select('nft_id,token_index,name,image_url,traits,metadata_uri,owner_puzzle_hash,rarity_rank')
         .eq('collection_id', id)
-        .not('image_url', 'is', null)
-        .order('token_index', { ascending: true, nullsFirst: false })
-        .order('nft_id', { ascending: true })
-        .range(offset, offset + 47);
+        .not('image_url', 'is', null);
+
+      if (sort === 'rarity') {
+        query = query.order('rarity_rank', { ascending: true, nullsFirst: false });
+      } else {
+        query = query.order('token_index', { ascending: true, nullsFirst: false }).order('nft_id', { ascending: true });
+      }
+      query = query.range(offset, offset + 47);
 
       // Supabase JSONB trait filter — works once nft-backfill has run
       Object.entries(selectedTraits).forEach(([k, v]) => {
@@ -236,6 +242,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
             traits:       n.traits || {},
             metadata_uri: n.metadata_uri || '',
             owner_puzzle_hash: n.owner_puzzle_hash || null,
+            rarity_rank:  n.rarity_rank || null,
             buyer_address: null,
           })),
           next: dbItems.length === 48 ? String(offset + 48) : null,

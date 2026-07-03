@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useParams, useNavigate } from 'react-router-dom';
 import './marketplace.css';
 import { supabase } from '../lib/supabase';
@@ -185,6 +186,21 @@ export default function ManageScreen() {
   const revenueXch = formatXch(stats?.total_revenue_mojo ?? 0);
   const revealable = project.reveal_type === 'blind';
 
+  const revenueChart = useMemo(() => {
+    const confirmed = orders.filter(o => o.status === 'confirmed' && o.confirmed_at);
+    const byDay: Record<string, number> = {};
+    const now = Date.now();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now - i * 86400000);
+      byDay[d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })] = 0;
+    }
+    for (const o of confirmed) {
+      const label = new Date(o.confirmed_at!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      if (label in byDay) byDay[label] = (byDay[label] || 0) + Number(o.payment_amount_mojo) / 1e12;
+    }
+    return Object.entries(byDay).map(([date, xch]) => ({ date, xch: Math.round(xch * 1000) / 1000 }));
+  }, [orders]);
+
   return (
     <div className="mp-page">
       {/* Nav */}
@@ -230,6 +246,32 @@ export default function ManageScreen() {
             )}
           </div>
         </div>
+
+        {/* Revenue sparkline */}
+        {revenueChart.some(d => d.xch > 0) && (
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+              Revenue — last 30 days (XCH)
+            </div>
+            <ResponsiveContainer width="100%" height={80}>
+              <AreaChart data={revenueChart} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="rev-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" hide />
+                <Tooltip
+                  contentStyle={{ background: '#111218', border: '1px solid #1e2030', borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: '#94a3b8' }}
+                  formatter={(v) => [`${v ?? 0} XCH`, 'Revenue']}
+                />
+                <Area type="monotone" dataKey="xch" stroke="#f97316" strokeWidth={2} fill="url(#rev-grad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="mp-actions">

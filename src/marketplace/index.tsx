@@ -25,6 +25,8 @@ interface Listing {
   volume_24h_mojo?: number;
   sales_24h?: number;
   mint_24h?: number;
+  verified?: boolean;
+  listed_count?: number;
 }
 
 function formatXch(mojo: number): string {
@@ -184,6 +186,7 @@ export default function MarketplaceScreen() {
                 <div className="mp-card-name">
                   {c.name}
                   {c.symbol && <span className="mp-symbol">{c.symbol}</span>}
+                  {c.verified && <span className="mp-verified-badge" title="Verified collection">✓</span>}
                 </div>
                 {c.description && (
                   <div className="mp-card-desc">{c.description}</div>
@@ -209,11 +212,20 @@ export default function MarketplaceScreen() {
                           </span>
                         )}
                       </>
-                    ) : (c.indexed_count ?? 0) > 0 ? (
-                      <span style={{ color: '#4a5568', fontSize: 11 }}>
-                        {(c.indexed_count ?? 0).toLocaleString()} supply
-                      </span>
-                    ) : null}
+                    ) : (
+                      <>
+                        {(c.listed_count ?? 0) > 0 && (
+                          <span style={{ color: '#f97316', fontSize: 11 }}>
+                            {c.listed_count} listed
+                          </span>
+                        )}
+                        {(c.indexed_count ?? 0) > 0 && (
+                          <span style={{ color: '#4a5568', fontSize: 11 }}>
+                            {(c.indexed_count ?? 0).toLocaleString()} supply
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
                 {c.total_supply > 0 && c.source === 'wiznerd' && (

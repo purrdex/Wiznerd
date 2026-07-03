@@ -59,7 +59,32 @@ async function recalculate(supabase) {
     from += 1000;
   }
 
-  // ── 2. Count recently active NFTs per collection (mint + transfer activity) ─
+  // ── 2. Count active asks per collection (listed_count) ──────────────────────
+  const listedCounts = new Map(); // collection_id → count
+
+  from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('nft_offers')
+      .select('nft_id')
+      .eq('status', 'active')
+      .eq('offer_type', 'ask')
+      .range(from, from + 999);
+    if (error) { console.error('[trending] offers fetch error:', error.message); break; }
+    if (!data?.length) break;
+    const nftIds = data.map(r => r.nft_id).filter(Boolean);
+    if (nftIds.length) {
+      const { data: nftRows } = await supabase
+        .from('indexed_nfts').select('nft_id,collection_id').in('nft_id', nftIds);
+      for (const n of nftRows || []) {
+        if (n.collection_id) listedCounts.set(n.collection_id, (listedCounts.get(n.collection_id) || 0) + 1);
+      }
+    }
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  // ── 3. Count recently active NFTs per collection (mint + transfer activity) ─
   const mintCounts = new Map(); // collection_id → count
 
   from = 0;
@@ -77,7 +102,7 @@ async function recalculate(supabase) {
     from += 1000;
   }
 
-  // ── 3. Load all collections ──────────────────────────────────────────────────
+  // ── 4. Load all collections ──────────────────────────────────────────────────
   let collections = [];
   from = 0;
   while (true) {
@@ -92,7 +117,7 @@ async function recalculate(supabase) {
     from += 1000;
   }
 
-  // ── 4. Compute scores ────────────────────────────────────────────────────────
+  // ── 5. Compute scores ────────────────────────────────────────────────────────
   const updates = collections.map(col => {
     const id   = col.collection_id;
     const s    = xferStats.get(id) || { vol24h: 0, vol7d: 0, sales24h: 0, sales7d: 0 };
@@ -105,10 +130,11 @@ async function recalculate(supabase) {
       sales_24h:       s.sales24h,
       sales_7d:        s.sales7d,
       mint_24h:        mint,
+      listed_count:    listedCounts.get(id) || 0,
     };
   });
 
-  // ── 5. Batch upsert ──────────────────────────────────────────────────────────
+  // ── 6. Batch upsert ──────────────────────────────────────────────────────────
   let written = 0;
   for (let i = 0; i < updates.length; i += 200) {
     const batch = updates.slice(i, i + 200);

@@ -711,3 +711,53 @@
   text-transform: uppercase;
 }
 
+
+/* ── v1.4 Quick wins ────────────────────────────────────────────────────────── */
+
+/* QW1: Verified badge on browse cards */
+.mp-verified-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #3b82f6; color: #fff; font-size: 9px; font-weight: 800;
+  flex-shrink: 0;
+}
+
+/* QW2: Per-trait rarity % in NFT modal */
+.mp-nft-modal-trait-pct {
+  font-size: 10px; color: #4b5563; margin-top: 2px;
+}
+
+/* QW3/QW4: Gallery header with sort + grid toggle */
+.mp-gallery-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.mp-gallery-controls {
+  display: flex; align-items: center; gap: 8px;
+}
+.mp-gallery-sort {
+  background: #0f1016; border: 1px solid #2d2f3d; border-radius: 8px;
+  color: #e2e8f0; font-size: 12px; padding: 6px 10px; outline: none; cursor: pointer;
+}
+.mp-gallery-sort:focus { border-color: #f97316; }
+.mp-grid-toggle {
+  width: 30px; height: 30px; border-radius: 6px; border: 1px solid #2d2f3d;
+  background: none; color: #4b5563; font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.mp-grid-toggle:hover, .mp-grid-toggle.active { border-color: #f97316; color: #f97316; }
+.mp-gallery-grid-compact {
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px;
+}
+.mp-gallery-grid-compact .mp-gallery-item-foot { padding: 4px 6px; font-size: 10px; }
+.mp-gallery-grid-compact .mp-gallery-traits { display: none; }
+
+/* QW3: Rarity rank chip on gallery item footer */
+.mp-gallery-item-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px; font-size: 11px; color: #94a3b8;
+}
+.mp-gallery-item-rank {
+  font-size: 9px; color: #f97316; font-weight: 700;
+  background: rgba(249,115,22,0.12); padding: 1px 5px; border-radius: 4px;
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import './marketplace.css';
 import { supabase } from '../lib/supabase';
@@ -27,6 +27,7 @@ interface GalleryItem {
   traits?: Record<string, string>; image_cid?: string;
   image_url: string; buyer_address?: string | null;
   owner_puzzle_hash?: string | null;
+  rarity_rank?: number | null;
 }
 
 interface NftOffer {
@@ -122,6 +123,10 @@ export default function CollectionScreen() {
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [traits, setTraits] = useState<Record<string, Record<string, number>>>({});
   const [selectedTraits, setSelectedTraits] = useState<Record<string, string>>({});
+  const [gallerySort, setGallerySort] = useState<'default' | 'rarity'>('default');
+  const [gridSize, setGridSize] = useState<'large' | 'compact'>(() => {
+    try { return (localStorage.getItem('mp_grid_size') as 'large' | 'compact') || 'large'; } catch { return 'large'; }
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedNft, setSelectedNft] = useState<GalleryItem | null>(null);
   const [nftDetail, setNftDetail] = useState<NftDetail | null>(null);
@@ -165,7 +170,8 @@ export default function CollectionScreen() {
   const loadGallery = useCallback(async () => {
     if (!id) return;
     const tq = buildTraitsQuery(selectedTraits);
-    const url = `${API_URL}/api/marketplace/${id}/gallery${tq ? `?${tq}` : ''}`;
+    const params = [tq, gallerySort !== 'default' ? `sort=${gallerySort}` : ''].filter(Boolean).join('&');
+    const url = `${API_URL}/api/marketplace/${id}/gallery${params ? `?${params}` : ''}`;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) return;
@@ -174,13 +180,14 @@ export default function CollectionScreen() {
       setGallery(items);
       setGalleryCursor(data.next || null);
     } catch { /* ignore */ }
-  }, [id, selectedTraits, buildTraitsQuery]);
+  }, [id, selectedTraits, gallerySort, buildTraitsQuery]);
 
   const loadMoreGallery = useCallback(async () => {
     if (!id || !galleryCursor || galleryLoading) return;
     setGalleryLoading(true);
     const tq = buildTraitsQuery(selectedTraits);
-    const params = [`cursor=${encodeURIComponent(galleryCursor)}`, tq].filter(Boolean).join('&');
+    const sortParam = gallerySort !== 'default' ? `sort=${gallerySort}` : '';
+    const params = [`cursor=${encodeURIComponent(galleryCursor)}`, tq, sortParam].filter(Boolean).join('&');
     try {
       const res = await fetch(`${API_URL}/api/marketplace/${id}/gallery?${params}`, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) return;
@@ -189,7 +196,7 @@ export default function CollectionScreen() {
       setGalleryCursor(data.next || null);
     } catch { /* ignore */ }
     finally { setGalleryLoading(false); }
-  }, [id, galleryCursor, galleryLoading, selectedTraits, buildTraitsQuery]);
+  }, [id, galleryCursor, galleryLoading, selectedTraits, gallerySort, buildTraitsQuery]);
 
   const loadTraits = useCallback(async () => {
     if (!id) return;
@@ -247,7 +254,7 @@ export default function CollectionScreen() {
       .catch(() => {});
   }, [id]);
 
-  // Gallery reloads when traits change (loadGallery dep includes selectedTraits)
+  // Gallery reloads when traits or sort change
   useEffect(() => {
     setGallery([]);
     setGalleryCursor(null);
@@ -335,7 +342,10 @@ export default function CollectionScreen() {
           <h2>{coll.name} <span className="mp-symbol">{coll.symbol}</span></h2>
           {coll.creator_address && (
             <div className="mp-coll-creator">
-              Created by <span>{coll.creator_address.slice(0, 16)}…{coll.creator_address.slice(-8)}</span>
+              Created by{' '}
+              <Link to={`/marketplace/profile?address=${coll.creator_address}`} style={{ color: '#f97316', textDecoration: 'none' }}>
+                {coll.creator_address.slice(0, 16)}…{coll.creator_address.slice(-8)}
+              </Link>
             </div>
           )}
           {coll.description && (
@@ -390,7 +400,20 @@ export default function CollectionScreen() {
                 {collStats?.floor_mojo != null ? (
                   <div className="mp-stat">
                     <div className="mp-stat-label">Floor</div>
-                    <div className="mp-stat-val">{formatXch(collStats.floor_mojo)} XCH</div>
+                    <div className="mp-stat-val">
+                      {formatXch(collStats.floor_mojo)} XCH
+                      {collStats.sales_7d > 0 && collStats.volume_7d_mojo > 0 && (() => {
+                        const avg7d = collStats.volume_7d_mojo / collStats.sales_7d;
+                        const delta = ((collStats.floor_mojo - avg7d) / avg7d) * 100;
+                        if (Math.abs(delta) < 1) return null;
+                        const up = delta > 0;
+                        return (
+                          <span style={{ fontSize: 10, marginLeft: 4, color: up ? '#4ade80' : '#f87171' }}>
+                            {up ? '↑' : '↓'}{Math.abs(delta).toFixed(0)}%
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </div>
                 ) : coll.mint_price_mojo > 0 && (
                   <div className="mp-stat">
@@ -524,6 +547,11 @@ export default function CollectionScreen() {
                   <div style={{ fontSize: 11, color: '#4b5563', textAlign: 'center', marginTop: 8 }}>
                     NFT is automatically sent to the wallet that made the payment
                   </div>
+                  <div style={{ marginTop: 12, padding: '10px 12px', background: '#0a0b0f', border: '1px solid #1e2030', borderRadius: 8, fontSize: 11, color: '#6b7280', lineHeight: 1.6, textAlign: 'center' }}>
+                    No browser extension needed — works with any Chia wallet
+                    <br />
+                    <span style={{ color: '#4b5563' }}>Sage · Chia Light · Nucle · CLI</span>
+                  </div>
                 </div>
               )}
             </>
@@ -574,8 +602,32 @@ export default function CollectionScreen() {
       {/* Gallery */}
       {gallery.length > 0 && (
         <div className="mp-gallery">
-          <h3>{coll.source === 'wiznerd' ? 'Recently Minted' : `Collection · ${gallery.length} shown`}</h3>
-          <div className="mp-gallery-grid">
+          <div className="mp-gallery-header">
+            <h3 style={{ margin: 0 }}>{coll.source === 'wiznerd' ? 'Recently Minted' : `Collection · ${gallery.length} shown`}</h3>
+            <div className="mp-gallery-controls">
+              {isIndexed && (
+                <select
+                  className="mp-gallery-sort"
+                  value={gallerySort}
+                  onChange={e => setGallerySort(e.target.value as 'default' | 'rarity')}
+                >
+                  <option value="default">Token order</option>
+                  <option value="rarity">Rarity: rarest first</option>
+                </select>
+              )}
+              <button
+                className={`mp-grid-toggle${gridSize === 'large' ? ' active' : ''}`}
+                onClick={() => { setGridSize('large'); localStorage.setItem('mp_grid_size', 'large'); }}
+                title="Large grid"
+              >⊞</button>
+              <button
+                className={`mp-grid-toggle${gridSize === 'compact' ? ' active' : ''}`}
+                onClick={() => { setGridSize('compact'); localStorage.setItem('mp_grid_size', 'compact'); }}
+                title="Compact grid"
+              >⊟</button>
+            </div>
+          </div>
+          <div className={`mp-gallery-grid${gridSize === 'compact' ? ' mp-gallery-grid-compact' : ''}`}>
             {gallery.map((item, i) => (
               <div key={item.token_index ?? `ext-${i}`} className="mp-gallery-item" onClick={() => setSelectedNft(item)} style={{ cursor: 'pointer' }}>
                 {coll.reveal_type === 'revealed' || coll.reveal_type === 'instant' ? (
@@ -600,7 +652,8 @@ export default function CollectionScreen() {
                   </div>
                 )}
                 <div className="mp-gallery-item-foot">
-                  {item.name || (item.token_index != null ? `#${item.token_index + 1}` : '')}
+                  <span>{item.name || (item.token_index != null ? `#${item.token_index + 1}` : '')}</span>
+                  {item.rarity_rank && <span className="mp-gallery-item-rank">#{item.rarity_rank}</span>}
                 </div>
               </div>
             ))}
@@ -661,19 +714,27 @@ export default function CollectionScreen() {
                 <div className="mp-nft-modal-loading">Loading details…</div>
               )}
 
-              {/* Traits */}
+              {/* Traits with rarity % */}
               {(() => {
                 const traitMap = nftDetail?.traits && Object.keys(nftDetail.traits).length
                   ? nftDetail.traits
                   : (selectedNft.traits && Object.keys(selectedNft.traits).length ? selectedNft.traits : null);
+                const total = collStats?.indexed_count || coll.total_supply || 0;
                 return traitMap ? (
                   <div className="mp-nft-modal-traits">
-                    {Object.entries(traitMap).map(([k, v]) => (
-                      <div key={k} className="mp-nft-modal-trait">
-                        <div className="mp-nft-modal-trait-label">{k}</div>
-                        <div className="mp-nft-modal-trait-value">{v}</div>
-                      </div>
-                    ))}
+                    {Object.entries(traitMap).map(([k, v]) => {
+                      const count = traits[k]?.[v] ?? 0;
+                      const pct = total > 0 && count > 0 ? (count / total * 100) : null;
+                      return (
+                        <div key={k} className="mp-nft-modal-trait">
+                          <div className="mp-nft-modal-trait-label">{k}</div>
+                          <div className="mp-nft-modal-trait-value">{v}</div>
+                          {pct !== null && (
+                            <div className="mp-nft-modal-trait-pct">{pct.toFixed(1)}%</div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (!nftDetailLoading && (
                   <div style={{ color: '#4b5563', fontSize: 13, marginTop: 12 }}>

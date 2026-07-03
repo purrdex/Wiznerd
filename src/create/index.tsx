@@ -1382,7 +1382,35 @@ export default function CreateScreen() {
 
               {/* Allowlist */}
               <div style={{ marginBottom: 20 }}>
-                <label style={S.label}>Allowlist (optional — one xch1 address per line)</label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <label style={{ ...S.label, margin: 0 }}>Allowlist (optional — one xch1 address per line)</label>
+                  <label style={{ fontSize: 12, color: '#f97316', cursor: 'pointer', padding: '3px 10px', border: '1px solid #f97316', borderRadius: 6 }}>
+                    Upload CSV
+                    <input
+                      type="file"
+                      accept=".csv,.txt"
+                      style={{ display: 'none' }}
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = ev => {
+                          const text = ev.target?.result as string;
+                          const addresses = text.split(/[\r\n,;\t]+/)
+                            .map(s => s.trim())
+                            .filter(s => s.startsWith('xch1'));
+                          setAllowlistText(prev => {
+                            const existing = prev.split('\n').map(s => s.trim()).filter(Boolean);
+                            const merged = [...new Set([...existing, ...addresses])];
+                            return merged.join('\n');
+                          });
+                        };
+                        reader.readAsText(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
                 <textarea style={{ ...S.input, resize: 'vertical', minHeight: 80, fontFamily: 'monospace', fontSize: 12 }}
                   placeholder={'xch1aaa...\nxch1bbb...'}
                   value={allowlistText} onChange={e => setAllowlistText(e.target.value)} />
