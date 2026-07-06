@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.4.0 — 2026-07-06 (Creator Suite)
+
+### C2 — Creator public profiles
+- New page `/marketplace/creator/:address` showing all launched collections from a creator
+- Header stats: collection count, total minted, total volume (XCH)
+- Collection cards grid with supply bar and marketplace status badge
+- Creator address on collection pages now links to `/marketplace/creator/:address` instead of the profile page
+- Server: `GET /api/marketplace/creator/:address` aggregates projects + minted/volume totals
+
+### C3 — Earnings dashboard
+- Per-project "Manage" panel in the creator dashboard (appears on launched collections)
+- Shows primary revenue in XCH and total minted count
+- 30-day mint activity bar chart (recharts BarChart)
+- Server: `GET /api/marketplace/:id/earnings` returns revenue and daily mint chart data
+
+### C4 — Post-launch allowlist modifications
+- "Manage ▼" button on each launched project card in the creator dashboard
+- Inline allowlist textarea — edit live, save with one click
+- Pre-populates from the saved allowlist when resuming a project in the wizard
+- `PATCH /api/projects/:id` now accepts `allowlist` and `mints_paused` updates
+
+### C6 — Creator verify/apply flow
+- "Get Verified ✓" section in the Manage panel per launched collection
+- Form: Twitter handle, website, brief authenticity note
+- `POST /api/creator/verify-request` stores request in new `verify_requests` table
+- Status shown inline after submission
+- DB: `supabase/migrations/022_verify_requests.sql`
+
+### C8 — Allowlist CSV validator with preview
+- CSV/TXT upload on the allowlist step now shows a validation preview before merging
+- Validates: must start with `xch1`, must be 62 chars, no duplicates
+- Preview shows valid count (green), invalid rows with reason (red), truncated if > 10 invalid
+- "Add N valid" button merges only the clean addresses; "Dismiss" discards the preview
+
+### C9 — UTM referral tracking
+- Collection pages fire a `POST /api/analytics/pageview` on mount when `?utm_source=` is present in the URL
+- Referral breakdown shown in the Manage panel (30-day): counts per source
+- Server: `GET /api/analytics/:id/referrals` — groups page_views by utm_source
+- DB: `supabase/migrations/023_page_views.sql` — `page_views` table, 90-day auto-purge function
+
+### DB migrations required
+Run in Supabase SQL editor:
+- `supabase/migrations/022_verify_requests.sql`
+- `supabase/migrations/023_page_views.sql`
+
+---
+
 ## v1.3.0 — 2026-07-06 (Trading Power)
 
 ### T3 — Offer expiration

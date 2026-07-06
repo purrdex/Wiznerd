@@ -11,6 +11,7 @@ import ProfileScreen from './marketplace/Profile'
 import OffersScreen from './marketplace/Offers'
 import RankingsScreen from './marketplace/Rankings'
 import ActivityScreen from './marketplace/Activity'
+import CreatorScreen from './marketplace/Creator'
 import { CartProvider } from './marketplace/CartContext'
 
 const router = createBrowserRouter([
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
   { path: '/marketplace/rankings', element: <RankingsScreen /> },
   { path: '/marketplace/activity', element: <ActivityScreen /> },
   { path: '/marketplace/profile', element: <ProfileScreen /> },
+  { path: '/marketplace/creator/:address', element: <CreatorScreen /> },
   { path: '/marketplace/:id', element: <CollectionScreen /> },
   { path: '/marketplace/:id/manage', element: <ManageScreen /> },
 ])

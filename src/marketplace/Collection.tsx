@@ -366,6 +366,19 @@ export default function CollectionScreen() {
       .finally(() => setNftDetailLoading(false));
   }, [selectedNft?.nft_id]);
 
+  // C9: fire UTM pageview once per mount when utm_source is present
+  useEffect(() => {
+    const src = searchParams.get('utm_source');
+    if (!id || !src) return;
+    fetch(`${API_URL}/api/analytics/pageview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collection_id: id, utm_source: src, utm_medium: searchParams.get('utm_medium'), utm_campaign: searchParams.get('utm_campaign') }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Open a specific NFT when ?nft= is in the URL (e.g. from notable sales)
   useEffect(() => {
     const nftId = searchParams.get('nft');
@@ -498,8 +511,8 @@ export default function CollectionScreen() {
           {coll.creator_address && (
             <div className="mp-coll-creator">
               Created by{' '}
-              <Link to={`/marketplace/profile?address=${coll.creator_address}`} style={{ color: '#f97316', textDecoration: 'none' }}>
-                {coll.creator_address.slice(0, 16)}…{coll.creator_address.slice(-8)}
+              <Link to={`/marketplace/creator/${coll.creator_address}`} style={{ color: '#f97316', textDecoration: 'none' }}>
+                {coll.creator_address.slice(0, 12)}…{coll.creator_address.slice(-6)}
               </Link>
             </div>
           )}

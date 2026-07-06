@@ -22,7 +22,17 @@ interface ProjectSummary {
   id: string; name: string; symbol: string; total_supply: number;
   status: string; current_step: number; created_at: string;
   description?: string;
+  marketplace_status?: string;
+  allowlist?: string[];
+  mint_price_mojo?: number;
+  minted_count?: number;
 }
+interface Earnings {
+  primary_revenue_mojo: number;
+  minted_count: number;
+  chart: { date: string; mints: number }[];
+}
+interface Referral { source: string; count: number; }
 interface DidProfile { name: string; description: string; website: string; twitter: string; logo: string; }
 type IpfsPhase = 'images' | 'metadata' | 'complete' | 'error';
 interface IpfsProgressState {
@@ -125,6 +135,19 @@ export default function CreateScreen() {
   const [revealType, setRevealType] = useState<'instant' | 'blind'>('instant');
   const [publishBusy, setPublishBusy] = useState(false);
   const [publishError, setPublishError] = useState('');
+  // C8 — CSV preview for allowlist upload
+  const [csvPreview, setCsvPreview] = useState<{ valid: string[]; invalid: { row: string; reason: string }[] } | null>(null);
+
+  // C4/C3/C6/C9 — per-project manage panel state
+  const [managePanelId, setManagePanelId] = useState<string | null>(null);
+  const [manageAllowlist, setManageAllowlist] = useState('');
+  const [manageSaving, setManageSaving] = useState(false);
+  const [manageSaveMsg, setManageSaveMsg] = useState('');
+  const [manageEarnings, setManageEarnings] = useState<Earnings | null>(null);
+  const [manageReferrals, setManageReferrals] = useState<Referral[]>([]);
+  const [verifyForm, setVerifyForm] = useState({ twitter: '', website: '', note: '' });
+  const [verifySending, setVerifySending] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState('');
 
   // Step 1 fields
   const [name, setName] = useState('');
@@ -341,10 +364,61 @@ export default function CreateScreen() {
       setDescription(projectData.description || '');
       setLayers(layersData || []);
       setIncompats((incompatData || []).map(r => ({ a: r.variant_a, b: r.variant_b })));
+      // Pre-populate allowlist from saved project data
+      if (proj.allowlist?.length) setAllowlistText(proj.allowlist.join('\n'));
       setStep(Math.max(1, proj.current_step || 1));
       setShowDashboard(false);
     } catch (e: unknown) { setError((e as Error).message); }
     finally { setBusy(false); }
+  }
+
+  async function handleOpenManage(proj: ProjectSummary) {
+    if (managePanelId === proj.id) { setManagePanelId(null); return; }
+    setManagePanelId(proj.id);
+    setManageAllowlist((proj.allowlist || []).join('\n'));
+    setManageSaveMsg('');
+    setVerifyMsg('');
+    setManageEarnings(null);
+    setManageReferrals([]);
+    // Fetch earnings + referrals in parallel
+    const [earningsRes, referralsRes] = await Promise.allSettled([
+      fetch(`${API_URL}/api/marketplace/${proj.id}/earnings`, { signal: AbortSignal.timeout(8000) }),
+      fetch(`${API_URL}/api/analytics/${proj.id}/referrals`, { signal: AbortSignal.timeout(8000) }),
+    ]);
+    if (earningsRes.status === 'fulfilled' && earningsRes.value.ok) setManageEarnings(await earningsRes.value.json());
+    if (referralsRes.status === 'fulfilled' && referralsRes.value.ok) setManageReferrals(await referralsRes.value.json());
+  }
+
+  async function handleSaveAllowlist(projId: string) {
+    setManageSaving(true); setManageSaveMsg('');
+    try {
+      const allowlist = manageAllowlist.split('\n').map(s => s.trim()).filter(s => s.startsWith('xch1'));
+      const res = await fetch(`${API_URL}/api/projects/${projId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowlist }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) { const d = await res.json() as { error?: string }; setManageSaveMsg(d.error || 'Save failed'); return; }
+      setManageSaveMsg(`Saved ${allowlist.length} address(es)`);
+    } catch { setManageSaveMsg('Could not reach server'); }
+    finally { setManageSaving(false); }
+  }
+
+  async function handleVerifyRequest(projId: string) {
+    if (!creatorAddress) return;
+    setVerifySending(true); setVerifyMsg('');
+    try {
+      const res = await fetch(`${API_URL}/api/creator/verify-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collection_id: projId, creator_address: creatorAddress, ...verifyForm }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const d = await res.json() as { success?: boolean; error?: string };
+      setVerifyMsg(res.ok ? '✓ Request submitted — we\'ll review within 48 hours' : (d.error || 'Failed'));
+    } catch { setVerifyMsg('Could not reach server'); }
+    finally { setVerifySending(false); }
   }
 
   async function handleDeleteProject(id: string) {
@@ -649,27 +723,125 @@ export default function CreateScreen() {
                 <div style={{ fontSize: 13, color: '#94a3b8' }}>No projects yet — create your first one below.</div>
               ) : (
                 <div>
-                  {projects.map(proj => (
-                    <div key={proj.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#0f1016', borderRadius: 8, marginBottom: 6 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
-                          {proj.name}
-                          <span style={{ fontSize: 10, color: '#6b7280', marginLeft: 6 }}>{proj.symbol}</span>
+                  {projects.map(proj => {
+                    const isLaunched = proj.marketplace_status === 'live' || proj.marketplace_status === 'scheduled';
+                    const isPanelOpen = managePanelId === proj.id;
+                    return (
+                      <div key={proj.id} style={{ marginBottom: 8 }}>
+                        {/* Project row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#0f1016', borderRadius: isPanelOpen ? '8px 8px 0 0' : 8 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
+                              {proj.name}
+                              <span style={{ fontSize: 10, color: '#6b7280', marginLeft: 6 }}>{proj.symbol}</span>
+                              {isLaunched && <span style={{ marginLeft: 8, fontSize: 9, background: 'rgba(74,222,128,0.15)', color: '#4ade80', padding: '1px 6px', borderRadius: 4, fontWeight: 700 }}>LIVE</span>}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                              Supply: {proj.total_supply}{proj.minted_count != null ? ` · ${proj.minted_count} minted` : ''} · {statusLabel(proj.status, proj.current_step)}
+                              <span style={{ marginLeft: 8 }}>{new Date(proj.created_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                          {isLaunched && (
+                            <button style={{ ...S.btnS, padding: '6px 12px', fontSize: 12, borderColor: isPanelOpen ? '#f97316' : '#2d2f3d', color: isPanelOpen ? '#f97316' : '#94a3b8' }}
+                              onClick={() => handleOpenManage(proj)}>
+                              {isPanelOpen ? 'Close ▲' : 'Manage ▼'}
+                            </button>
+                          )}
+                          <button style={{ ...S.btnP, padding: '6px 14px', fontSize: 12 }} onClick={() => handleResumeProject(proj)} disabled={busy}>
+                            {busy ? '…' : 'Continue'}
+                          </button>
+                          <button onClick={() => handleDeleteProject(proj.id)}
+                            style={{ ...S.btnS, padding: '6px 12px', fontSize: 12, color: '#f87171', borderColor: 'rgba(248,113,113,0.3)' }}>
+                            Delete
+                          </button>
                         </div>
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                          Supply: {proj.total_supply} · {statusLabel(proj.status, proj.current_step)}
-                          <span style={{ marginLeft: 8 }}>{new Date(proj.created_at).toLocaleDateString()}</span>
-                        </div>
+
+                        {/* Manage panel */}
+                        {isPanelOpen && (
+                          <div style={{ background: '#111218', border: '1px solid #2d2f3d', borderTop: 'none', borderRadius: '0 0 8px 8px', padding: 16 }}>
+                            {/* C3 — Earnings */}
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Primary Revenue (30d)</div>
+                              {manageEarnings ? (
+                                <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+                                  <div>
+                                    <span style={{ fontSize: 20, fontWeight: 700, color: '#f97316' }}>
+                                      {(manageEarnings.primary_revenue_mojo / 1e12).toFixed(2)} XCH
+                                    </span>
+                                    <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 8 }}>{manageEarnings.minted_count} minted total</span>
+                                  </div>
+                                  {manageEarnings.chart.length > 1 && (
+                                    <div style={{ flex: 1, height: 40 }}>
+                                      <ResponsiveContainer width="100%" height={40}>
+                                        <BarChart data={manageEarnings.chart} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                                          <Bar dataKey="mints" fill="#f97316" radius={[2, 2, 0, 0]} />
+                                        </BarChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : <div style={{ fontSize: 12, color: '#4b5563' }}>Loading…</div>}
+                            </div>
+
+                            {/* C9 — Referral traffic */}
+                            {manageReferrals.length > 0 && (
+                              <div style={{ marginBottom: 16 }}>
+                                <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Referral Traffic (30d)</div>
+                                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                  {manageReferrals.map(r => (
+                                    <div key={r.source} style={{ background: '#0f1016', borderRadius: 6, padding: '4px 10px', fontSize: 11 }}>
+                                      <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{r.count}</span>
+                                      <span style={{ color: '#6b7280', marginLeft: 5 }}>{r.source}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* C4 — Allowlist edit */}
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                                Allowlist ({manageAllowlist.split('\n').filter(s => s.trim().startsWith('xch1')).length} addresses)
+                              </div>
+                              <textarea
+                                style={{ ...S.input, minHeight: 70, fontSize: 11, fontFamily: 'monospace', resize: 'vertical' }}
+                                placeholder="xch1aaa…&#10;xch1bbb…"
+                                value={manageAllowlist}
+                                onChange={e => setManageAllowlist(e.target.value)}
+                              />
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+                                {manageSaveMsg && <span style={{ fontSize: 11, color: manageSaveMsg.startsWith('Saved') ? '#4ade80' : '#f87171', alignSelf: 'center' }}>{manageSaveMsg}</span>}
+                                <button style={{ ...S.btnP, padding: '6px 14px', fontSize: 12 }} onClick={() => handleSaveAllowlist(proj.id)} disabled={manageSaving}>
+                                  {manageSaving ? 'Saving…' : 'Save Allowlist'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* C6 — Verify request */}
+                            <div style={{ borderTop: '1px solid #1e2030', paddingTop: 14 }}>
+                              <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Get Verified ✓</div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                <input style={{ ...S.input, fontSize: 12 }} placeholder="@twitter" value={verifyForm.twitter}
+                                  onChange={e => setVerifyForm(f => ({ ...f, twitter: e.target.value }))} />
+                                <input style={{ ...S.input, fontSize: 12 }} placeholder="https://yoursite.com" value={verifyForm.website}
+                                  onChange={e => setVerifyForm(f => ({ ...f, website: e.target.value }))} />
+                              </div>
+                              <textarea style={{ ...S.input, fontSize: 12, resize: 'vertical', minHeight: 48, marginBottom: 8 }}
+                                placeholder="Brief note: what makes this collection authentic?"
+                                value={verifyForm.note}
+                                onChange={e => setVerifyForm(f => ({ ...f, note: e.target.value }))} />
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center' }}>
+                                {verifyMsg && <span style={{ fontSize: 11, color: verifyMsg.startsWith('✓') ? '#4ade80' : '#f87171' }}>{verifyMsg}</span>}
+                                <button style={{ ...S.btnP, padding: '6px 14px', fontSize: 12 }} onClick={() => handleVerifyRequest(proj.id)} disabled={verifySending}>
+                                  {verifySending ? 'Sending…' : 'Submit Verify Request'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <button style={{ ...S.btnP, padding: '6px 14px', fontSize: 12 }} onClick={() => handleResumeProject(proj)} disabled={busy}>
-                        {busy ? '…' : 'Continue'}
-                      </button>
-                      <button onClick={() => handleDeleteProject(proj.id)}
-                        style={{ ...S.btnS, padding: '6px 12px', fontSize: 12, color: '#f87171', borderColor: 'rgba(248,113,113,0.3)' }}>
-                        Delete
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1396,14 +1568,17 @@ export default function CreateScreen() {
                         const reader = new FileReader();
                         reader.onload = ev => {
                           const text = ev.target?.result as string;
-                          const addresses = text.split(/[\r\n,;\t]+/)
-                            .map(s => s.trim())
-                            .filter(s => s.startsWith('xch1'));
-                          setAllowlistText(prev => {
-                            const existing = prev.split('\n').map(s => s.trim()).filter(Boolean);
-                            const merged = [...new Set([...existing, ...addresses])];
-                            return merged.join('\n');
-                          });
+                          const rows = text.split(/[\r\n,;\t]+/).map(s => s.trim()).filter(Boolean);
+                          const valid: string[] = [];
+                          const invalid: { row: string; reason: string }[] = [];
+                          const seen = new Set<string>();
+                          for (const row of rows) {
+                            if (!row.startsWith('xch1')) { invalid.push({ row, reason: 'not an xch1 address' }); continue; }
+                            if (row.length !== 62) { invalid.push({ row, reason: `wrong length (${row.length})` }); continue; }
+                            if (seen.has(row)) { invalid.push({ row, reason: 'duplicate' }); continue; }
+                            seen.add(row); valid.push(row);
+                          }
+                          setCsvPreview({ valid, invalid });
                         };
                         reader.readAsText(file);
                         e.target.value = '';
@@ -1417,6 +1592,39 @@ export default function CreateScreen() {
                 {allowlistText.trim() && (
                   <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
                     {allowlistText.split('\n').filter(s => s.trim().startsWith('xch1')).length} valid address(es)
+                  </div>
+                )}
+                {csvPreview && (
+                  <div style={{ marginTop: 10, background: '#0f1016', border: '1px solid #2d2f3d', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>
+                        <span style={{ color: '#4ade80' }}>{csvPreview.valid.length} valid</span>
+                        {csvPreview.invalid.length > 0 && <span style={{ color: '#f87171', marginLeft: 8 }}>{csvPreview.invalid.length} invalid</span>}
+                      </span>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button style={{ ...S.btnP, padding: '4px 12px', fontSize: 11 }}
+                          onClick={() => {
+                            setAllowlistText(prev => {
+                              const existing = prev.split('\n').map(s => s.trim()).filter(Boolean);
+                              return [...new Set([...existing, ...csvPreview!.valid])].join('\n');
+                            });
+                            setCsvPreview(null);
+                          }}>
+                          Add {csvPreview.valid.length} valid
+                        </button>
+                        <button style={{ ...S.btnS, padding: '4px 10px', fontSize: 11 }} onClick={() => setCsvPreview(null)}>Dismiss</button>
+                      </div>
+                    </div>
+                    {csvPreview.invalid.length > 0 && (
+                      <div style={{ maxHeight: 100, overflowY: 'auto' }}>
+                        {csvPreview.invalid.slice(0, 10).map((row, i) => (
+                          <div key={i} style={{ fontSize: 10, color: '#f87171', fontFamily: 'monospace', padding: '1px 0' }}>
+                            {row.row.slice(0, 20)}{row.row.length > 20 ? '…' : ''} — {row.reason}
+                          </div>
+                        ))}
+                        {csvPreview.invalid.length > 10 && <div style={{ fontSize: 10, color: '#6b7280' }}>…and {csvPreview.invalid.length - 10} more</div>}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -126,6 +126,84 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     }
   });
 
+  // ── Creator public profile ────────────────────────────────────────────────────
+
+  app.get('/api/marketplace/creator/:address', async (req, res) => {
+    const { address } = req.params;
+    const { data: collections } = await supabase
+      .from('projects')
+      .select('id,name,symbol,total_supply,mint_price_mojo,marketplace_status,minted_count,collection_image_url,collection_image_path,royalty_percent,created_at')
+      .eq('creator_address', address)
+      .not('marketplace_status', 'eq', 'draft')
+      .order('created_at', { ascending: false });
+
+    const totalMinted = (collections || []).reduce((s, c) => s + (c.minted_count || 0), 0);
+    const totalRevenueMojo = (collections || []).reduce((s, c) => s + (c.mint_price_mojo || 0) * (c.minted_count || 0), 0);
+
+    res.json({ address, collections: collections || [], total_minted: totalMinted, total_revenue_mojo: totalRevenueMojo });
+  });
+
+  // ── Creator earnings for a project ───────────────────────────────────────────
+
+  app.get('/api/marketplace/:id/earnings', async (req, res) => {
+    const { id } = req.params;
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('mint_price_mojo,creator_price_mojo,minted_count,royalty_percent')
+      .eq('id', id)
+      .maybeSingle();
+    if (!proj) return res.status(404).json({ error: 'Not found' });
+
+    // Daily confirmed orders for the last 30 days
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('created_at')
+      .eq('project_id', id)
+      .in('status', ['confirmed', 'minting', 'minted'])
+      .gte('created_at', since)
+      .order('created_at', { ascending: true });
+
+    const byDay: Record<string, number> = {};
+    for (const o of orders || []) {
+      const day = (o.created_at || '').slice(0, 10);
+      if (day) byDay[day] = (byDay[day] || 0) + 1;
+    }
+
+    const chart = Object.entries(byDay)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, mints]) => ({ date, mints }));
+
+    const earningsPerMint = proj.creator_price_mojo ?? proj.mint_price_mojo ?? 0;
+    res.json({
+      primary_revenue_mojo: earningsPerMint * (proj.minted_count || 0),
+      minted_count: proj.minted_count || 0,
+      chart,
+    });
+  });
+
+  // ── UTM page-view tracking ────────────────────────────────────────────────────
+
+  app.post('/api/analytics/pageview', async (req, res) => {
+    const { collection_id, utm_source, utm_medium, utm_campaign } = req.body;
+    if (!collection_id || !utm_source) return res.json({ ok: true }); // only track UTM views
+    await supabase.from('page_views').insert({ collection_id, utm_source, utm_medium: utm_medium || null, utm_campaign: utm_campaign || null });
+    res.json({ ok: true });
+  });
+
+  app.get('/api/analytics/:id/referrals', async (req, res) => {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data } = await supabase
+      .from('page_views')
+      .select('utm_source')
+      .eq('collection_id', req.params.id)
+      .gte('created_at', since);
+
+    const counts: Record<string, number> = {};
+    for (const r of data || []) counts[r.utm_source || 'unknown'] = (counts[r.utm_source || 'unknown'] || 0) + 1;
+    res.json(Object.entries(counts).map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count));
+  });
+
   // ── Single collection ─────────────────────────────────────────────────────────
 
   app.get('/api/marketplace/:id', async (req, res, next) => {

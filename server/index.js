@@ -135,6 +135,8 @@ app.patch('/api/projects/:id', async (req, res) => {
   if (req.body.current_step !== undefined) updates.current_step = Number(req.body.current_step);
   if (req.body.status !== undefined) updates.status = req.body.status;
   if (req.body.description !== undefined) updates.description = req.body.description || null;
+  if (req.body.allowlist !== undefined) updates.allowlist = Array.isArray(req.body.allowlist) ? req.body.allowlist : [];
+  if (req.body.mints_paused !== undefined) updates.mints_paused = Boolean(req.body.mints_paused);
   updates.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
   if (error) return res.status(400).json({ error: error.message });
@@ -479,6 +481,19 @@ app.post('/api/projects/:id/publish', async (req, res) => {
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
+});
+
+// POST /api/creator/verify-request — creator applies for verified badge
+app.post('/api/creator/verify-request', async (req, res) => {
+  const { collection_id, creator_address, twitter, website, note } = req.body;
+  if (!collection_id || !creator_address) return res.status(400).json({ error: 'collection_id and creator_address required' });
+  const { data, error } = await supabase
+    .from('verify_requests')
+    .insert({ collection_id, creator_address, twitter: twitter || null, website: website || null, note: note || null })
+    .select('id')
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, id: data.id });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
