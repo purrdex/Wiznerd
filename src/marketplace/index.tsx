@@ -184,7 +184,7 @@ export default function MarketplaceScreen() {
                 <div
                   key={i}
                   className="mp-scroll-card"
-                  onClick={() => s.collection_id && navigate(`/marketplace/${s.collection_id}`)}
+                  onClick={() => s.collection_id && navigate(`/marketplace/${s.collection_id}${s.nft_id ? `?nft=${encodeURIComponent(s.nft_id)}` : ''}`)}
                 >
                   <div className="mp-scroll-img">
                     {s.image_url

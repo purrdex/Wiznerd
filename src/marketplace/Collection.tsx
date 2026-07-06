@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import './marketplace.css';
@@ -151,6 +151,7 @@ function fmtCountdown(ms: number): string {
 export default function CollectionScreen() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const walletAddress = (() => { try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; } })();
 
@@ -364,6 +365,28 @@ export default function CollectionScreen() {
       .catch(() => {})
       .finally(() => setNftDetailLoading(false));
   }, [selectedNft?.nft_id]);
+
+  // Open a specific NFT when ?nft= is in the URL (e.g. from notable sales)
+  useEffect(() => {
+    const nftId = searchParams.get('nft');
+    if (!nftId || selectedNft) return;
+    fetch(`${API_URL}/api/nft/${encodeURIComponent(nftId)}`, { signal: AbortSignal.timeout(10000) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        setSelectedNft({
+          nft_id: d.nft_id,
+          name: d.name ?? null,
+          image_url: d.image_url ?? '',
+          token_index: d.token_index ?? null,
+          traits: d.traits ?? {},
+          rarity_rank: d.rarity_rank ?? null,
+          owner_puzzle_hash: d.owner_puzzle_hash ?? null,
+        });
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // One-time loads
   useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); loadFloorHistory(); loadCollBids(); }, [loadColl, loadPrice, loadTraits, loadCatWallets, loadFloorHistory, loadCollBids]);
