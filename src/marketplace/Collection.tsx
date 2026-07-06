@@ -428,6 +428,16 @@ export default function CollectionScreen() {
     return new Date(Date.now() + hours * 3600000).toISOString();
   }
 
+  const heroSrc = (() => {
+    if (coll.collection_image_url) {
+      return coll.collection_image_url.startsWith('ipfs://')
+        ? `https://gateway.pinata.cloud/ipfs/${coll.collection_image_url.replace('ipfs://', '')}`
+        : coll.collection_image_url;
+    }
+    if (coll.collection_image_path) return `${API_URL}/output/${id}/collection.png`;
+    return `${API_URL}/output/${id}/0.png`;
+  })();
+
   return (
     <div className="mp-page">
       <TopNav onCartClick={() => setCartOpen(true)} />
@@ -441,20 +451,12 @@ export default function CollectionScreen() {
         </div>
       )}
 
-      {/* Hero image — prefer collection image, fall back to first generated token */}
+      {/* Hero — blurred backdrop fills the space, contained image sits on top */}
       <div className="mp-hero">
+        <div className="mp-hero-bg" style={{ backgroundImage: `url(${heroSrc})` }} />
         <img
-          src={(() => {
-            if (coll.collection_image_url) {
-              return coll.collection_image_url.startsWith('ipfs://')
-                ? `https://gateway.pinata.cloud/ipfs/${coll.collection_image_url.replace('ipfs://', '')}`
-                : coll.collection_image_url;
-            }
-            if (coll.collection_image_path) {
-              return `${API_URL.replace(':3002', ':3002')}/output/${id}/collection.png`;
-            }
-            return `${API_URL}/output/${id}/0.png`;
-          })()}
+          className="mp-hero-img"
+          src={heroSrc}
           alt={coll.name}
           onError={e => {
             const img = e.target as HTMLImageElement;

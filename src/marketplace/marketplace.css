@@ -350,16 +350,28 @@
 
 /* ── Collection hero ─────────────────────────────────────────────────────── */
 .mp-hero {
-  width: 100%; height: 480px; background: #111218;
+  width: 100%; height: 380px; background: #111218;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden; position: relative;
 }
-.mp-hero img { width: 100%; height: 100%; object-fit: cover; }
+.mp-hero-bg {
+  position: absolute; inset: -30px;
+  background-size: cover; background-position: center;
+  filter: blur(28px);
+  opacity: 0.45;
+  transform: scale(1.08);
+}
+.mp-hero-img {
+  position: relative; z-index: 1;
+  max-height: 100%; max-width: 100%;
+  object-fit: contain;
+  display: block;
+}
 .mp-hero-placeholder {
   font-size: 80px; opacity: 0.3;
 }
 .mp-hero-overlay {
-  position: absolute; inset: 0;
+  position: absolute; inset: 0; z-index: 2;
   background: linear-gradient(to bottom, transparent 50%, rgba(10,11,15,0.9) 100%);
 }
 
