@@ -128,7 +128,11 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
   // ── Single collection ─────────────────────────────────────────────────────────
 
-  app.get('/api/marketplace/:id', async (req, res) => {
+  app.get('/api/marketplace/:id', async (req, res, next) => {
+    // Pass through to later-registered static routes that share this path prefix
+    const STATIC_ROUTES = ['profile', 'rankings', 'activity', 'notable-sales', 'offers'];
+    if (STATIC_ROUTES.includes(req.params.id)) return next();
+
     // Try Wiznerd projects first
     const { data: project } = await supabase
       .from('projects').select('*').eq('id', req.params.id).single();

@@ -8,7 +8,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const crypto = require('crypto');
-const { bech32 } = require('bech32');
+const { bech32m } = require('bech32');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
@@ -16,7 +16,7 @@ const PROXY      = process.env.PROXY_URL || 'http://localhost:3001';
 const CONCURRENCY  = 3;    // parallel NFT lookups
 const COIN_DELAY   = 100;  // ms between wallet RPC calls per worker
 const MG_DELAY     = 600;  // ms between MintGarden discovery pages
-const MG_NFT_DELAY = 150;  // ms between per-NFT MintGarden fetches per worker
+const MG_NFT_DELAY = 600;  // ms between per-NFT MintGarden fetches per worker
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -57,8 +57,8 @@ function coinId(coin) {
 // Decode nft1... encoded ID → raw hex launcher ID
 function decodeLauncherId(encodedId) {
   try {
-    const decoded = bech32.decode(encodedId);
-    return Buffer.from(bech32.fromWords(decoded.words)).toString('hex');
+    const decoded = bech32m.decode(encodedId, 90);
+    return Buffer.from(bech32m.fromWords(decoded.words)).toString('hex');
   } catch {
     return null;
   }
@@ -122,7 +122,15 @@ async function processNft(encodedId, collectionId) {
 
   // Walk singleton chain to find current coin
   const currentCoinId = await getCurrentCoinId(launcherId);
-  if (!currentCoinId) { console.warn(`  skip: no current coin for ${encodedId}`); return; }
+  if (!currentCoinId) {
+    // Singleton chain terminated — NFT was burned. Mark it in DB so it's excluded from gallery.
+    const BURN_PH = '0000000000000000000000000000000000000000000000000000000000000000';
+    await supabase.from('indexed_nfts')
+      .update({ owner_puzzle_hash: BURN_PH, updated_at: new Date().toISOString() })
+      .eq('nft_id', encodedId);
+    console.warn(`  skip: no current coin for ${encodedId} (marked burned)`);
+    return;
+  }
 
   // Ask wallet daemon to decode NFT state from that coin
   let info;
@@ -158,20 +166,23 @@ async function processNft(encodedId, collectionId) {
 
   const traitCount = Object.keys(traits).length;
 
-  await supabase.from('indexed_nfts').upsert({
+  const upsertRow = {
     nft_id:            nftId,
     collection_id:     collectionId,
     token_index:       seriesNumber != null ? seriesNumber - 1 : null,
     name:              nftName,
     metadata_uri:      metadataUri,
-    image_url:         imageUrl,
     data_hash:         dataHash,
     meta_hash:         metaHash,
     owner_puzzle_hash: ownerPH,
     minter_did:        minterDid,
     traits,
     updated_at:        new Date().toISOString(),
-  }, { onConflict: 'nft_id' });
+  };
+  // Only set image_url when we actually have one — don't overwrite cached MintGarden thumbnails with null
+  if (imageUrl) upsertRow.image_url = imageUrl;
+
+  await supabase.from('indexed_nfts').upsert(upsertRow, { onConflict: 'nft_id' });
 
   return traitCount;
 }
@@ -210,14 +221,15 @@ async function processNftFromMG(encodedId, collectionId) {
     ? Object.fromEntries(meta.attributes.filter(a => a.trait_type).map(a => [a.trait_type, String(a.value)]))
     : {};
 
-  // Use IPFS URI if available; fall back to MintGarden CDN thumbnail
-  const imageUri = dataUris.find(u => u.startsWith('ipfs://')) || dataUris[0] || nft.data?.thumbnail_uri || null;
-  const imageUrl = imageUri?.startsWith('ipfs://')
-    ? `https://gateway.pinata.cloud/ipfs/${imageUri.slice(7)}`
-    : imageUri || null;
+  // Prefer MintGarden CDN thumbnail (fast) over raw IPFS URI (slow Pinata gateway)
+  const ipfsUri = dataUris.find(u => u.startsWith('ipfs://')) || dataUris[0] || null;
+  const ipfsUrl = ipfsUri?.startsWith('ipfs://')
+    ? `https://gateway.pinata.cloud/ipfs/${ipfsUri.slice(7)}`
+    : ipfsUri || null;
+  const imageUrl = nft.data?.thumbnail_uri || ipfsUrl || null;
 
   const ownerPH  = nft.owner_address?.id || null;
-  const nftId    = nft.id ? `0x${nft.id}` : encodedId;
+  const nftId    = encodedId; // always bech32m — consistent with nft_transfers and live indexer
   const nftName  = meta.name || nft.name || null;
   const seriesNumber = meta.series_number ?? null;
 

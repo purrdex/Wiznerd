@@ -22,6 +22,9 @@ CREATE INDEX IF NOT EXISTS collection_bids_col
 CREATE INDEX IF NOT EXISTS collection_bids_bidder
   ON collection_bids (bidder_address, status, created_at DESC);
 
+-- Grant access to PostgREST roles
+GRANT ALL ON TABLE collection_bids TO postgres, service_role, authenticated, anon;
+
 -- Auto-expire collection bids older than 30 days that have no explicit expires_at
 CREATE OR REPLACE FUNCTION expire_old_collection_bids() RETURNS void LANGUAGE sql AS $$
   UPDATE collection_bids
