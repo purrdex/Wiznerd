@@ -621,9 +621,13 @@ export default function CollectionScreen() {
               </div>
             );
           })()}
-          {/* Collection bids */}
-          {coll.source !== 'wiznerd' && (
-            <div className="mp-coll-bids">
+        </div>
+
+        {/* Right: mint panel or collection info */}
+        <div className="mp-mint-panel">
+          {coll.source !== 'wiznerd' && !coll.payment_address ? (
+            /* External / indexed collection — show collection offers */
+            <div className="mp-coll-bids" style={{ marginTop: 0 }}>
               <div className="mp-coll-bids-header">
                 <span className="mp-coll-bids-title">Collection Offers{collBids.length > 0 && ` (${collBids.length})`}</span>
                 {walletAddress && !collBidPanel && (
@@ -717,36 +721,6 @@ export default function CollectionScreen() {
                 <div style={{ fontSize: 12, color: '#4b5563', padding: '8px 0' }}>No open offers for this collection.</div>
               )}
             </div>
-          )}
-        </div>
-
-        {/* Right: mint panel or collection info */}
-        <div className="mp-mint-panel">
-          {coll.source !== 'wiznerd' && !coll.payment_address ? (
-            /* External / indexed collection — show floor price info only */
-            <>
-              {Number(xch) > 0 ? (
-                <>
-                  <div className="mp-mint-price">{xch} XCH</div>
-                  {xchPrice > 0 && (
-                    <div className="mp-mint-price-usd">Floor ≈ ${(Number(xch) * xchPrice).toFixed(2)} USD</div>
-                  )}
-                </>
-              ) : (
-                <div className="mp-mint-price" style={{ fontSize: 20, color: '#94a3b8' }}>Chia NFT Collection</div>
-              )}
-              {coll.minted_count > 0 && (
-                <>
-                  <div className="mp-progress-bar" style={{ marginTop: 20 }}>
-                    <div className="mp-progress-fill" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="mp-supply-text">{mintedCount} minted{coll.total_supply > 0 ? ` / ${coll.total_supply}` : ''}</div>
-                </>
-              )}
-              <div style={{ marginTop: 20, padding: '14px 16px', background: '#0f1016', border: '1px solid #1e2030', borderRadius: 10, fontSize: 13, color: '#94a3b8', lineHeight: 1.6 }}>
-                This collection lives on the Chia blockchain. Secondary market trading is available through Chia NFT wallets and exchanges.
-              </div>
-            </>
           ) : (
             /* Wiznerd-minted collection — full mint flow */
             <>
