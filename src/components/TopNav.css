@@ -44,8 +44,25 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 1;
 }
+
+/* Inline search input (injected by page) */
+.wiz-nav-search {
+  flex: 1;
+  min-width: 0;
+  max-width: 480px;
+  margin: 0 12px;
+  padding: 7px 14px;
+  background: #111218;
+  border: 1px solid #2d2f3d;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.wiz-nav-search:focus { border-color: #f97316; }
+.wiz-nav-search::placeholder { color: #4b5563; }
 .wiz-link {
   padding: 6px 12px;
   border-radius: 6px;

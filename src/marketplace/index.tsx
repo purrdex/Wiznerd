@@ -158,21 +158,7 @@ export default function MarketplaceScreen() {
 
   return (
     <div className="mp-page">
-      <TopNav />
-
-      {/* Hero bar */}
-      <div className="mp-hero-bar">
-        <div className="mp-hero-inner">
-          <h1>Marketplace</h1>
-          <input
-            className="mp-search"
-            type="text"
-            placeholder="Search collections…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
+      <TopNav searchValue={search} onSearchChange={setSearch} searchPlaceholder="Search collections…" />
 
       {/* Filters */}
       <div className="mp-filters">

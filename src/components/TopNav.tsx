@@ -14,15 +14,15 @@ function shortAddr(addr: string) {
 }
 
 interface TopNavProps {
-  /** Override active link detection (defaults to window.location.pathname) */
   activePath?: string;
-  /** Called when wallet is switched from the dropdown — lets page reload its data */
   onWalletSwitch?: (newAddress: string) => void;
-  /** Called when cart icon is clicked */
   onCartClick?: () => void;
+  searchValue?: string;
+  onSearchChange?: (v: string) => void;
+  searchPlaceholder?: string;
 }
 
-export default function TopNav({ activePath, onWalletSwitch, onCartClick }: TopNavProps) {
+export default function TopNav({ activePath, onWalletSwitch, onCartClick, searchValue, onSearchChange, searchPlaceholder }: TopNavProps) {
   const { items: cartItems } = useCart();
   const path = activePath ?? window.location.pathname;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -99,6 +99,17 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick }: TopN
           </a>
         ))}
       </div>
+
+      {/* Inline search (shown when provided by page) */}
+      {onSearchChange && (
+        <input
+          className="wiz-nav-search"
+          type="text"
+          placeholder={searchPlaceholder ?? 'Search…'}
+          value={searchValue ?? ''}
+          onChange={e => onSearchChange(e.target.value)}
+        />
+      )}
 
       {/* Wallet switcher (desktop) */}
       {wallets.length > 0 && (
