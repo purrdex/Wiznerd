@@ -164,7 +164,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       .gte('created_at', since)
       .order('created_at', { ascending: true });
 
-    const byDay: Record<string, number> = {};
+    const byDay = {};
     for (const o of orders || []) {
       const day = (o.created_at || '').slice(0, 10);
       if (day) byDay[day] = (byDay[day] || 0) + 1;
@@ -199,7 +199,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       .eq('collection_id', req.params.id)
       .gte('created_at', since);
 
-    const counts: Record<string, number> = {};
+    const counts = {};
     for (const r of data || []) counts[r.utm_source || 'unknown'] = (counts[r.utm_source || 'unknown'] || 0) + 1;
     res.json(Object.entries(counts).map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count));
   });
