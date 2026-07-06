@@ -11,6 +11,7 @@ import ProfileScreen from './marketplace/Profile'
 import OffersScreen from './marketplace/Offers'
 import RankingsScreen from './marketplace/Rankings'
 import ActivityScreen from './marketplace/Activity'
+import { CartProvider } from './marketplace/CartContext'
 
 const router = createBrowserRouter([
   { path: '/', element: <WalletApp /> },
@@ -26,6 +27,8 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <CartProvider>
+      <RouterProvider router={router} />
+    </CartProvider>
   </StrictMode>,
 )

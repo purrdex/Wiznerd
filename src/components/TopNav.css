@@ -128,6 +128,38 @@
 .wiz-mobile-link:hover { background: #1e2030; color: #e2e8f0; }
 .wiz-mobile-link.active { color: #f97316; font-weight: 600; }
 
+/* Cart button */
+.wiz-cart-btn {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+  margin-left: 4px;
+  transition: background 0.15s;
+}
+.wiz-cart-btn:hover { background: #1e2030; }
+.wiz-cart-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  background: #f97316;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .wiz-links        { display: none; }

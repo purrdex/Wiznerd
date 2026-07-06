@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import './TopNav.css';
+import { useCart } from '../marketplace/CartContext';
 
 interface StoredWallet {
   id: string;
@@ -17,9 +18,12 @@ interface TopNavProps {
   activePath?: string;
   /** Called when wallet is switched from the dropdown — lets page reload its data */
   onWalletSwitch?: (newAddress: string) => void;
+  /** Called when cart icon is clicked */
+  onCartClick?: () => void;
 }
 
-export default function TopNav({ activePath, onWalletSwitch }: TopNavProps) {
+export default function TopNav({ activePath, onWalletSwitch, onCartClick }: TopNavProps) {
+  const { items: cartItems } = useCart();
   const path = activePath ?? window.location.pathname;
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
@@ -133,6 +137,16 @@ export default function TopNav({ activePath, onWalletSwitch }: TopNavProps) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Cart icon */}
+      {onCartClick && (
+        <button className="wiz-cart-btn" onClick={onCartClick} aria-label="Cart">
+          🛒
+          {cartItems.length > 0 && (
+            <span className="wiz-cart-badge">{cartItems.length}</span>
+          )}
+        </button>
       )}
 
       {/* Mobile hamburger */}

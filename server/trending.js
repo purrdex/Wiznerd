@@ -183,6 +183,26 @@ async function snapshotFloors(supabase) {
   console.log(`[floors] snapshotted ${rows.length} floor prices`);
 }
 
+// ── Expire stale offers and collection bids ───────────────────────────────────
+
+const EXPIRE_MS = 5 * 60 * 1000; // every 5 minutes
+
+async function expireOffers(supabase) {
+  const now = new Date().toISOString();
+  const [{ error: e1 }, { error: e2 }] = await Promise.all([
+    supabase.from('nft_offers')
+      .update({ status: 'expired' })
+      .eq('status', 'open')
+      .lt('expires_at', now),
+    supabase.from('collection_bids')
+      .update({ status: 'expired' })
+      .eq('status', 'open')
+      .lt('expires_at', now),
+  ]);
+  if (e1) console.warn('[expire] nft_offers error:', e1.message);
+  if (e2) console.warn('[expire] collection_bids error:', e2.message);
+}
+
 function start(supabase) {
   console.log('[trending] starting score job (15 min interval)');
   recalculate(supabase).catch(e => console.error('[trending] initial run error:', e.message));
@@ -193,12 +213,18 @@ function start(supabase) {
     snapshotFloors(supabase).catch(e => console.warn('[floors] snapshot error:', e.message));
   }, SNAPSHOT_MS);
 
+  // Expire stale offers every 5 minutes
+  expireOffers(supabase).catch(e => console.warn('[expire] initial run error:', e.message));
+  setInterval(() => {
+    expireOffers(supabase).catch(e => console.warn('[expire] error:', e.message));
+  }, EXPIRE_MS);
+
   return setInterval(() => {
     recalculate(supabase).catch(e => console.error('[trending] recalc error:', e.message));
   }, RECALC_MS);
 }
 
-module.exports = { start, recalculate, snapshotFloors };
+module.exports = { start, recalculate, snapshotFloors, expireOffers };
 
 if (require.main === module) {
   require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });

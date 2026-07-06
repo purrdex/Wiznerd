@@ -590,9 +590,126 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
   // ── In-wallet offer creation (price input → create_offer_for_ids → auto-list) ─
 
+  // ── Floor items for sweep (cheapest N open asks for a collection) ────────────
+
+  app.get('/api/marketplace/:id/floor-items', async (req, res) => {
+    const id    = req.params.id;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+    const now   = new Date().toISOString();
+
+    const { data: offers, error } = await supabase
+      .from('nft_offers')
+      .select('id,nft_id,price_mojo,price_token,maker_puzzle_hash')
+      .eq('collection_id', id)
+      .eq('offer_type', 'ask')
+      .eq('status', 'open')
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order('price_mojo', { ascending: true })
+      .limit(limit);
+
+    if (error) return res.status(400).json({ error: error.message });
+    if (!offers?.length) return res.json([]);
+
+    // Enrich with NFT metadata
+    const nftIds = offers.map(o => o.nft_id).filter(Boolean);
+    const { data: nftRows } = nftIds.length
+      ? await supabase.from('indexed_nfts').select('nft_id,name,image_url,token_index').in('nft_id', nftIds)
+      : { data: [] };
+
+    const nftMap = Object.fromEntries((nftRows || []).map(n => [n.nft_id, n]));
+
+    res.json(offers.map(o => {
+      const nft = nftMap[o.nft_id] || {};
+      const name = nft.name || (nft.token_index != null ? `#${nft.token_index + 1}` : null);
+      return {
+        offer_id:    o.id,
+        nft_id:      o.nft_id,
+        nft_name:    name || null,
+        image_url:   nft.image_url ? (nft.image_url.replace('https://gateway.pinata.cloud/ipfs/', 'https://ipfs.mintgarden.io/ipfs/')) : null,
+        price_mojo:  o.price_mojo,
+        price_token: o.price_token || 'xch',
+      };
+    }));
+  });
+
+  // ── Collection bids ───────────────────────────────────────────────────────────
+
+  app.get('/api/marketplace/:id/collection-bids', async (req, res) => {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('collection_bids')
+      .select('*')
+      .eq('collection_id', req.params.id)
+      .eq('status', 'open')
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order('price_mojo', { ascending: false })
+      .limit(50);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  });
+
+  app.post('/api/marketplace/:id/collection-bids', async (req, res) => {
+    const { price_mojo, price_token, bidder_address, expires_at } = req.body;
+    if (!price_mojo || !bidder_address) return res.status(400).json({ error: 'price_mojo and bidder_address required' });
+    const { data, error } = await supabase
+      .from('collection_bids')
+      .insert({
+        collection_id: req.params.id,
+        price_mojo:    Number(price_mojo),
+        price_token:   price_token || 'xch',
+        bidder_address,
+        expires_at:    expires_at || null,
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  });
+
+  app.delete('/api/marketplace/collection-bids/:bidId', async (req, res) => {
+    const { error } = await supabase
+      .from('collection_bids')
+      .update({ status: 'cancelled' })
+      .eq('id', req.params.bidId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  });
+
+  // Returns collection bids for collections where the given address owns NFTs
+  app.get('/api/marketplace/collection-bids/for-owner/:address', async (req, res) => {
+    let puzzleHex;
+    try {
+      const { bech32m: bm } = require('bech32');
+      const d = bm.decode(String(req.params.address), 90);
+      puzzleHex = Buffer.from(bm.fromWords(d.words)).toString('hex');
+    } catch {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+
+    const { data: owned } = await supabase
+      .from('indexed_nfts')
+      .select('collection_id')
+      .or(`owner_puzzle_hash.eq.${puzzleHex},owner_puzzle_hash.eq.0x${puzzleHex}`);
+
+    const collectionIds = [...new Set((owned || []).map(n => n.collection_id).filter(Boolean))];
+    if (!collectionIds.length) return res.json([]);
+
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('collection_bids')
+      .select('*, indexed_collections!collection_bids_collection_id_fkey(name, thumbnail_url)')
+      .in('collection_id', collectionIds)
+      .eq('status', 'open')
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order('price_mojo', { ascending: false })
+      .limit(100);
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  });
+
   app.post('/api/nft/:nftId/create-offer', async (req, res) => {
     const { nftId } = req.params;
-    const { offer_type, price_mojo, token_id = 'xch' } = req.body;
+    const { offer_type, price_mojo, token_id = 'xch', expires_at = null } = req.body;
     if (!offer_type || !price_mojo) return res.status(400).json({ error: 'offer_type and price_mojo required' });
 
     const LISTING_FEE_MOJO = Number(process.env.LISTING_FEE_MOJO || 1_000_000_000);
@@ -677,6 +794,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       price_mojo:   priceAmount,
       price_token:  isXch ? 'xch' : token_id,
       status:       'open',
+      expires_at:   expires_at || null,
     }).select().single();
 
     if (error) return res.status(500).json({ error: error.message });
@@ -1106,8 +1224,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     ] = await Promise.all([
       supabase.from('indexed_nfts').select('nft_id', { count: 'exact', head: true }).eq('collection_id', id).not('owner_puzzle_hash', 'is', null).neq('owner_puzzle_hash', '0000000000000000000000000000000000000000000000000000000000000000'),
       supabase.from('indexed_nfts').select('owner_puzzle_hash').eq('collection_id', id).not('owner_puzzle_hash', 'is', null).neq('owner_puzzle_hash', '0000000000000000000000000000000000000000000000000000000000000000'),
-      supabase.from('nft_offers').select('price_mojo').eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask').eq('price_token', 'xch').order('price_mojo', { ascending: true }).limit(1),
-      supabase.from('nft_offers').select('*', { count: 'exact', head: true }).eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask'),
+      supabase.from('nft_offers').select('price_mojo').eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask').eq('price_token', 'xch').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).order('price_mojo', { ascending: true }).limit(1),
+      supabase.from('nft_offers').select('*', { count: 'exact', head: true }).eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
       fetchVolume(id, ago24h),
       fetchVolume(id, ago7d),
       fetchVolume(id),

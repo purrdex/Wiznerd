@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.3.0 — 2026-07-06 (Trading Power)
+
+### T3 — Offer expiration
+- Expiry picker in offer creation panel: 1h / 6h / 24h / 7d / 30d / Never
+- `expires_at` sent to server on both the "in-wallet" create-offer flow and the manual offer-string flow
+- Expiry label shown next to each open offer in the NFT modal ("exp 6h ago", "expired")
+- Background cron in `trending.js` marks expired `nft_offers` and `collection_bids` as `status='expired'` every 5 minutes
+- Stats queries (`/collections/:id/stats`) now exclude expired offers from floor and listed counts
+
+### T4 + T9 — Sweep + Cart
+- **Cart context** (React Context + localStorage) shared across all marketplace pages
+- **Cart icon** in TopNav with item-count badge (orange dot)
+- **Cart drawer** slides in from the right: shows items with image/name/price, total XCH, Buy All checkout, Clear Cart
+- **Checkout flow**: takes offers sequentially, shows per-item success/failure log; clears cart on full success
+- **Sweep Floor** button appears in collection gallery header when `listed_count > 0` (external collections only)
+- Sweep modal: item count slider (1–20), shows floor items with names/images/prices, "Add N to Cart" → opens cart drawer
+- **Add to Cart** button (🛒) appears next to "Buy" on any ask offer in NFT detail modal
+- New server endpoint: `GET /api/marketplace/:id/floor-items?limit=N` — cheapest N open asks with NFT metadata
+
+### T6 — Bulk listing
+- "Select" mode toggle in My NFTs profile tab — checkboxes appear on NFT cards
+- "List X NFTs" button activates when ≥1 item selected
+- Bulk list modal: single price input + expiry picker; calls `create-offer` sequentially for each NFT
+- Progress counter shows `X/N listed` with inline error if any fail
+
+### T1 — Collection offers
+- "Collection Offers" section on external collection pages showing open bids from any wallet
+- "Make Offer" button for non-owners: price (XCH) + optional expiry → stored in `collection_bids` table
+- Bid owner can cancel their own bid
+- "Collection Bids" tab in My NFTs profile: shows all open collection bids for collections you hold NFTs in, with collection name + thumbnail + "View Collection →"
+- New server endpoints: `GET/POST /api/marketplace/:id/collection-bids`, `DELETE /api/marketplace/collection-bids/:id`, `GET /api/marketplace/collection-bids/for-owner/:address`
+
+### T10 — (deferred to v1.3.1)
+CAT balance validation was deprioritised; the wallet daemon balance check requires an extra round-trip and the UI change is minor. Tracked as T10.
+
+### DB migration required
+Run `supabase/migrations/021_collection_bids.sql` in the Supabase SQL editor to create the `collection_bids` table.
+
+---
+
 ## v1.2.0 — 2026-07-06 (Rankings, Activity Feed, Floor History)
 
 ### Rankings page (`/marketplace/rankings`)

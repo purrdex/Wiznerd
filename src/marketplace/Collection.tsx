@@ -5,6 +5,8 @@ import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import './marketplace.css';
 import { supabase } from '../lib/supabase';
 import TopNav from '../components/TopNav';
+import CartDrawer from './CartDrawer';
+import { useCart } from './CartContext';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
 const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
@@ -78,6 +80,26 @@ interface NftDetail {
   traits: Record<string, string>;
   open_offers: NftOffer[];
   history: NftHistory[];
+}
+
+interface FloorItem {
+  offer_id: string;
+  nft_id: string;
+  nft_name: string | null;
+  image_url: string | null;
+  price_mojo: number;
+  price_token: string;
+}
+
+interface CollectionBid {
+  id: string;
+  collection_id: string;
+  bidder_address: string;
+  price_mojo: number;
+  price_token: string;
+  status: string;
+  expires_at: string | null;
+  created_at: string;
 }
 
 
@@ -170,6 +192,19 @@ export default function CollectionScreen() {
   } | null>(null);
   const [floorHistory, setFloorHistory] = useState<{ floor_price_mojo: number; snapshot_at: string }[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [offerExpiry, setOfferExpiry] = useState('');
+  const [cartOpen, setCartOpen] = useState(false);
+  const [sweepOpen, setSweepOpen] = useState(false);
+  const [floorItems, setFloorItems] = useState<FloorItem[]>([]);
+  const [sweepCount, setSweepCount] = useState(3);
+  const [sweepLoading, setSweepLoading] = useState(false);
+  const [collBids, setCollBids] = useState<CollectionBid[]>([]);
+  const [collBidPanel, setCollBidPanel] = useState(false);
+  const [collBidPrice, setCollBidPrice] = useState('');
+  const [collBidExpiry, setCollBidExpiry] = useState('');
+  const [collBidSubmitting, setCollBidSubmitting] = useState(false);
+  const [collBidError, setCollBidError] = useState<string | null>(null);
+  const { addItem, hasItem } = useCart();
 
   const msLeft = useCountdown(coll?.launch_at ?? null);
   const isLive = coll?.marketplace_status === 'live' && (!coll.launch_at || msLeft <= 0);
@@ -248,6 +283,24 @@ export default function CollectionScreen() {
     } catch { /* ignore */ }
   }, [id]);
 
+  const loadFloorItems = useCallback(async () => {
+    if (!id) return;
+    setSweepLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/api/marketplace/${id}/floor-items?limit=20`, { signal: AbortSignal.timeout(10000) });
+      if (r.ok) setFloorItems(await r.json());
+    } catch { /* ignore */ }
+    finally { setSweepLoading(false); }
+  }, [id]);
+
+  const loadCollBids = useCallback(async () => {
+    if (!id) return;
+    try {
+      const r = await fetch(`${API_URL}/api/marketplace/${id}/collection-bids`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) setCollBids(await r.json());
+    } catch { /* ignore */ }
+  }, [id]);
+
   const loadCatWallets = useCallback(async () => {
     try {
       const r = await fetch(`${API_URL}/api/wallet/cats`, { signal: AbortSignal.timeout(8000) });
@@ -289,7 +342,7 @@ export default function CollectionScreen() {
   }
 
   function resetOfferPanel() {
-    setOfferPanel(null); setOfferPrice(''); setOfferError(null); setOfferToken('xch');
+    setOfferPanel(null); setOfferPrice(''); setOfferError(null); setOfferToken('xch'); setOfferExpiry('');
   }
 
   const reloadDetail = useCallback((nftId: string) => {
@@ -313,7 +366,7 @@ export default function CollectionScreen() {
   }, [selectedNft?.nft_id]);
 
   // One-time loads
-  useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); loadFloorHistory(); }, [loadColl, loadPrice, loadTraits, loadCatWallets, loadFloorHistory]);
+  useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); loadFloorHistory(); loadCollBids(); }, [loadColl, loadPrice, loadTraits, loadCatWallets, loadFloorHistory, loadCollBids]);
 
   useEffect(() => {
     if (!id) return;
@@ -368,9 +421,17 @@ export default function CollectionScreen() {
     });
   }
 
+  function expiryToIso(val: string): string | undefined {
+    if (!val) return undefined;
+    const hours = parseInt(val);
+    if (!hours) return undefined;
+    return new Date(Date.now() + hours * 3600000).toISOString();
+  }
+
   return (
     <div className="mp-page">
-      <TopNav />
+      <TopNav onCartClick={() => setCartOpen(true)} />
+      {cartOpen && <CartDrawer onClose={() => setCartOpen(false)} />}
       {coll.creator_address === walletAddress && (
         <div style={{ padding: '6px 24px', background: '#0f1016', borderBottom: '1px solid #1e2030' }}>
           <button className="mp-nav-link" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f97316', fontSize: 13 }}
@@ -560,6 +621,103 @@ export default function CollectionScreen() {
               </div>
             );
           })()}
+          {/* Collection bids */}
+          {coll.source !== 'wiznerd' && (
+            <div className="mp-coll-bids">
+              <div className="mp-coll-bids-header">
+                <span className="mp-coll-bids-title">Collection Offers{collBids.length > 0 && ` (${collBids.length})`}</span>
+                {walletAddress && !collBidPanel && (
+                  <button className="mp-coll-bid-btn" onClick={() => setCollBidPanel(true)}>+ Make Offer</button>
+                )}
+              </div>
+
+              {collBidPanel && (
+                <div className="mp-coll-bid-form">
+                  <div className="mp-offer-price-row" style={{ marginBottom: 8 }}>
+                    <input
+                      className="mp-offer-price-input"
+                      type="number" min="0" step="0.001" placeholder="Price (XCH)"
+                      value={collBidPrice}
+                      onChange={e => { setCollBidPrice(e.target.value); setCollBidError(null); }}
+                    />
+                    <select
+                      className="mp-offer-token-select"
+                      value={collBidExpiry}
+                      onChange={e => setCollBidExpiry(e.target.value)}
+                    >
+                      <option value="">No expiry</option>
+                      <option value="24">24h</option>
+                      <option value="168">7 days</option>
+                      <option value="720">30 days</option>
+                    </select>
+                  </div>
+                  {collBidError && <div className="mp-offer-panel-error" style={{ marginBottom: 8 }}>{collBidError}</div>}
+                  <div className="mp-offer-panel-actions">
+                    <button
+                      className="mp-nft-modal-btn"
+                      disabled={collBidSubmitting || !collBidPrice}
+                      onClick={async () => {
+                        const priceMojo = Math.round(parseFloat(collBidPrice || '0') * 1e12);
+                        if (!priceMojo) return;
+                        setCollBidSubmitting(true); setCollBidError(null);
+                        const expiresAt = collBidExpiry ? new Date(Date.now() + parseInt(collBidExpiry) * 3600000).toISOString() : null;
+                        try {
+                          const r = await fetch(`${API_URL}/api/marketplace/${id}/collection-bids`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ price_mojo: priceMojo, price_token: 'xch', bidder_address: walletAddress, expires_at: expiresAt }),
+                            signal: AbortSignal.timeout(10000),
+                          });
+                          const d = await r.json();
+                          if (!r.ok) { setCollBidError(d.error || 'Failed'); return; }
+                          setCollBidPanel(false); setCollBidPrice(''); setCollBidExpiry('');
+                          loadCollBids();
+                        } catch { setCollBidError('Could not reach server'); }
+                        finally { setCollBidSubmitting(false); }
+                      }}
+                    >
+                      {collBidSubmitting ? 'Submitting…' : 'Submit Offer'}
+                    </button>
+                    <button className="mp-nft-modal-btn mp-nft-modal-btn-secondary" onClick={() => { setCollBidPanel(false); setCollBidError(null); }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {collBids.length > 0 ? (
+                <div className="mp-coll-bid-list">
+                  {collBids.map(bid => {
+                    const isMyBid = bid.bidder_address === walletAddress;
+                    return (
+                      <div key={bid.id} className="mp-coll-bid-row">
+                        <span className="mp-coll-bid-price">{formatXch(bid.price_mojo)} XCH</span>
+                        <span className="mp-coll-bid-by" title={bid.bidder_address}>
+                          {isMyBid ? 'You' : `${bid.bidder_address.slice(0, 8)}…`}
+                        </span>
+                        {bid.expires_at && (
+                          <span className="mp-coll-bid-exp">
+                            {timeAgo(bid.expires_at)} left
+                          </span>
+                        )}
+                        {isMyBid ? (
+                          <button className="mp-nft-modal-btn-sm mp-nft-modal-btn-cancel"
+                            onClick={async () => {
+                              await fetch(`${API_URL}/api/marketplace/collection-bids/${bid.id}`, { method: 'DELETE' });
+                              loadCollBids();
+                            }}>
+                            Cancel
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#4b5563', padding: '8px 0' }}>No open offers for this collection.</div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right: mint panel or collection info */}
@@ -783,11 +941,92 @@ export default function CollectionScreen() {
       )}
 
       {/* Gallery */}
+      {/* Sweep modal */}
+      {sweepOpen && (
+        <div className="mp-cart-overlay" onClick={() => setSweepOpen(false)}>
+          <div className="mp-sweep-modal" onClick={e => e.stopPropagation()}>
+            <div className="mp-cart-header">
+              <span className="mp-cart-title">Sweep Floor</span>
+              <button className="mp-cart-close" onClick={() => setSweepOpen(false)}>✕</button>
+            </div>
+            {sweepLoading ? (
+              <div style={{ padding: 32, textAlign: 'center' }}><div className="mp-spinner" /></div>
+            ) : floorItems.length === 0 ? (
+              <div className="mp-cart-empty">No listed NFTs found for this collection.</div>
+            ) : (
+              <>
+                <div style={{ padding: '12px 16px' }}>
+                  <label style={{ fontSize: 12, color: '#94a3b8' }}>
+                    Items to sweep: <strong style={{ color: '#e2e8f0' }}>{Math.min(sweepCount, floorItems.length)}</strong>
+                  </label>
+                  <input
+                    type="range" min={1} max={Math.min(floorItems.length, 20)}
+                    value={sweepCount} onChange={e => setSweepCount(parseInt(e.target.value))}
+                    style={{ width: '100%', marginTop: 8 }}
+                  />
+                </div>
+                <div className="mp-cart-items" style={{ maxHeight: 280 }}>
+                  {floorItems.slice(0, sweepCount).map(item => (
+                    <div key={item.offer_id} className="mp-cart-item">
+                      <div className="mp-cart-item-img">
+                        {item.image_url
+                          ? <img src={item.image_url} alt="" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          : <div className="mp-cart-item-ph" />}
+                      </div>
+                      <div className="mp-cart-item-info">
+                        <div className="mp-cart-item-name">{item.nft_name || item.nft_id.slice(0, 14) + '…'}</div>
+                        <div className="mp-cart-item-price">
+                          {item.price_token === 'xch'
+                            ? `${formatXch(item.price_mojo)} XCH`
+                            : `${(item.price_mojo / 1000).toFixed(3).replace(/0+$/, '')}`}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mp-cart-footer">
+                  {(() => {
+                    const total = floorItems.slice(0, sweepCount).filter(i => i.price_token === 'xch').reduce((s, i) => s + i.price_mojo, 0);
+                    return total > 0 ? <div className="mp-cart-total">Total: {formatXch(total)} XCH</div> : null;
+                  })()}
+                  <button className="mp-cart-btn" onClick={() => {
+                    floorItems.slice(0, sweepCount).forEach(item => {
+                      addItem({
+                        offer_id: item.offer_id,
+                        nft_id: item.nft_id,
+                        nft_name: item.nft_name || item.nft_id.slice(0, 14),
+                        image_url: item.image_url,
+                        price_mojo: item.price_mojo,
+                        price_token: item.price_token,
+                        collection_id: id!,
+                        collection_name: coll.name,
+                      });
+                    });
+                    setSweepOpen(false);
+                    setCartOpen(true);
+                  }}>
+                    Add {Math.min(sweepCount, floorItems.length)} to Cart
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'gallery' && gallery.length > 0 && (
         <div className="mp-gallery">
           <div className="mp-gallery-header">
             <h3 style={{ margin: 0 }}>{coll.source === 'wiznerd' ? 'Recently Minted' : `Collection · ${gallery.length} shown`}</h3>
             <div className="mp-gallery-controls">
+              {coll.source !== 'wiznerd' && collStats && (collStats.listed_count ?? 0) > 0 && (
+                <button
+                  className="mp-sweep-btn"
+                  onClick={() => { setSweepCount(3); loadFloorItems(); setSweepOpen(true); }}
+                >
+                  Sweep Floor
+                </button>
+              )}
               {isIndexed && (
                 <select
                   className="mp-gallery-sort"
@@ -932,6 +1171,10 @@ export default function CollectionScreen() {
                   <div className="mp-nft-modal-section-title">Open Offers</div>
                   {nftDetail.open_offers.map(o => {
                     const isOwnerOffer = nftDetail.owner_address === walletAddress;
+                    const expiryMs = o.expires_at ? new Date(o.expires_at).getTime() - Date.now() : null;
+                    const expiryLabel = expiryMs !== null
+                      ? expiryMs <= 0 ? 'Expired' : timeAgo(o.expires_at!)
+                      : null;
                     return (
                       <div key={o.id} className="mp-nft-modal-offer-row">
                         <span className="mp-nft-modal-offer-type">{o.offer_type === 'ask' ? 'Ask' : 'Bid'}</span>
@@ -944,6 +1187,11 @@ export default function CollectionScreen() {
                             ${(Number(o.price_mojo) / 1e12 * xchPrice).toFixed(2)}
                           </span>
                         )}
+                        {expiryLabel && (
+                          <span style={{ fontSize: 10, color: expiryMs! <= 0 ? '#f87171' : '#6b7280' }}>
+                            {expiryMs! <= 0 ? 'expired' : `exp ${expiryLabel}`}
+                          </span>
+                        )}
                         {isOwnerOffer ? (
                           <button className="mp-nft-modal-btn-sm mp-nft-modal-btn-cancel"
                             onClick={async () => {
@@ -953,10 +1201,35 @@ export default function CollectionScreen() {
                             Cancel
                           </button>
                         ) : (
-                          <button className="mp-nft-modal-btn-sm"
-                            onClick={() => setTakeTarget(o)}>
-                            {o.offer_type === 'ask' ? 'Buy' : 'Accept'}
-                          </button>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button className="mp-nft-modal-btn-sm"
+                              onClick={() => setTakeTarget(o)}>
+                              {o.offer_type === 'ask' ? 'Buy' : 'Accept'}
+                            </button>
+                            {o.offer_type === 'ask' && walletAddress && (
+                              <button
+                                className={`mp-nft-modal-btn-sm${hasItem(o.id) ? ' mp-nft-modal-btn-cancel' : ''}`}
+                                title={hasItem(o.id) ? 'In cart' : 'Add to cart'}
+                                onClick={() => {
+                                  if (!hasItem(o.id)) {
+                                    addItem({
+                                      offer_id: o.id,
+                                      nft_id: selectedNft!.nft_id!,
+                                      nft_name: selectedNft!.name || nftDetail?.traits?.name || `#${(selectedNft!.token_index ?? 0) + 1}`,
+                                      image_url: selectedNft!.image_url || null,
+                                      price_mojo: o.price_mojo,
+                                      price_token: o.price_token || 'xch',
+                                      collection_id: id!,
+                                      collection_name: coll.name,
+                                    });
+                                    setCartOpen(true);
+                                  }
+                                }}
+                              >
+                                {hasItem(o.id) ? '✓' : '🛒'}
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -1039,7 +1312,6 @@ export default function CollectionScreen() {
               {/* Offer creation panel */}
               {offerPanel && (() => {
                 const isXch = offerToken === 'xch';
-                // Convert typed amount to base units: XCH → mojos (*1e12), CAT → CAT mojos (*1000)
                 const priceAmount = isXch
                   ? Math.round(parseFloat(offerPrice || '0') * 1e12)
                   : Math.round(parseFloat(offerPrice || '0') * 1000);
@@ -1083,6 +1355,22 @@ export default function CollectionScreen() {
                         ))}
                       </select>
                     </div>
+                    <div className="mp-offer-expiry-row">
+                      <label style={{ fontSize: 11, color: '#6b7280' }}>Expires</label>
+                      <select
+                        className="mp-offer-token-select"
+                        style={{ flex: 1 }}
+                        value={offerExpiry}
+                        onChange={e => setOfferExpiry(e.target.value)}
+                      >
+                        <option value="">Never</option>
+                        <option value="1">1 hour</option>
+                        <option value="6">6 hours</option>
+                        <option value="24">24 hours</option>
+                        <option value="168">7 days</option>
+                        <option value="720">30 days</option>
+                      </select>
+                    </div>
                     {offerError && <div className="mp-offer-panel-error">{offerError}</div>}
                     <div className="mp-offer-panel-actions">
                       <button className="mp-nft-modal-btn"
@@ -1096,7 +1384,12 @@ export default function CollectionScreen() {
                               {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ offer_type: offerPanel, price_mojo: priceAmount, token_id: offerToken }),
+                                body: JSON.stringify({
+                                  offer_type: offerPanel,
+                                  price_mojo: priceAmount,
+                                  token_id: offerToken,
+                                  expires_at: expiryToIso(offerExpiry),
+                                }),
                                 signal: AbortSignal.timeout(35000),
                               }
                             );
