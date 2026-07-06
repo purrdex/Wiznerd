@@ -217,42 +217,6 @@ export default function MarketplaceScreen() {
         </div>
       )}
 
-      {/* Fresh Mints row — recently added external collections */}
-      {!search && filter === 'all' && (() => {
-        const recent = externalListings
-          .filter(c => (c.minted_count ?? 0) > 0)
-          .slice(0, 8);
-        if (!recent.length) return null;
-        return (
-          <div className="mp-section">
-            <div className="mp-section-header">
-              <span className="mp-section-title">Recently Active</span>
-              <a href="/marketplace/rankings" className="mp-section-more">Rankings →</a>
-            </div>
-            <div className="mp-scroll-row">
-              {recent.map(c => (
-                <div key={c.id} className="mp-scroll-card" onClick={() => navigate(`/marketplace/${c.id}`)}>
-                  <div className="mp-scroll-img">
-                    {c.thumbnail_url
-                      ? <img src={c.thumbnail_url} alt={c.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                      : <div className="mp-scroll-img-ph" />}
-                  </div>
-                  <div className="mp-scroll-body">
-                    <div className="mp-scroll-name">
-                      {c.name}
-                      {c.verified && <span className="mp-verified-badge">✓</span>}
-                    </div>
-                    <div className="mp-scroll-sub">{(c.minted_count ?? 0).toLocaleString()} minted</div>
-                    {(c.floor_price_mojo ?? 0) > 0 && (
-                      <div className="mp-scroll-price">{formatXch(c.mint_price_mojo)} XCH floor</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Grid */}
       <div className="mp-grid">
