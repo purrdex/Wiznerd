@@ -14,14 +14,21 @@
 
 const RECALC_MS = 15 * 60 * 1000;
 
-function computeScore(vol24h, vol7d, sales24h, mint24h, floorMojo) {
+function computeScore(vol24h, vol7d, sales24h, sales7d, mint24h, floorMojo) {
   // mint_24h excluded: indexed_nfts.updated_at fires on every re-index, not just new mints,
   // producing wildly inflated counts. Use secondary-market data only until we have created_at.
-  void mint24h; void floorMojo;
-  if (vol24h === 0 && sales24h === 0) return 0;
-  const baseline     = (vol7d / 7) + 1;
-  const acceleration = vol24h / baseline;
-  return vol24h * Math.sqrt(1 + acceleration) * Math.log(1 + sales24h);
+  void mint24h;
+  if (vol7d === 0 && sales7d === 0) return 0;
+  const floor = Number(floorMojo) || 0;
+  // When today is quiet, use 7-day daily average so low-activity collections still rank.
+  const effSales = sales24h > 0 ? sales24h : sales7d / 7;
+  const effVol24 = vol24h   > 0 ? vol24h   : (sales24h > 0 ? sales24h * floor : vol7d / 7);
+  const effVol7d = vol7d    > 0 ? vol7d    : effVol24 * 7;
+  const baseline     = (effVol7d / 7) + 1;
+  const acceleration = effVol24 / baseline;
+  // If still no volume (no floor price), fall back to sales-only ranking.
+  const volFactor = effVol24 > 0 ? effVol24 * Math.sqrt(1 + acceleration) : 1;
+  return volFactor * Math.log(1 + effSales);
 }
 
 async function recalculate(supabase) {
@@ -124,7 +131,7 @@ async function recalculate(supabase) {
     const mint = mintCounts.get(id) || 0;
     return {
       collection_id:   id,
-      trending_score:  computeScore(s.vol24h, s.vol7d, s.sales24h, mint, col.floor_price_mojo),
+      trending_score:  computeScore(s.vol24h, s.vol7d, s.sales24h, s.sales7d, mint, col.floor_price_mojo),
       volume_24h_mojo: s.vol24h,
       volume_7d_mojo:  s.vol7d,
       sales_24h:       s.sales24h,

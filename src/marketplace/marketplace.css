@@ -344,6 +344,8 @@
 }
 .mp-trait-pill:hover { border-color: #f97316; color: #f97316; }
 .mp-trait-pill.active { background: #f97316; border-color: #f97316; color: #fff; }
+.mp-trait-pill.info-only { pointer-events: none; cursor: default; opacity: 0.5; }
+.mp-trait-pill.info-only:hover { border-color: #2d2f3d; color: #94a3b8; }
 .mp-trait-pill-count { font-size: 10px; opacity: 0.7; margin-left: 3px; }
 
 /* ── Collection hero ─────────────────────────────────────────────────────── */
@@ -760,4 +762,60 @@
 .mp-gallery-item-rank {
   font-size: 9px; color: #f97316; font-weight: 700;
   background: rgba(249,115,22,0.12); padding: 1px 5px; border-radius: 4px;
+}
+
+/* ── Tab bar ────────────────────────────────────────────────────────────── */
+.mp-tab-bar {
+  display: flex; gap: 4px; padding: 0 24px;
+  border-bottom: 1px solid #1e2030; margin-bottom: 0;
+}
+.mp-tab-btn {
+  padding: 10px 18px; font-size: 13px; font-weight: 600;
+  background: none; border: none; color: #6b7280;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  cursor: pointer; transition: color 0.15s, border-color 0.15s;
+}
+.mp-tab-btn:hover { color: #94a3b8; }
+.mp-tab-btn.active { color: #f97316; border-bottom-color: #f97316; }
+
+/* ── Activity feed ──────────────────────────────────────────────────────── */
+.mp-activity {
+  padding: 8px 24px 40px;
+}
+.mp-activity-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 70px 110px 200px 70px;
+  align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid #12141c;
+}
+.mp-activity-row:last-child { border-bottom: none; }
+.mp-activity-thumb {
+  width: 40px; height: 40px; border-radius: 6px; overflow: hidden;
+  background: #0f1016; border: 1px solid #1e2030; flex-shrink: 0;
+}
+.mp-activity-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mp-activity-thumb-ph { width: 100%; height: 100%; background: #1a1d26; }
+.mp-activity-name {
+  font-size: 13px; font-weight: 600; color: #e2e8f0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mp-activity-type {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.mp-activity-price {
+  font-size: 13px; font-weight: 600; color: #e2e8f0; white-space: nowrap;
+}
+.mp-activity-addrs {
+  font-size: 11px; color: #6b7280; font-family: monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mp-activity-time {
+  font-size: 11px; color: #4b5563; text-align: right;
+}
+@media (max-width: 700px) {
+  .mp-activity-row {
+    grid-template-columns: 40px 1fr 60px 90px;
+    grid-template-rows: auto auto;
+  }
+  .mp-activity-addrs, .mp-activity-time { display: none; }
 }

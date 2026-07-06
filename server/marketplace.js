@@ -2,9 +2,10 @@
 
 const PROXY = process.env.PROXY_URL || 'http://localhost:3001';
 
-// In-memory traits cache (30 min TTL — trait distributions don't change often)
+// In-memory traits cache (30 min when filterable, 2 min when not — backfill may still be running)
 const traitsCache = new Map();
 const TRAITS_TTL = 30 * 60 * 1000;
+const TRAITS_TTL_PARTIAL = 2 * 60 * 1000;
 
 async function getNextAddress() {
   const res = await fetch(`${PROXY}/wallet/get_next_address`, {
@@ -206,17 +207,21 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     }
 
     // ── External: Supabase indexed_nfts (DB) — used for browse + trait filter ──
-    // When the collection has been backfilled with nft-backfill.js, traits are
-    // stored on-chain in indexed_nfts. We always try DB first; fall back to
-    // MintGarden only for browse (no traits) when DB is empty.
-    {
-      const offset = (cursor && cursor !== '__more__') ? parseInt(cursor, 10) : 0;
+    // MintGarden cursors are prefixed "mg_" to avoid colliding with numeric DB offsets.
+    // DB cursors are plain integers (48, 96, …). Never send an mg_ cursor to the DB path.
+    const isMgCursor = typeof cursor === 'string' && cursor.startsWith('mg_');
+
+    if (!isMgCursor) {
+      const offset = cursor && cursor !== '__more__' ? parseInt(cursor, 10) || 0 : 0;
       const sort = req.query.sort || 'default';
+      const BURN_PH = '0000000000000000000000000000000000000000000000000000000000000000';
       let query = supabase
         .from('indexed_nfts')
         .select('nft_id,token_index,name,image_url,traits,metadata_uri,owner_puzzle_hash,rarity_rank')
         .eq('collection_id', id)
-        .not('image_url', 'is', null);
+        .not('image_url', 'is', null)
+        .filter('nft_id', 'not.like', '0x%')
+        .or(`owner_puzzle_hash.is.null,owner_puzzle_hash.neq.${BURN_PH}`);
 
       if (sort === 'rarity') {
         query = query.order('rarity_rank', { ascending: true, nullsFirst: false });
@@ -238,7 +243,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
             nft_id:       n.nft_id,
             token_index:  n.token_index,
             name:         n.name,
-            image_url:    n.image_url,
+            image_url:    (n.image_url || '').replace('https://gateway.pinata.cloud/ipfs/', 'https://ipfs.mintgarden.io/ipfs/'),
             traits:       n.traits || {},
             metadata_uri: n.metadata_uri || '',
             owner_puzzle_hash: n.owner_puzzle_hash || null,
@@ -259,7 +264,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     try {
       const mgUrl = new URL(`https://api.mintgarden.io/collections/${encodeURIComponent(id)}/nfts`);
       mgUrl.searchParams.set('size', '48');
-      if (cursor && cursor !== '__more__') mgUrl.searchParams.set('page', cursor);
+      const mgPage = isMgCursor ? cursor.slice(3) : null;
+      if (mgPage) mgUrl.searchParams.set('page', mgPage);
 
       const mgRes = await fetch(mgUrl.toString(), {
         headers: { Accept: 'application/json' },
@@ -303,7 +309,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
           owner_puzzle_hash: null,
           buyer_address: null,
         })),
-        next: json.next || null,
+        next: json.next ? `mg_${json.next}` : null,
       });
     } catch (e) {
       console.warn('[gallery] MintGarden fetch failed:', e.message);
@@ -317,7 +323,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const id = req.params.id;
 
     const hit = traitsCache.get(id);
-    if (hit && Date.now() - hit.time < TRAITS_TTL) return res.json(hit.data);
+    const ttl = hit?.data?.filterable ? TRAITS_TTL : TRAITS_TTL_PARTIAL;
+    if (hit && Date.now() - hit.time < ttl) return res.json(hit.data);
 
     // Wiznerd: aggregate from generated_tokens
     const { data: tokens } = await supabase
@@ -336,44 +343,70 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
           agg[k][val] = (agg[k][val] || 0) + 1;
         });
       });
-      traitsCache.set(id, { data: agg, time: Date.now() });
-      return res.json(agg);
+      const result = { filterable: true, traits: agg };
+      traitsCache.set(id, { data: result, time: Date.now() });
+      return res.json(result);
     }
 
     // External: aggregate from indexed_nfts (populated by nft-backfill.js)
-    const { data: indexed } = await supabase
-      .from('indexed_nfts')
-      .select('traits')
-      .eq('collection_id', id)
-      .not('traits', 'is', null)
-      .limit(20000);
+    // Supabase caps results at 1000 rows per call, so paginate to collect all traits.
+    const BURN_PH = '0000000000000000000000000000000000000000000000000000000000000000';
+    const PAGE = 1000;
+    const allIndexed = [];
+    let offset = 0;
+    while (true) {
+      const { data: page } = await supabase
+        .from('indexed_nfts')
+        .select('traits')
+        .eq('collection_id', id)
+        .not('traits', 'is', null)
+        .filter('nft_id', 'not.like', '0x%')
+        .or(`owner_puzzle_hash.is.null,owner_puzzle_hash.neq.${BURN_PH}`)
+        .range(offset, offset + PAGE - 1);
+      if (!page?.length) break;
+      allIndexed.push(...page);
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
 
-    if (indexed?.length) {
-      const agg = {};
-      indexed.forEach(t => {
-        Object.entries(t.traits || {}).forEach(([k, v]) => {
-          if (!agg[k]) agg[k] = {};
-          const val = String(v);
-          agg[k][val] = (agg[k][val] || 0) + 1;
+    if (allIndexed.length) {
+      const withTraits = allIndexed.filter(t => t.traits && Object.keys(t.traits).length > 0);
+      const { data: collInfo } = await supabase
+        .from('indexed_collections').select('minted_count').eq('collection_id', id).maybeSingle();
+      const totalSupply = collInfo?.minted_count || 0;
+
+      // Only use DB counts when the backfill has covered ≥80% of the collection.
+      const covered = totalSupply > 0 ? withTraits.length / totalSupply : 1;
+      if (covered >= 0.8) {
+        const agg = {};
+        withTraits.forEach(t => {
+          Object.entries(t.traits).forEach(([k, v]) => {
+            if (!agg[k]) agg[k] = {};
+            const val = String(v);
+            agg[k][val] = (agg[k][val] || 0) + 1;
+          });
         });
-      });
-      traitsCache.set(id, { data: agg, time: Date.now() });
-      return res.json(agg);
+        const result = { filterable: true, traits: agg };
+        traitsCache.set(id, { data: result, time: Date.now() });
+        return res.json(result);
+      }
     }
 
     // Last resort: fetch attributes_frequency_counts from MintGarden
+    // filterable: false — per-NFT traits not in DB yet, can't JSONB-filter gallery
     try {
       const mgRes = await fetch(
         `https://api.mintgarden.io/collections/${encodeURIComponent(id)}`,
         { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) }
       );
-      if (!mgRes.ok) return res.json({});
+      if (!mgRes.ok) return res.json({ filterable: false, traits: {} });
       const json = await mgRes.json();
-      const data = json.attributes_frequency_counts || {};
-      traitsCache.set(id, { data, time: Date.now() });
-      return res.json(data);
+      const traits = json.attributes_frequency_counts || {};
+      const result = { filterable: false, traits };
+      traitsCache.set(id, { data: result, time: Date.now() });
+      return res.json(result);
     } catch (e) {
-      return res.json({});
+      return res.json({ filterable: false, traits: {} });
     }
   });
 
@@ -1099,9 +1132,135 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     });
   });
 
+  // ── Collection activity feed ─────────────────────────────────────────────────
+
+  app.get('/api/marketplace/collections/:id/activity', async (req, res) => {
+    const id     = req.params.id;
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const PAGE   = 50;
+
+    // Fetch recent transfers + first 500 nft_ids (for offers lookup) in parallel
+    const [{ data: transfers }, { data: collNfts }] = await Promise.all([
+      supabase
+        .from('nft_transfers')
+        .select('nft_id,price_mojo,price_token,from_puzzle_hash,to_puzzle_hash,block_height,transferred_at')
+        .eq('collection_id', id)
+        .not('transferred_at', 'is', null)
+        .order('transferred_at', { ascending: false })
+        .range(offset, offset + PAGE - 1),
+      supabase
+        .from('indexed_nfts')
+        .select('nft_id')
+        .eq('collection_id', id)
+        .limit(500),
+    ]);
+
+    // Normalise collNftIds to bech32m so offers lookup works regardless of format
+    const collNftIds = (collNfts || []).map(n => {
+      if (n.nft_id.startsWith('0x')) {
+        try {
+          const words = bech32m.toWords(Buffer.from(n.nft_id.slice(2), 'hex'));
+          return bech32m.encode('nft', words);
+        } catch {}
+      }
+      return n.nft_id;
+    });
+
+    // Offers lookup via nft_id (collection_id not always set on offers)
+    const { data: listings } = collNftIds.length
+      ? await supabase
+          .from('nft_offers')
+          .select('id,nft_id,offer_type,price_mojo,price_token,maker_puzzle_hash,created_at,status')
+          .in('nft_id', collNftIds)
+          .order('created_at', { ascending: false })
+          .limit(50)
+      : { data: [] };
+
+    // Enrich with names/images
+    const allNftIds = [...new Set([
+      ...(transfers || []).map(t => t.nft_id),
+      ...(listings  || []).map(l => l.nft_id),
+    ].filter(Boolean))];
+
+    // Also include 0x-hex variants so we match backfill-indexed_nfts entries
+    const hexVariants = allNftIds.map(id => {
+      const hex = decodeNftId(id);
+      return hex ? `0x${hex}` : null;
+    }).filter(Boolean);
+
+    const { data: nftRows } = allNftIds.length
+      ? await supabase
+          .from('indexed_nfts')
+          .select('nft_id,name,token_index,image_url')
+          .in('nft_id', [...allNftIds, ...hexVariants])
+      : { data: [] };
+
+    // Normalize map: 0x-hex entries are keyed by their bech32m equivalent
+    const nftMap = {};
+    for (const n of (nftRows || [])) {
+      nftMap[n.nft_id] = n;
+      if (n.nft_id.startsWith('0x')) {
+        try {
+          const words = bech32m.toWords(Buffer.from(n.nft_id.slice(2), 'hex'));
+          nftMap[bech32m.encode('nft', words)] = n;
+        } catch {}
+      }
+    }
+
+    const events = [];
+
+    for (const t of (transfers || [])) {
+      events.push({
+        event_type:   t.price_mojo != null ? 'sale' : 'transfer',
+        nft_id:       t.nft_id,
+        nft_name:     nftMap[t.nft_id]?.name     || null,
+        token_index:  nftMap[t.nft_id]?.token_index ?? null,
+        image_url:    nftMap[t.nft_id]?.image_url || null,
+        price_mojo:   t.price_mojo,
+        price_token:  t.price_token || 'xch',
+        from_address: puzzleHashToAddress(t.from_puzzle_hash),
+        to_address:   puzzleHashToAddress(t.to_puzzle_hash),
+        block_height: t.block_height,
+        timestamp:    t.transferred_at,
+      });
+    }
+
+    for (const l of (listings || [])) {
+      const ev = l.offer_type === 'ask'
+        ? (l.status === 'taken' ? 'sale' : l.status === 'cancelled' ? 'listing_cancelled' : 'listing')
+        : (l.status === 'taken' ? 'sale' : 'offer');
+      events.push({
+        event_type:   ev,
+        nft_id:       l.nft_id,
+        nft_name:     nftMap[l.nft_id]?.name     || null,
+        token_index:  nftMap[l.nft_id]?.token_index ?? null,
+        image_url:    nftMap[l.nft_id]?.image_url || null,
+        price_mojo:   l.price_mojo,
+        price_token:  l.price_token || 'xch',
+        from_address: puzzleHashToAddress(l.maker_puzzle_hash),
+        to_address:   null,
+        block_height: null,
+        timestamp:    l.created_at,
+      });
+    }
+
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    res.json({ events: events.slice(0, PAGE), hasMore: events.length >= PAGE });
+  });
+
   // ── Offer board — all open asks across all collections ────────────────────────
 
   app.get('/api/marketplace/offers/board', async (req, res) => {
+    // Lightweight check: which of a specific set of NFTs have active asks?
+    // Used by the profile page to show "Listed" badges without loading the full board.
+    if (req.query.nft_ids) {
+      const ids = String(req.query.nft_ids).split(',').map(s => s.trim()).filter(Boolean).slice(0, 200);
+      const { data } = await supabase
+        .from('nft_offers').select('nft_id')
+        .in('nft_id', ids).eq('status', 'open').eq('offer_type', 'ask');
+      return res.json({ offers: (data || []).map(o => ({ nft_id: o.nft_id })) });
+    }
+
     const sort   = req.query.sort || 'price';   // price | rarity | recent
     const page   = Math.max(0, parseInt(req.query.page) || 0);
     const limit  = 48;

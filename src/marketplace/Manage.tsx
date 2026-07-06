@@ -53,7 +53,7 @@ export default function ManageScreen() {
   const [giftMsg, setGiftMsg] = useState('');
   const [toggleBusy, setToggleBusy] = useState(false);
   const [revealBusy, setRevealBusy] = useState(false);
-  const [error] = useState('');
+  const [error, setError] = useState('');
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -88,20 +88,26 @@ export default function ManageScreen() {
 
   async function togglePause() {
     if (!stats || !id) return;
-    setToggleBusy(true);
+    setToggleBusy(true); setError('');
     try {
       const ep = stats.mints_paused ? 'resume' : 'pause';
-      await fetch(`${API_URL}/api/marketplace/${id}/${ep}`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      const res = await fetch(`${API_URL}/api/marketplace/${id}/${ep}`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Server error ${res.status}`); }
       await loadAll();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally { setToggleBusy(false); }
   }
 
   async function handleReveal() {
     if (!id) return;
-    setRevealBusy(true);
+    setRevealBusy(true); setError('');
     try {
-      await fetch(`${API_URL}/api/marketplace/${id}/reveal`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      const res = await fetch(`${API_URL}/api/marketplace/${id}/reveal`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Server error ${res.status}`); }
       await loadAll();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally { setRevealBusy(false); }
   }
 

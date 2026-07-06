@@ -23,7 +23,9 @@ interface Listing {
   indexed_count?: number;
   trending_score?: number;
   volume_24h_mojo?: number;
+  volume_7d_mojo?: number;
   sales_24h?: number;
+  sales_7d?: number;
   mint_24h?: number;
   verified?: boolean;
   listed_count?: number;
@@ -96,12 +98,16 @@ export default function MarketplaceScreen() {
       if (filter === 'live')     return c.marketplace_status === 'live';
       if (filter === 'upcoming') return c.marketplace_status === 'scheduled';
       if (filter === 'soldout')  return c.marketplace_status === 'sold_out';
-      if (filter === 'trending') return (c.trending_score ?? 0) > 0;
+      if (filter === 'trending') return (c.minted_count ?? 0) > 0 || (c.indexed_count ?? 0) > 0;
       return true;
     });
 
     if (filter === 'trending') {
-      list = [...list].sort((a, b) => (b.trending_score ?? 0) - (a.trending_score ?? 0));
+      list = [...list].sort((a, b) => {
+        const sd = (b.trending_score ?? 0) - (a.trending_score ?? 0);
+        if (sd !== 0) return sd;
+        return (b.volume_7d_mojo ?? 0) - (a.volume_7d_mojo ?? 0);
+      });
     } else if (filter === 'all') {
       list = [...list].sort((a, b) => {
         const aTrend = (a.trending_score ?? 0) > 0;
@@ -204,11 +210,13 @@ export default function MarketplaceScreen() {
                     {(c.trending_score ?? 0) > 0 ? (
                       <>
                         <span style={{ color: '#22d3ee', fontSize: 11 }}>
-                          {c.sales_24h ?? 0} trades 24h
+                          {(c.sales_24h ?? 0) > 0
+                            ? `${c.sales_24h} trades 24h`
+                            : `${c.sales_7d ?? 0} trades 7d`}
                         </span>
-                        {(c.volume_24h_mojo ?? 0) > 0 && (
+                        {((c.sales_24h ?? 0) > 0 ? (c.volume_24h_mojo ?? 0) : (c.volume_7d_mojo ?? 0)) > 0 && (
                           <span style={{ color: '#a0aec0', fontSize: 11 }}>
-                            {formatXch(c.volume_24h_mojo!)} XCH
+                            {formatXch((c.sales_24h ?? 0) > 0 ? c.volume_24h_mojo! : c.volume_7d_mojo!)} XCH
                           </span>
                         )}
                       </>

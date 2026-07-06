@@ -55,6 +55,20 @@ interface NftHistory {
   type?: string;
 }
 
+interface ActivityEvent {
+  event_type: 'sale' | 'transfer' | 'listing' | 'listing_cancelled' | 'offer';
+  nft_id: string | null;
+  nft_name: string | null;
+  token_index: number | null;
+  image_url: string | null;
+  price_mojo: number | null;
+  price_token: string;
+  from_address: string | null;
+  to_address: string | null;
+  block_height: number | null;
+  timestamp: string;
+}
+
 interface NftDetail {
   nft_id: string;
   owner_address: string | null;
@@ -122,7 +136,13 @@ export default function CollectionScreen() {
   const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [traits, setTraits] = useState<Record<string, Record<string, number>>>({});
+  const [traitsFilterable, setTraitsFilterable] = useState(false);
   const [selectedTraits, setSelectedTraits] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<'gallery' | 'activity'>('gallery');
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityHasMore, setActivityHasMore] = useState(false);
+  const [activityOffset, setActivityOffset] = useState(0);
   const [gallerySort, setGallerySort] = useState<'default' | 'rarity'>('default');
   const [gridSize, setGridSize] = useState<'large' | 'compact'>(() => {
     try { return (localStorage.getItem('mp_grid_size') as 'large' | 'compact') || 'large'; } catch { return 'large'; }
@@ -202,7 +222,11 @@ export default function CollectionScreen() {
     if (!id) return;
     try {
       const res = await fetch(`${API_URL}/api/marketplace/${id}/traits`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) setTraits(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setTraits(data.traits ?? data);
+        setTraitsFilterable(data.filterable ?? false);
+      }
     } catch { /* ignore */ }
   }, [id]);
 
@@ -219,6 +243,39 @@ export default function CollectionScreen() {
       if (r.ok) { const d = await r.json(); setCatWallets(d.cats || []); }
     } catch { /* wallet daemon may not be running */ }
   }, []);
+
+  const loadActivity = useCallback(async (offset = 0) => {
+    if (!id) return;
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/marketplace/collections/${id}/activity?offset=${offset}`, { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const d = await res.json();
+        const events: ActivityEvent[] = Array.isArray(d) ? d : (d.events ?? []);
+        setActivity(prev => offset === 0 ? events : [...prev, ...events]);
+        setActivityHasMore(Array.isArray(d) ? events.length >= 50 : (d.hasMore ?? false));
+        setActivityOffset(offset + events.length);
+      }
+    } catch { /* ignore */ }
+    finally { setActivityLoading(false); }
+  }, [id]);
+
+  function timeAgo(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1)   return 'just now';
+    if (m < 60)  return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24)  return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 7)   return `${d}d ago`;
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function shortAddr(addr: string | null): string {
+    if (!addr) return '—';
+    return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
+  }
 
   function resetOfferPanel() {
     setOfferPanel(null); setOfferPrice(''); setOfferError(null); setOfferToken('xch');
@@ -288,8 +345,8 @@ export default function CollectionScreen() {
   const pct = Math.min(100, Math.round((mintedCount / Math.max(1, coll.total_supply)) * 100));
   const traitCategories = Object.entries(traits);
   const activeTraitCount = Object.keys(selectedTraits).length;
-  // Filtering works for wiznerd collections and any external collection indexed in our DB
-  const isIndexed = coll.source === 'wiznerd' || gallery.some(g => g.traits && Object.keys(g.traits).length > 0);
+  // Filtering works for wiznerd collections and external collections with ≥80% DB coverage
+  const isIndexed = coll.source === 'wiznerd' || traitsFilterable;
 
   function toggleTrait(category: string, value: string) {
     setSelectedTraits(prev => {
@@ -559,8 +616,79 @@ export default function CollectionScreen() {
         </div>
       </div>
 
+      {/* Tab bar */}
+      <div className="mp-tab-bar">
+        <button
+          className={`mp-tab-btn${activeTab === 'gallery' ? ' active' : ''}`}
+          onClick={() => setActiveTab('gallery')}
+        >Items</button>
+        <button
+          className={`mp-tab-btn${activeTab === 'activity' ? ' active' : ''}`}
+          onClick={() => { setActiveTab('activity'); setActivityOffset(0); loadActivity(0); }}
+        >Activity</button>
+      </div>
+
+      {/* Activity feed */}
+      {activeTab === 'activity' && (
+        <div className="mp-activity">
+          {activityLoading && activity.length === 0 ? (
+            <div className="mp-empty"><div className="mp-spinner" /></div>
+          ) : activity.length === 0 ? (
+            <div className="mp-empty" style={{ padding: '40px 0' }}>No activity recorded yet.</div>
+          ) : (
+            <>
+              {activity.map((ev, i) => {
+                const label: Record<string, string> = {
+                  sale: 'Sale', transfer: 'Transfer', listing: 'Listed',
+                  listing_cancelled: 'Delisted', offer: 'Offer',
+                };
+                const color: Record<string, string> = {
+                  sale: '#4ade80', transfer: '#22d3ee', listing: '#f97316',
+                  listing_cancelled: '#6b7280', offer: '#a78bfa',
+                };
+                const displayName = ev.nft_name || (ev.token_index != null ? `#${ev.token_index + 1}` : ev.nft_id?.slice(0, 12) + '…' || '—');
+                return (
+                  <div key={`${ev.event_type}-${ev.nft_id ?? i}-${ev.timestamp}`} className="mp-activity-row">
+                    <div className="mp-activity-thumb">
+                      {ev.image_url
+                        ? <img src={ev.image_url} alt={displayName} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        : <div className="mp-activity-thumb-ph" />}
+                    </div>
+                    <div className="mp-activity-name">{displayName}</div>
+                    <div className="mp-activity-type" style={{ color: color[ev.event_type] || '#94a3b8' }}>
+                      {label[ev.event_type] || ev.event_type}
+                    </div>
+                    <div className="mp-activity-price">
+                      {ev.price_mojo != null
+                        ? <>{formatXch(ev.price_mojo)} {ev.price_token === 'xch' ? 'XCH' : ev.price_token.slice(0, 6)}</>
+                        : <span style={{ color: '#4b5563' }}>—</span>}
+                    </div>
+                    <div className="mp-activity-addrs">
+                      {ev.from_address && <span title={ev.from_address || ''}>{shortAddr(ev.from_address)}</span>}
+                      {ev.to_address   && <><span style={{ color: '#4b5563', margin: '0 4px' }}>→</span><span title={ev.to_address}>{shortAddr(ev.to_address)}</span></>}
+                    </div>
+                    <div className="mp-activity-time">{timeAgo(ev.timestamp)}</div>
+                  </div>
+                );
+              })}
+              {activityHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+                  <button
+                    className="mp-load-more"
+                    onClick={() => loadActivity(activityOffset)}
+                    disabled={activityLoading}
+                  >
+                    {activityLoading ? 'Loading…' : 'Load More'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* Trait filters */}
-      {traitCategories.length > 0 && (
+      {activeTab === 'gallery' && traitCategories.length > 0 && (
         <div className="mp-trait-panel">
           <div className="mp-trait-header">
             <button className="mp-trait-toggle" onClick={() => setFiltersOpen(o => !o)}>
@@ -600,7 +728,7 @@ export default function CollectionScreen() {
       )}
 
       {/* Gallery */}
-      {gallery.length > 0 && (
+      {activeTab === 'gallery' && gallery.length > 0 && (
         <div className="mp-gallery">
           <div className="mp-gallery-header">
             <h3 style={{ margin: 0 }}>{coll.source === 'wiznerd' ? 'Recently Minted' : `Collection · ${gallery.length} shown`}</h3>
@@ -629,7 +757,7 @@ export default function CollectionScreen() {
           </div>
           <div className={`mp-gallery-grid${gridSize === 'compact' ? ' mp-gallery-grid-compact' : ''}`}>
             {gallery.map((item, i) => (
-              <div key={item.token_index ?? `ext-${i}`} className="mp-gallery-item" onClick={() => setSelectedNft(item)} style={{ cursor: 'pointer' }}>
+              <div key={item.nft_id || `t-${item.token_index ?? i}`} className="mp-gallery-item" onClick={() => setSelectedNft(item)} style={{ cursor: 'pointer' }}>
                 {coll.reveal_type === 'revealed' || coll.reveal_type === 'instant' ? (
                   <img
                     src={item.image_url}
@@ -803,6 +931,19 @@ export default function CollectionScreen() {
 
               {/* Action buttons */}
               {!offerPanel && !takeTarget && (() => {
+                if (!walletAddress) {
+                  return (
+                    <div className="mp-nft-modal-actions">
+                      <span style={{ fontSize: 12, color: '#4b5563' }}>
+                        Open the wallet to buy, list, or make offers.
+                      </span>
+                      <button className="mp-nft-modal-btn mp-nft-modal-btn-secondary"
+                        onClick={() => window.open('/', '_blank')}>
+                        Open Wallet
+                      </button>
+                    </div>
+                  );
+                }
                 const isOwner = !!nftDetail?.owner_address && nftDetail.owner_address === walletAddress;
                 const existingAsk = nftDetail?.open_offers?.find(o => o.offer_type === 'ask');
                 return (
@@ -825,11 +966,6 @@ export default function CollectionScreen() {
                         onClick={() => setOfferPanel('bid')}>
                         Make Offer
                       </button>
-                    )}
-                    {!nftDetail && !nftDetailLoading && (
-                      <span style={{ fontSize: 12, color: '#4b5563' }}>
-                        Connect wallet to buy or list
-                      </span>
                     )}
                   </div>
                 );

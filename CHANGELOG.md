@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.1.0 — 2026-07-06 (Bug Fixes)
+
+### BUG-1 — Manage dashboard error state wired up
+- `error` state in `Manage.tsx` was declared but never set or displayed
+- `togglePause` and `handleReveal` now catch errors and surface them in the existing `mp-error-box` element
+- Error is cleared on each new action attempt
+
+### BUG-2 — Profile "Listed" badge now works
+- `/api/marketplace/offers/board?nft_ids=...` now accepts a comma-separated NFT ID list and returns only those with active asks
+- Profile page listing check uses this lightweight endpoint; "Listed" badge appears correctly on owned NFTs that have open asks
+
+### BUG-3 — Trait filter pills visually disabled when not indexed
+- `.mp-trait-pill.info-only` was missing CSS — pills had `cursor:pointer` and hover styles even though clicking did nothing
+- Added `pointer-events: none; opacity: 0.5; cursor: default` and overrode hover to make the inactive state unambiguous
+
+### BUG-4 — Activity tab paginated (Load More)
+- Activity endpoint hard-capped at 50 events with no way to load more
+- Server: added `?offset=` query param; response shape is now `{ events: [], hasMore: boolean }`; old array response still accepted client-side for backwards compatibility
+- Frontend: "Load More" button appears when `hasMore: true`; appends to existing list; spinner replaces button while loading
+
+### BUG-5 — Wallet connect prompt in NFT modal
+- Without a wallet address in localStorage, Buy/List/Make Offer buttons rendered but silently failed when clicked
+- NFT modal action area now shows "Open the wallet to buy, list, or make offers" + "Open Wallet" button (opens `/` in new tab) when no wallet is connected
+
+### Backend
+- `trending.js`: score formula now uses 7-day daily average as fallback when `sales_24h = 0`; eliminates "0 with score > 0" when there's no same-day activity
+- `trending.js`: `sales7d` added as parameter to `computeScore` (was computed but never passed in)
+- `marketplace.js`: traits endpoint returns `{ filterable: boolean, traits: {} }` instead of bare object; cache TTL is 2 min when `filterable: false` (backfill in progress) vs 30 min when fully indexed
+- `marketplace.js`: `isIndexed` in `Collection.tsx` now uses `traitsFilterable` from the explicit server flag instead of inferring from gallery items' trait presence
+
+---
+
 ## v1.4.0 — 2026-07-02 (Quick Wins: Polish & Discovery)
 
 ### QW1 — Verified badges
