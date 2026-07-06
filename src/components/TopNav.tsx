@@ -66,11 +66,13 @@ export default function TopNav({ activePath, onWalletSwitch }: TopNavProps) {
   const activeWallet = wallets.find(w => w.id === activeWalletId);
 
   const links = [
-    { href: '/',                    label: 'Wallet',      match: (p: string) => p === '/' },
-    { href: '/marketplace',         label: 'Marketplace', match: (p: string) => p === '/marketplace' },
-    { href: '/marketplace/offers',  label: 'Offer Board', match: (p: string) => p === '/marketplace/offers' },
-    { href: '/create',              label: 'Create',      match: (p: string) => p.startsWith('/create') },
-    { href: '/marketplace/profile', label: 'My NFTs',     match: (p: string) => p === '/marketplace/profile' },
+    { href: '/',                       label: 'Wallet',      match: (p: string) => p === '/' },
+    { href: '/marketplace',            label: 'Marketplace', match: (p: string) => p === '/marketplace' },
+    { href: '/marketplace/rankings',   label: 'Rankings',    match: (p: string) => p === '/marketplace/rankings' },
+    { href: '/marketplace/activity',   label: 'Activity',    match: (p: string) => p === '/marketplace/activity' },
+    { href: '/marketplace/offers',     label: 'Offer Board', match: (p: string) => p === '/marketplace/offers' },
+    { href: '/create',                 label: 'Create',      match: (p: string) => p.startsWith('/create') },
+    { href: '/marketplace/profile',    label: 'My NFTs',     match: (p: string) => p === '/marketplace/profile' },
   ];
 
   return (

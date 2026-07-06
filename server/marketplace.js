@@ -1314,4 +1314,190 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     res.json({ offers: enriched, total: total || 0 });
   });
+
+  // ── Rankings ─────────────────────────────────────────────────────────────────
+
+  app.get('/api/marketplace/rankings', async (req, res) => {
+    const sort  = req.query.sort || 'volume_7d';   // volume_7d | volume_24h | floor | trending | sales_7d
+    const limit = Math.min(200, parseInt(req.query.limit) || 100);
+
+    const col = {
+      volume_7d:   'volume_7d_mojo',
+      volume_24h:  'volume_24h_mojo',
+      floor:       'floor_price_mojo',
+      trending:    'trending_score',
+      sales_7d:    'sales_7d',
+    }[sort] || 'volume_7d_mojo';
+
+    const { data, error } = await supabase
+      .from('indexed_collections')
+      .select('collection_id,name,thumbnail_url,thumbnail_uri,verified,total_supply,minted_count,floor_price_mojo,volume_24h_mojo,volume_7d_mojo,sales_24h,sales_7d,listed_count,trending_score,source')
+      .not(col, 'is', null)
+      .gt(col, 0)
+      .order(col, { ascending: false })
+      .limit(limit);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  });
+
+  // ── Global activity feed ──────────────────────────────────────────────────────
+
+  app.get('/api/marketplace/activity', async (req, res) => {
+    const type   = req.query.type   || 'all';  // all | sale | transfer | listing | offer
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const PAGE   = 50;
+
+    // Transfers
+    let xferQuery = supabase
+      .from('nft_transfers')
+      .select('nft_id,collection_id,price_mojo,price_token,from_puzzle_hash,to_puzzle_hash,transferred_at')
+      .not('transferred_at', 'is', null)
+      .order('transferred_at', { ascending: false });
+
+    if (type === 'sale')     xferQuery = xferQuery.not('price_mojo', 'is', null);
+    if (type === 'transfer') xferQuery = xferQuery.is('price_mojo', null);
+
+    // Offers
+    let offerQuery = supabase
+      .from('nft_offers')
+      .select('id,nft_id,collection_id,offer_type,price_mojo,price_token,maker_puzzle_hash,created_at,status')
+      .order('created_at', { ascending: false });
+
+    const includeXfers  = ['all', 'sale', 'transfer'].includes(type);
+    const includeOffers = ['all', 'listing', 'offer'].includes(type);
+
+    const [xferRes, offerRes] = await Promise.all([
+      includeXfers  ? xferQuery.range(offset, offset + PAGE - 1)  : { data: [] },
+      includeOffers ? offerQuery.range(offset, offset + PAGE - 1) : { data: [] },
+    ]);
+
+    // Collect unique IDs for enrichment
+    const allNftIds = [...new Set([
+      ...(xferRes.data  || []).map(t => t.nft_id),
+      ...(offerRes.data || []).map(o => o.nft_id),
+    ].filter(Boolean))];
+
+    const allColIds = [...new Set([
+      ...(xferRes.data  || []).map(t => t.collection_id),
+      ...(offerRes.data || []).map(o => o.collection_id),
+    ].filter(Boolean))];
+
+    const [{ data: nftRows }, { data: colRows }] = await Promise.all([
+      allNftIds.length
+        ? supabase.from('indexed_nfts').select('nft_id,name,token_index,image_url').in('nft_id', allNftIds.slice(0, 100))
+        : { data: [] },
+      allColIds.length
+        ? supabase.from('indexed_collections').select('collection_id,name,thumbnail_url,thumbnail_uri').in('collection_id', allColIds.slice(0, 100))
+        : { data: [] },
+    ]);
+
+    const nftMap = Object.fromEntries((nftRows || []).map(n => [n.nft_id, n]));
+    const colMap = Object.fromEntries((colRows || []).map(c => [c.collection_id, c]));
+
+    const events = [];
+
+    for (const t of (xferRes.data || [])) {
+      events.push({
+        event_type:       t.price_mojo != null ? 'sale' : 'transfer',
+        nft_id:           t.nft_id,
+        nft_name:         nftMap[t.nft_id]?.name || null,
+        token_index:      nftMap[t.nft_id]?.token_index ?? null,
+        image_url:        nftMap[t.nft_id]?.image_url || null,
+        collection_id:    t.collection_id,
+        collection_name:  colMap[t.collection_id]?.name || null,
+        collection_thumb: colMap[t.collection_id]?.thumbnail_url || colMap[t.collection_id]?.thumbnail_uri || null,
+        price_mojo:       t.price_mojo,
+        price_token:      t.price_token || 'xch',
+        from_address:     puzzleHashToAddress(t.from_puzzle_hash),
+        to_address:       puzzleHashToAddress(t.to_puzzle_hash),
+        timestamp:        t.transferred_at,
+      });
+    }
+
+    for (const o of (offerRes.data || [])) {
+      const ev = o.offer_type === 'ask'
+        ? (o.status === 'cancelled' ? 'listing_cancelled' : 'listing')
+        : 'offer';
+      events.push({
+        event_type:       ev,
+        nft_id:           o.nft_id,
+        nft_name:         nftMap[o.nft_id]?.name || null,
+        token_index:      nftMap[o.nft_id]?.token_index ?? null,
+        image_url:        nftMap[o.nft_id]?.image_url || null,
+        collection_id:    o.collection_id,
+        collection_name:  colMap[o.collection_id]?.name || null,
+        collection_thumb: colMap[o.collection_id]?.thumbnail_url || colMap[o.collection_id]?.thumbnail_uri || null,
+        price_mojo:       o.price_mojo,
+        price_token:      o.price_token || 'xch',
+        from_address:     puzzleHashToAddress(o.maker_puzzle_hash),
+        to_address:       null,
+        timestamp:        o.created_at,
+      });
+    }
+
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const page = events.slice(0, PAGE);
+    res.json({ events: page, hasMore: page.length >= PAGE });
+  });
+
+  // ── Notable sales (top sales last 7 days) ─────────────────────────────────────
+
+  app.get('/api/marketplace/notable-sales', async (req, res) => {
+    const days  = Math.min(30, parseInt(req.query.days) || 7);
+    const limit = Math.min(20, parseInt(req.query.limit) || 10);
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    const { data: transfers } = await supabase
+      .from('nft_transfers')
+      .select('nft_id,collection_id,price_mojo,price_token,transferred_at')
+      .not('price_mojo', 'is', null)
+      .gte('transferred_at', since)
+      .order('price_mojo', { ascending: false })
+      .limit(limit);
+
+    if (!transfers?.length) return res.json([]);
+
+    const nftIds = transfers.map(t => t.nft_id).filter(Boolean);
+    const colIds = [...new Set(transfers.map(t => t.collection_id).filter(Boolean))];
+
+    const [{ data: nftRows }, { data: colRows }] = await Promise.all([
+      nftIds.length ? supabase.from('indexed_nfts').select('nft_id,name,token_index,image_url,rarity_rank').in('nft_id', nftIds) : { data: [] },
+      colIds.length ? supabase.from('indexed_collections').select('collection_id,name,thumbnail_url,thumbnail_uri').in('collection_id', colIds) : { data: [] },
+    ]);
+
+    const nftMap = Object.fromEntries((nftRows || []).map(n => [n.nft_id, n]));
+    const colMap = Object.fromEntries((colRows || []).map(c => [c.collection_id, c]));
+
+    res.json(transfers.map(t => ({
+      nft_id:           t.nft_id,
+      name:             nftMap[t.nft_id]?.name || null,
+      token_index:      nftMap[t.nft_id]?.token_index ?? null,
+      image_url:        nftMap[t.nft_id]?.image_url || null,
+      rarity_rank:      nftMap[t.nft_id]?.rarity_rank || null,
+      collection_id:    t.collection_id,
+      collection_name:  colMap[t.collection_id]?.name || null,
+      collection_thumb: colMap[t.collection_id]?.thumbnail_url || colMap[t.collection_id]?.thumbnail_uri || null,
+      price_mojo:       t.price_mojo,
+      price_token:      t.price_token || 'xch',
+      sold_at:          t.transferred_at,
+    })));
+  });
+
+  // ── Floor price history (for collection chart) ────────────────────────────────
+
+  app.get('/api/marketplace/:id/floor-history', async (req, res) => {
+    const id   = req.params.id;
+    const days = Math.min(90, parseInt(req.query.days) || 30);
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    const { data } = await supabase
+      .from('floor_snapshots')
+      .select('floor_price_mojo,snapshot_at')
+      .eq('collection_id', id)
+      .gte('snapshot_at', since)
+      .order('snapshot_at', { ascending: true });
+
+    res.json(data || []);
+  });
 };

@@ -31,6 +31,19 @@ interface Listing {
   listed_count?: number;
 }
 
+interface NotableSale {
+  nft_id: string | null;
+  name: string | null;
+  token_index: number | null;
+  image_url: string | null;
+  collection_id: string | null;
+  collection_name: string | null;
+  collection_thumb: string | null;
+  price_mojo: number;
+  price_token: string;
+  sold_at: string;
+}
+
 function formatXch(mojo: number): string {
   const v = Number(mojo) / 1e12;
   if (v === 0) return '0';
@@ -70,19 +83,22 @@ export default function MarketplaceScreen() {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [search, setSearch] = useState('');
   const [xchPrice, setXchPrice] = useState(0);
+  const [notableSales, setNotableSales] = useState<NotableSale[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
-      const [wiznerdRes, extRes, priceRes] = await Promise.all([
+      const [wiznerdRes, extRes, priceRes, salesRes] = await Promise.all([
         fetch(`${API_URL}/api/marketplace/listings?filter=all${searchParam}`, { signal: AbortSignal.timeout(10000) }),
         fetch(`${API_URL}/api/marketplace/external${search ? `?search=${encodeURIComponent(search)}` : ''}`, { signal: AbortSignal.timeout(12000) }).catch(() => null),
         fetch(`${PROXY_URL}/price/xch`, { signal: AbortSignal.timeout(5000) }).catch(() => null),
+        !search ? fetch(`${API_URL}/api/marketplace/notable-sales?limit=8`, { signal: AbortSignal.timeout(8000) }).catch(() => null) : Promise.resolve(null),
       ]);
       if (wiznerdRes.ok) setWiznerdListings(await wiznerdRes.json());
       if (extRes?.ok) setExternalListings(await extRes.json());
       if (priceRes?.ok) { const p = await priceRes.json(); if (p.price) setXchPrice(p.price); }
+      if (salesRes?.ok) setNotableSales(await salesRes.json());
     } catch { /* server not running */ }
     finally { setLoading(false); }
   }, [search]);
@@ -167,6 +183,77 @@ export default function MarketplaceScreen() {
         ))}
       </div>
 
+      {/* Notable Sales row — shown when on All tab with no search */}
+      {!search && filter === 'all' && notableSales.length > 0 && (
+        <div className="mp-section">
+          <div className="mp-section-header">
+            <span className="mp-section-title">Notable Sales</span>
+            <a href="/marketplace/activity?type=sale" className="mp-section-more">See all →</a>
+          </div>
+          <div className="mp-scroll-row">
+            {notableSales.map((s, i) => {
+              const displayName = s.name || (s.token_index != null ? `#${s.token_index + 1}` : s.nft_id?.slice(0, 10) + '…');
+              const priceXch = (s.price_mojo / 1e12).toFixed(s.price_mojo >= 1e12 ? 2 : 4).replace(/0+$/, '');
+              return (
+                <div
+                  key={i}
+                  className="mp-scroll-card"
+                  onClick={() => s.collection_id && navigate(`/marketplace/${s.collection_id}`)}
+                >
+                  <div className="mp-scroll-img">
+                    {s.image_url
+                      ? <img src={s.image_url} alt={displayName || ''} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      : <div className="mp-scroll-img-ph" />}
+                  </div>
+                  <div className="mp-scroll-body">
+                    <div className="mp-scroll-name">{displayName}</div>
+                    {s.collection_name && <div className="mp-scroll-sub">{s.collection_name}</div>}
+                    <div className="mp-scroll-price">{priceXch} XCH</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Fresh Mints row — recently added external collections */}
+      {!search && filter === 'all' && (() => {
+        const recent = externalListings
+          .filter(c => (c.minted_count ?? 0) > 0)
+          .slice(0, 8);
+        if (!recent.length) return null;
+        return (
+          <div className="mp-section">
+            <div className="mp-section-header">
+              <span className="mp-section-title">Recently Active</span>
+              <a href="/marketplace/rankings" className="mp-section-more">Rankings →</a>
+            </div>
+            <div className="mp-scroll-row">
+              {recent.map(c => (
+                <div key={c.id} className="mp-scroll-card" onClick={() => navigate(`/marketplace/${c.id}`)}>
+                  <div className="mp-scroll-img">
+                    {c.thumbnail_url
+                      ? <img src={c.thumbnail_url} alt={c.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      : <div className="mp-scroll-img-ph" />}
+                  </div>
+                  <div className="mp-scroll-body">
+                    <div className="mp-scroll-name">
+                      {c.name}
+                      {c.verified && <span className="mp-verified-badge">✓</span>}
+                    </div>
+                    <div className="mp-scroll-sub">{(c.minted_count ?? 0).toLocaleString()} minted</div>
+                    {(c.floor_price_mojo ?? 0) > 0 && (
+                      <div className="mp-scroll-price">{formatXch(c.mint_price_mojo)} XCH floor</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Grid */}
       <div className="mp-grid">
         {loading ? (
@@ -222,12 +309,17 @@ export default function MarketplaceScreen() {
                       </>
                     ) : (
                       <>
+                        {(c.volume_7d_mojo ?? 0) > 0 && (
+                          <span style={{ color: '#22d3ee', fontSize: 11 }}>
+                            {formatXch(c.volume_7d_mojo!)} XCH 7d vol
+                          </span>
+                        )}
                         {(c.listed_count ?? 0) > 0 && (
                           <span style={{ color: '#f97316', fontSize: 11 }}>
                             {c.listed_count} listed
                           </span>
                         )}
-                        {(c.indexed_count ?? 0) > 0 && (
+                        {(c.volume_7d_mojo ?? 0) === 0 && (c.indexed_count ?? 0) > 0 && (
                           <span style={{ color: '#4a5568', fontSize: 11 }}>
                             {(c.indexed_count ?? 0).toLocaleString()} supply
                           </span>

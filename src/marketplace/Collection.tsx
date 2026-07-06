@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
+import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import './marketplace.css';
 import { supabase } from '../lib/supabase';
 import TopNav from '../components/TopNav';
@@ -167,6 +168,8 @@ export default function CollectionScreen() {
     volume_24h_mojo: number; volume_7d_mojo: number; volume_all_mojo: number;
     sales_24h: number; sales_7d: number; sales_all: number;
   } | null>(null);
+  const [floorHistory, setFloorHistory] = useState<{ floor_price_mojo: number; snapshot_at: string }[]>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const msLeft = useCountdown(coll?.launch_at ?? null);
   const isLive = coll?.marketplace_status === 'live' && (!coll.launch_at || msLeft <= 0);
@@ -237,6 +240,14 @@ export default function CollectionScreen() {
     } catch { /* ignore */ }
   }, []);
 
+  const loadFloorHistory = useCallback(async () => {
+    if (!id) return;
+    try {
+      const r = await fetch(`${API_URL}/api/marketplace/${id}/floor-history?days=30`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) setFloorHistory(await r.json());
+    } catch { /* ignore */ }
+  }, [id]);
+
   const loadCatWallets = useCallback(async () => {
     try {
       const r = await fetch(`${API_URL}/api/wallet/cats`, { signal: AbortSignal.timeout(8000) });
@@ -290,6 +301,7 @@ export default function CollectionScreen() {
 
   // Load NFT detail when modal opens
   useEffect(() => {
+    setHistoryExpanded(false);
     if (!selectedNft?.nft_id) { setNftDetail(null); return; }
     setNftDetail(null);
     setNftDetailLoading(true);
@@ -301,7 +313,7 @@ export default function CollectionScreen() {
   }, [selectedNft?.nft_id]);
 
   // One-time loads
-  useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); }, [loadColl, loadPrice, loadTraits, loadCatWallets]);
+  useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); loadFloorHistory(); }, [loadColl, loadPrice, loadTraits, loadCatWallets, loadFloorHistory]);
 
   useEffect(() => {
     if (!id) return;
@@ -505,6 +517,49 @@ export default function CollectionScreen() {
               </>
             )}
           </div>
+
+          {/* Floor price history chart — shown when snapshots exist */}
+          {floorHistory.length >= 2 && (() => {
+            const chartData = floorHistory.map(s => ({
+              date: new Date(s.snapshot_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              xch:  Math.round(s.floor_price_mojo / 1e9) / 1000,
+            }));
+            const first = chartData[0]?.xch ?? 0;
+            const last  = chartData[chartData.length - 1]?.xch ?? 0;
+            const pct   = first > 0 ? ((last - first) / first * 100) : 0;
+            const up    = pct >= 0;
+            return (
+              <div style={{ marginTop: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Floor — 30d
+                  </span>
+                  {Math.abs(pct) >= 1 && (
+                    <span style={{ fontSize: 11, color: up ? '#4ade80' : '#f87171' }}>
+                      {up ? '↑' : '↓'}{Math.abs(pct).toFixed(0)}% 30d
+                    </span>
+                  )}
+                </div>
+                <ResponsiveContainer width="100%" height={64}>
+                  <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="floor-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#22d3ee" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="date" hide />
+                    <Tooltip
+                      contentStyle={{ background: '#111218', border: '1px solid #1e2030', borderRadius: 6, fontSize: 11 }}
+                      labelStyle={{ color: '#94a3b8' }}
+                      formatter={(v) => [`${v} XCH`, 'Floor']}
+                    />
+                    <Area type="monotone" dataKey="xch" stroke="#22d3ee" strokeWidth={1.5} fill="url(#floor-grad)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Right: mint panel or collection info */}
@@ -912,8 +967,18 @@ export default function CollectionScreen() {
               {/* Transfer history */}
               {nftDetail?.history && nftDetail.history.length > 0 && (
                 <div className="mp-nft-modal-history">
-                  <div className="mp-nft-modal-section-title">History</div>
-                  {nftDetail.history.slice(0, 5).map((h, i) => (
+                  <div className="mp-nft-modal-section-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    History
+                    {nftDetail.history.length > 5 && (
+                      <button
+                        style={{ background: 'none', border: 'none', color: '#f97316', fontSize: 11, cursor: 'pointer' }}
+                        onClick={() => setHistoryExpanded(e => !e)}
+                      >
+                        {historyExpanded ? 'Show less' : `View all ${nftDetail.history.length}`}
+                      </button>
+                    )}
+                  </div>
+                  {(historyExpanded ? nftDetail.history : nftDetail.history.slice(0, 5)).map((h, i) => (
                     <div key={i} className="mp-nft-modal-history-row">
                       <span className="mp-nft-modal-history-type">{h.type || (h.price_mojo ? 'Sale' : 'Transfer')}</span>
                       {h.price_mojo ? (

@@ -156,15 +156,49 @@ async function recalculate(supabase) {
   console.log(`[trending] updated ${written} collections · ${active} with score > 0`);
 }
 
+// ── Hourly floor price snapshot ───────────────────────────────────────────────
+
+const SNAPSHOT_MS = 60 * 60 * 1000; // 1 hour
+
+async function snapshotFloors(supabase) {
+  const { data: cols } = await supabase
+    .from('indexed_collections')
+    .select('collection_id,floor_price_mojo')
+    .not('floor_price_mojo', 'is', null)
+    .gt('floor_price_mojo', 0);
+
+  if (!cols?.length) return;
+
+  const rows = cols.map(c => ({
+    collection_id:   c.collection_id,
+    floor_price_mojo: c.floor_price_mojo,
+    snapshot_at:     new Date().toISOString(),
+  }));
+
+  // Insert in batches of 200
+  for (let i = 0; i < rows.length; i += 200) {
+    const { error } = await supabase.from('floor_snapshots').insert(rows.slice(i, i + 200));
+    if (error) console.warn('[floors] snapshot error:', error.message);
+  }
+  console.log(`[floors] snapshotted ${rows.length} floor prices`);
+}
+
 function start(supabase) {
   console.log('[trending] starting score job (15 min interval)');
   recalculate(supabase).catch(e => console.error('[trending] initial run error:', e.message));
+
+  // Take an initial floor snapshot, then every hour
+  snapshotFloors(supabase).catch(e => console.warn('[floors] initial snapshot error:', e.message));
+  setInterval(() => {
+    snapshotFloors(supabase).catch(e => console.warn('[floors] snapshot error:', e.message));
+  }, SNAPSHOT_MS);
+
   return setInterval(() => {
     recalculate(supabase).catch(e => console.error('[trending] recalc error:', e.message));
   }, RECALC_MS);
 }
 
-module.exports = { start, recalculate };
+module.exports = { start, recalculate, snapshotFloors };
 
 if (require.main === module) {
   require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });

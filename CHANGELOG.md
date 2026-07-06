@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.2.0 — 2026-07-06 (Rankings, Activity Feed, Floor History)
+
+### Rankings page (`/marketplace/rankings`)
+- New full-page rankings table: rank #, collection thumb + name + verified badge, floor, 24h vol, 7d vol, 24h sales, 7d sales, listed count, supply
+- Sort controls: 7d Volume (default), 24h Volume, Floor Price, Trending Score, 7d Sales
+- Click any row to navigate to the collection
+- Server: `GET /api/marketplace/rankings?sort=...&limit=100` backed by `indexed_collections` + real-time trending data
+- TopNav: "Rankings" link added (active state detection)
+
+### Global Activity feed (`/marketplace/activity`)
+- Cross-collection activity feed showing sales, transfers, listings, and offers
+- Filter tabs: All / Sales / Transfers / Listings / Offers
+- Each row: NFT thumbnail, NFT name, collection link, event type (color-coded), price, from→to addresses, time
+- Load More pagination (`hasMore` flag, `?offset=` query param)
+- Server: `GET /api/marketplace/activity?type=...&offset=...` backed by `nft_events` table
+- TopNav: "Activity" link added
+
+### Floor price history chart (Collection page)
+- Hourly cron in `trending.js` snapshots floor prices into new `floor_snapshots` table
+- Collection stats section shows a 64px cyan AreaChart (recharts) when ≥ 2 snapshots exist
+- 30-day % change indicator shown next to "Floor — 30d" label (green/red)
+- Server: `GET /api/marketplace/:id/floor-history?days=30`
+- DB: `supabase/migrations/020_floor_snapshots.sql` — creates table, index, 90-day purge function
+
+### Notable Sales section (Homepage)
+- Horizontal scroll row on the "All" tab (no search) showing top 8 sales by price in last 7 days
+- Each card: NFT image, name, collection name, price in XCH
+- Server: `GET /api/marketplace/notable-sales?days=7&limit=10`
+
+### Recently Active section (Homepage)
+- Horizontal scroll row showing up to 8 external collections sorted by recent activity
+- Links to Rankings page for full list
+
+### NFT history expand toggle (Collection page)
+- NFT event history previously capped at 5 entries with no way to see more
+- "View all N" / "Show less" toggle button replaces the hard slice
+- `historyExpanded` resets to false when a different NFT is selected
+
+### 7d volume on browse cards
+- Non-trending external collection cards now show `X XCH 7d vol` when `volume_7d_mojo > 0`
+
+### DB Migration required
+Run `supabase/migrations/020_floor_snapshots.sql` in the Supabase SQL editor, then restart `server/index.js` to activate the hourly floor snapshot cron.
+
+---
+
 ## v1.1.0 — 2026-07-06 (Bug Fixes)
 
 ### BUG-1 — Manage dashboard error state wired up
