@@ -1022,10 +1022,20 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
   // ── Profile — owned NFTs from indexed_nfts ───────────────────────────────────
 
-  app.get('/api/marketplace/profile', async (req, res) => {
-    const { address } = req.query;
+  // Also handle POST for when nft_ids list is too long for a query string (260+ NFTs)
+  async function handleProfileRequest(req, res) {
+    const address = req.query.address || req.body?.address;
     if (!address) return res.status(400).json({ error: 'address required' });
 
+    // nft_ids can come from query string (small lists) or POST body (large lists)
+    const rawIds = req.body?.nft_ids || req.query.nft_ids;
+    const nftIds = Array.isArray(rawIds)
+      ? rawIds
+      : typeof rawIds === 'string'
+        ? rawIds.split(',').map(s => s.trim()).filter(Boolean)
+        : null;
+
+    // Always decode the address to a puzzle hash for the primary-address query
     let puzzleHex;
     try {
       const d = bech32m.decode(String(address), 90);
@@ -1034,20 +1044,41 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       return res.status(400).json({ error: 'Invalid address' });
     }
 
-    const { data: nfts, error } = await supabase
-      .from('indexed_nfts')
-      .select('nft_id,name,token_index,image_url,traits,collection_id,rarity_rank,rarity_score')
-      .or(`owner_puzzle_hash.eq.${puzzleHex},owner_puzzle_hash.eq.0x${puzzleHex}`)
-      .order('collection_id', { ascending: true })
-      .order('token_index', { ascending: true, nullsFirst: false });
+    const SELECT = 'nft_id,name,token_index,image_url,traits,collection_id,rarity_rank,rarity_score';
 
-    if (error) return res.status(500).json({ error: error.message });
+    // Run both queries in parallel and merge:
+    // 1. puzzle-hash query  → NFTs at the primary address (e.g. all Meowfers)
+    // 2. nft_id query       → NFTs at other wallet derivation addresses (other collections)
+    const [phResult, idResult] = await Promise.all([
+      supabase.from('indexed_nfts').select(SELECT)
+        .or(`owner_puzzle_hash.eq.${puzzleHex},owner_puzzle_hash.eq.0x${puzzleHex}`)
+        .order('collection_id', { ascending: true })
+        .order('token_index', { ascending: true, nullsFirst: false }),
+      nftIds?.length
+        ? supabase.from('indexed_nfts').select(SELECT)
+            .in('nft_id', nftIds)
+            .order('collection_id', { ascending: true })
+            .order('token_index', { ascending: true, nullsFirst: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (phResult.error) return res.status(500).json({ error: phResult.error.message });
+
+    // Merge, deduplicate by nft_id
+    const seen = new Set();
+    const nfts = [...(phResult.data || []), ...(idResult.data || [])].filter(n => {
+      if (seen.has(n.nft_id)) return false;
+      seen.add(n.nft_id);
+      return true;
+    });
+
+    if (phResult.error) return res.status(500).json({ error: phResult.error.message });
 
     const collectionIds = [...new Set((nfts || []).map(n => n.collection_id).filter(Boolean))];
 
     const { data: colRows } = await supabase
       .from('indexed_collections')
-      .select('collection_id,name,thumbnail_uri')
+      .select('collection_id,name,thumbnail_url')
       .in('collection_id', collectionIds.length ? collectionIds : ['__none__']);
 
     const colMap = Object.fromEntries((colRows || []).map(c => [c.collection_id, c]));
@@ -1061,12 +1092,179 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       .map(id => ({
         id,
         name: colMap[id]?.name || id.slice(0, 12) + '…',
-        thumbnail_uri: colMap[id]?.thumbnail_uri || null,
+        thumbnail_url: colMap[id]?.thumbnail_url || null,
         count: collectionCounts[id] || 0,
       }))
       .sort((a, b) => b.count - a.count);
 
     res.json({ nfts: nfts || [], collections });
+  }
+
+  app.get('/api/marketplace/profile', handleProfileRequest);
+  app.post('/api/marketplace/profile', handleProfileRequest);
+
+
+  // ── Debug: what does the wallet daemon see? ───────────────────────────────────
+
+  app.get('/api/debug/wallet-nfts', async (req, res) => {
+    try {
+      const { wallets } = await walletRpc('get_wallets', { include_data: false });
+      const nftWallets = (wallets || []).filter(w => w.type === 10);
+      const result = [];
+      for (const w of nftWallets) {
+        try {
+          const { nft_list } = await walletRpc('nft_get_nfts', { wallet_id: w.id });
+          result.push({ wallet_id: w.id, name: w.name, count: (nft_list || []).length,
+            nfts: (nft_list || []).map(n => ({ launcher_id: n.launcher_id, minter_did: n.minter_did })) });
+        } catch (e) {
+          result.push({ wallet_id: w.id, name: w.name, error: e.message });
+        }
+      }
+      res.json({ nft_wallet_count: nftWallets.length, wallets: result });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+  });
+
+  // ── Profile wallet sync — index any owned NFTs not yet in the DB ─────────────
+  // Queries the local wallet daemon for all NFTs, fetches IPFS metadata for
+  // any not already in indexed_nfts, and upserts them so the profile page shows
+  // the full wallet contents even for collections the block crawler hasn't hit yet.
+
+  app.post('/api/marketplace/profile/sync', async (req, res) => {
+    try {
+      const { wallets } = await walletRpc('get_wallets', { include_data: false });
+      const nftWallets = (wallets || []).filter(w => w.type === 10);
+
+      // Collect all NFTs from every NFT wallet; normalize nft_id to 0x-prefixed hex
+      const allNfts = [];
+      for (const w of nftWallets) {
+        try {
+          const { nft_list } = await walletRpc('nft_get_nfts', { wallet_id: w.id });
+          for (const nft of (nft_list || [])) {
+            const rawHex = (nft.launcher_id || '').replace('0x', '').toLowerCase();
+            if (rawHex) allNfts.push({ nftId: `0x${rawHex}`, nft });
+          }
+        } catch { /* skip wallets that fail */ }
+      }
+
+      if (!allNfts.length) return res.json({ synced: 0, total: 0, nft_ids: [] });
+
+
+      // Find which are already in indexed_nfts (DB stores with 0x prefix)
+      const { data: existing } = await supabase
+        .from('indexed_nfts')
+        .select('nft_id,collection_id')
+        .in('nft_id', allNfts.map(n => n.nftId));
+      const indexedSet = new Set((existing || []).map(r => r.nft_id.toLowerCase()));
+
+      // Also re-fetch metadata for stubs that were inserted without a collection_id
+      const needsMetadata = new Set(
+        (existing || []).filter(r => !r.collection_id).map(r => r.nft_id.toLowerCase())
+      );
+
+      const toInsert  = allNfts.filter(n => !indexedSet.has(n.nftId.toLowerCase()));
+      const toRefetch = allNfts.filter(n => needsMetadata.has(n.nftId.toLowerCase()));
+
+      // ── Phase 1: fast stub insert (no IPFS) — image comes from data_uris ──────
+      for (const { nftId, nft } of toInsert) {
+        try {
+          const imageUri = (nft.data_uris || [])[0] || null;
+          const imageUrl = imageUri
+            ? (imageUri.startsWith('ipfs://')
+                ? `https://gateway.pinata.cloud/ipfs/${imageUri.replace('ipfs://', '')}`
+                : imageUri)
+            : null;
+          await supabase.from('indexed_nfts').upsert({
+            nft_id:            nftId,
+            image_url:         imageUrl,
+            metadata_uri:      (nft.metadata_uris || [])[0] || null,
+            data_hash:         (nft.data_hash     || '').replace('0x', '') || null,
+            meta_hash:         (nft.metadata_hash || '').replace('0x', '') || null,
+            owner_puzzle_hash: (nft.p2_address    || '').replace('0x', '') || null,
+            minter_did:        (nft.minter_did    || '').replace('0x', '') || null,
+            updated_at:        new Date().toISOString(),
+          }, { onConflict: 'nft_id' });
+        } catch { /* skip */ }
+      }
+
+      // Respond immediately with all wallet IDs so the profile can load
+      res.json({ synced: toInsert.length, total: allNfts.length, nft_ids: allNfts.map(n => n.nftId) });
+
+      // ── Phase 2: background IPFS metadata fetch (3 concurrent) ───────────────
+      const needFetch = [...toInsert, ...toRefetch];
+      if (!needFetch.length) return;
+
+      async function fetchAndUpdateMeta({ nftId, nft }) {
+        const metadataUri = (nft.metadata_uris || [])[0] || null;
+        const imageUri    = (nft.data_uris || [])[0] || null;
+        const minterDid   = (nft.minter_did || '').replace('0x', '') || null;
+        const imageUrl    = imageUri
+          ? (imageUri.startsWith('ipfs://')
+              ? `https://gateway.pinata.cloud/ipfs/${imageUri.replace('ipfs://', '')}`
+              : imageUri)
+          : null;
+
+        let meta = null;
+        if (metadataUri) {
+          const url = metadataUri.startsWith('ipfs://')
+            ? `https://gateway.pinata.cloud/ipfs/${metadataUri.replace('ipfs://', '')}`
+            : metadataUri;
+          try {
+            const mr = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+            if (mr.ok && (mr.headers.get('content-type') || '').includes('json')) meta = await mr.json();
+          } catch { /* leave meta null */ }
+        }
+
+        const collectionId = meta?.collection?.id || null;
+        const traits       = meta?.attributes
+          ? Object.fromEntries(meta.attributes.map(a => [a.trait_type, String(a.value)]))
+          : {};
+
+        if (collectionId) {
+          const collectionAttrs = meta?.collection?.attributes || [];
+          const iconAttr = collectionAttrs.find(a => a.type === 'icon');
+          const thumbUrl = iconAttr?.value
+            ? (iconAttr.value.startsWith('ipfs://')
+                ? `https://gateway.pinata.cloud/ipfs/${iconAttr.value.replace('ipfs://', '')}`
+                : iconAttr.value)
+            : imageUrl;
+          const { data: ec } = await supabase.from('indexed_collections')
+            .select('thumbnail_url,verified,floor_price_mojo,total_supply,minted_count,source')
+            .eq('collection_id', collectionId).maybeSingle();
+          await supabase.from('indexed_collections').upsert({
+            collection_id:    collectionId,
+            name:             meta?.collection?.name || 'Unknown Collection',
+            thumbnail_url:    thumbUrl || ec?.thumbnail_url || null,
+            total_supply:     meta?.series_total || ec?.total_supply || 0,
+            minted_count:     (ec?.minted_count || 0) + (ec ? 0 : 1),
+            floor_price_mojo: ec?.floor_price_mojo || 0,
+            creator_did:      minterDid || null,
+            source:           ec?.source || 'wallet-sync',
+            verified:         ec?.verified || false,
+            updated_at:       new Date().toISOString(),
+          }, { onConflict: 'collection_id' });
+        }
+
+        await supabase.from('indexed_nfts').upsert({
+          nft_id:        nftId,
+          collection_id: collectionId,
+          token_index:   meta?.series_number != null ? meta.series_number - 1 : null,
+          name:          meta?.name || null,
+          image_url:     imageUrl,
+          traits,
+          updated_at:    new Date().toISOString(),
+        }, { onConflict: 'nft_id' });
+      }
+
+      // Run 3 IPFS fetches at a time
+      const CONCURRENCY = 3;
+      for (let i = 0; i < needFetch.length; i += CONCURRENCY) {
+        await Promise.allSettled(needFetch.slice(i, i + CONCURRENCY).map(fetchAndUpdateMeta));
+      }
+    } catch (e) {
+      if (!res.headersSent) res.status(502).json({ error: e.message });
+    }
   });
 
   // ── Publish (step 8 of wizard) ────────────────────────────────────────────────
@@ -1592,13 +1790,34 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
     const PAGE   = 50;
 
-    // Optional address filter for profile activity tab
-    let puzzleFilter = null;
+    // Optional address filter for profile activity tab.
+    // Dexie-sourced transfers store nft_id (bech32m) but have null puzzle hashes,
+    // so we filter by the set of nft_ids the address owns rather than by puzzle hash.
+    let addressNftIds = null;  // null = no filter (global feed)
     if (req.query.address) {
       try {
-        const { bech32m: bm } = require('bech32');
-        const d = bm.decode(String(req.query.address), 90);
-        puzzleFilter = Buffer.from(bm.fromWords(d.words)).toString('hex');
+        const d = bech32m.decode(String(req.query.address), 90);
+        const puzzleHex = Buffer.from(bech32m.fromWords(d.words)).toString('hex');
+
+        // Fetch all nft_ids owned by this address from indexed_nfts
+        const { data: ownedNfts } = await supabase
+          .from('indexed_nfts')
+          .select('nft_id')
+          .or(`owner_puzzle_hash.eq.${puzzleHex},owner_puzzle_hash.eq.0x${puzzleHex}`)
+          .limit(500);
+
+        // Normalise to bech32m (nft1...) — that's what nft_transfers.nft_id stores
+        addressNftIds = (ownedNfts || []).map(n => {
+          if (n.nft_id && n.nft_id.startsWith('0x')) {
+            try {
+              const words = bech32m.toWords(Buffer.from(n.nft_id.slice(2), 'hex'));
+              return bech32m.encode('nft', words);
+            } catch { return null; }
+          }
+          return n.nft_id; // already bech32m
+        }).filter(Boolean);
+
+        if (!addressNftIds.length) return res.json({ events: [], hasMore: false });
       } catch { /* invalid address — ignore filter */ }
     }
 
@@ -1611,7 +1830,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     if (type === 'sale')     xferQuery = xferQuery.not('price_mojo', 'is', null);
     if (type === 'transfer') xferQuery = xferQuery.is('price_mojo', null);
-    if (puzzleFilter) xferQuery = xferQuery.or(`from_puzzle_hash.eq.${puzzleFilter},to_puzzle_hash.eq.${puzzleFilter},from_puzzle_hash.eq.0x${puzzleFilter},to_puzzle_hash.eq.0x${puzzleFilter}`);
+    if (addressNftIds)       xferQuery = xferQuery.in('nft_id', addressNftIds);
 
     // Offers
     let offerQuery = supabase
@@ -1619,7 +1838,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       .select('id,nft_id,collection_id,offer_type,price_mojo,price_token,maker_puzzle_hash,created_at,status')
       .order('created_at', { ascending: false });
 
-    if (puzzleFilter) offerQuery = offerQuery.or(`maker_puzzle_hash.eq.${puzzleFilter},maker_puzzle_hash.eq.0x${puzzleFilter}`);
+    if (addressNftIds) offerQuery = offerQuery.in('nft_id', addressNftIds);
 
     const includeXfers  = ['all', 'sale', 'transfer'].includes(type);
     const includeOffers = ['all', 'listing', 'offer'].includes(type);
@@ -1645,7 +1864,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         ? supabase.from('indexed_nfts').select('nft_id,name,token_index,image_url').in('nft_id', allNftIds.slice(0, 100))
         : { data: [] },
       allColIds.length
-        ? supabase.from('indexed_collections').select('collection_id,name,thumbnail_url,thumbnail_uri').in('collection_id', allColIds.slice(0, 100))
+        ? supabase.from('indexed_collections').select('collection_id,name,thumbnail_url').in('collection_id', allColIds.slice(0, 100))
         : { data: [] },
     ]);
 
@@ -1663,7 +1882,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         image_url:        nftMap[t.nft_id]?.image_url || null,
         collection_id:    t.collection_id,
         collection_name:  colMap[t.collection_id]?.name || null,
-        collection_thumb: colMap[t.collection_id]?.thumbnail_url || colMap[t.collection_id]?.thumbnail_uri || null,
+        collection_thumb: colMap[t.collection_id]?.thumbnail_url || null,
         price_mojo:       t.price_mojo,
         price_token:      t.price_token || 'xch',
         from_address:     puzzleHashToAddress(t.from_puzzle_hash),
@@ -1734,7 +1953,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       rarity_rank:      nftMap[t.nft_id]?.rarity_rank || null,
       collection_id:    t.collection_id,
       collection_name:  colMap[t.collection_id]?.name || null,
-      collection_thumb: colMap[t.collection_id]?.thumbnail_url || colMap[t.collection_id]?.thumbnail_uri || null,
+      collection_thumb: colMap[t.collection_id]?.thumbnail_url || null,
       price_mojo:       t.price_mojo,
       price_token:      t.price_token || 'xch',
       sold_at:          t.transferred_at,

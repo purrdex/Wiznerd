@@ -100,6 +100,7 @@ export default function ProfilePage() {
   const [bulkListOpen, setBulkListOpen] = useState(false);
   const [bulkPrice, setBulkPrice] = useState('');
   const [bulkExpiry, setBulkExpiry] = useState('');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
   const [bulkStatus, setBulkStatus] = useState<{ done: number; total: number; error?: string } | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [collBids, setCollBids] = useState<CollectionBid[]>([]);
@@ -131,13 +132,34 @@ export default function ProfilePage() {
     setLoading(true);
     setNfts([]); setCollections([]); setActiveCol(null); setXchMojo(null); setListedNftIds(new Set());
 
+    // Sync wallet first — indexes unindexed NFTs and returns all wallet NFT IDs
+    // so the profile query can find NFTs at any derivation address, not just primary
+    setSyncStatus('syncing');
+    const syncPromise = fetch(`${API_URL}/api/marketplace/profile/sync`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(30000),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { synced: number; total: number; nft_ids?: string[] } | null) => {
+        if (d?.synced > 0) setSyncStatus('done'); else setSyncStatus('idle');
+        return d?.nft_ids || null;
+      })
+      .catch(() => { setSyncStatus('idle'); return null; });
+
     Promise.all([
-      fetch(`${API_URL}/api/marketplace/profile?address=${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(15000) })
-        .then(r => r.ok ? r.json() : { nfts: [], collections: [] })
+      syncPromise.then((nftIds: string[] | null) => {
+        // POST so nft_ids don't blow up the URL; server always also queries
+        // by primary-address puzzle hash, so Meowfers + other-address NFTs merge
+        return fetch(`${API_URL}/api/marketplace/profile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address, nft_ids: nftIds || [] }),
+          signal: AbortSignal.timeout(15000),
+        }).then(r => r.ok ? r.json() : { nfts: [], collections: [] });
+      })
         .then(d => {
           const fetchedNfts: ProfileNft[] = d.nfts || [];
           setNfts(fetchedNfts); setCollections(d.collections || []);
-          // Check which NFTs have open asks
           if (fetchedNfts.length) {
             const ids = fetchedNfts.map(n => n.nft_id).filter(Boolean).join(',');
             fetch(`${API_URL}/api/marketplace/offers/board?nft_ids=${encodeURIComponent(ids)}&page=0`, { signal: AbortSignal.timeout(10000) })
@@ -236,6 +258,18 @@ export default function ProfilePage() {
             {collections.length > 0 && (
               <><span className="mp-profile-stats-sep">·</span>
               <span>{collections.length} collection{collections.length !== 1 ? 's' : ''}</span></>
+            )}
+            {syncStatus === 'syncing' && (
+              <><span className="mp-profile-stats-sep">·</span>
+              <span style={{ color: '#6b7280', fontSize: 12 }}>syncing wallet…</span></>
+            )}
+            {syncStatus === 'done' && (
+              <><span className="mp-profile-stats-sep">·</span>
+              <span
+                style={{ color: '#4ade80', fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => loadProfile(walletAddress)}
+                title="New NFTs indexed — click to reload with collection grouping"
+              >new NFTs indexed — refresh</span></>
             )}
           </div>
         </div>

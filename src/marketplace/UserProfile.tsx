@@ -25,7 +25,7 @@ interface ProfileNft {
 interface ProfileCollection {
   id: string;
   name: string;
-  thumbnail_uri: string | null;
+  thumbnail_url: string | null;
   count: number;
 }
 
@@ -79,6 +79,7 @@ export default function UserProfileScreen() {
   const [collections, setCollections] = useState<ProfileCollection[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'nfts' | 'activity'>('nfts');
+  const [activeCol, setActiveCol] = useState<string | null>(null);
   const [actEvents, setActEvents] = useState<ActivityEvent[]>([]);
   const [actLoading, setActLoading] = useState(false);
   const [actHasMore, setActHasMore] = useState(false);
@@ -96,13 +97,35 @@ export default function UserProfileScreen() {
   useEffect(() => {
     if (!address) return;
     setLoading(true);
+
+    // Sync the wallet daemon for this address: returns nft_ids only if the connected
+    // wallet actually owns NFTs at this address (safe to call for any profile).
+    const nftIdsPromise: Promise<string[] | null> = fetch(`${API_URL}/api/marketplace/profile/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address }),
+      signal: AbortSignal.timeout(30000),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { nft_ids?: string[] } | null) => d?.nft_ids?.length ? d.nft_ids : null)
+      .catch(() => null);
+
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
     Promise.all([
       fetch(`${API_URL}/api/user-profile/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(8000) })
         .then(r => r.ok ? r.json() : { address }),
-      fetch(`${API_URL}/api/marketplace/profile?address=${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(15000) })
-        .then(r => r.ok ? r.json() : { nfts: [], collections: [] }),
+      nftIdsPromise.then((nftIds: string[] | null) =>
+        fetch(`${API_URL}/api/marketplace/profile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address, nft_ids: nftIds || [] }),
+          signal: AbortSignal.timeout(15000),
+        }).then(r => r.ok ? r.json() : { nfts: [], collections: [] })
+          .then(data => ({ data, nftIds }))
+      ),
     ])
-      .then(([prof, nftData]) => {
+      .then(([prof, { data: nftData, nftIds }]) => {
         setProfile(prof);
         setEditName(prof.display_name || '');
         setEditBio(prof.bio || '');
@@ -110,10 +133,32 @@ export default function UserProfileScreen() {
         setEditWebsite(prof.website_url || '');
         setNfts(nftData.nfts || []);
         setCollections(nftData.collections || []);
+        // If the wallet daemon returned nft_ids, phase 2 IPFS is running in the background.
+        // Re-fetch the profile after 20s to pick up any newly resolved collection_ids.
+        if (nftIds?.length) {
+          refreshTimer = setTimeout(() => {
+            fetch(`${API_URL}/api/marketplace/profile`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ address, nft_ids: nftIds }),
+              signal: AbortSignal.timeout(15000),
+            })
+              .then(r => r.ok ? r.json() : null)
+              .then(refreshed => {
+                if (refreshed?.collections?.length) {
+                  setNfts(refreshed.nfts || []);
+                  setCollections(refreshed.collections || []);
+                }
+              })
+              .catch(() => {});
+          }, 20000);
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [address]);
+
+    return () => { if (refreshTimer) clearTimeout(refreshTimer); };
+  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadActivity = useCallback(async (off: number) => {
     if (!address) return;
@@ -221,7 +266,7 @@ export default function UserProfileScreen() {
                 </>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 24, flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: 24, flexShrink: 0, alignItems: 'flex-start' }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 22, fontWeight: 700 }}>{nfts.length}</div>
                 <div style={{ fontSize: 11, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>NFTs</div>
@@ -246,33 +291,64 @@ export default function UserProfileScreen() {
           </div>
 
           {/* NFTs tab */}
-          {activeTab === 'nfts' && (
-            nfts.length === 0 ? (
+          {activeTab === 'nfts' && (() => {
+            const visible = activeCol ? nfts.filter(n => n.collection_id === activeCol) : nfts;
+            const activeColName = activeCol ? (collections.find(c => c.id === activeCol)?.name || 'Collection') : null;
+            return nfts.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '60px 0', color: '#4b5563' }}>
                 <div style={{ fontSize: 36, marginBottom: 8 }}>🖼</div>
                 <div style={{ fontSize: 15, color: '#94a3b8' }}>No indexed NFTs found for this address.</div>
               </div>
             ) : (
-              <div className="mp-gallery-grid">
-                {nfts.map((nft, i) => (
-                  <div
-                    key={nft.nft_id || i}
-                    className="mp-gallery-item"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => nft.collection_id && navigate(`/marketplace/${nft.collection_id}${nft.nft_id ? `?nft=${encodeURIComponent(nft.nft_id)}` : ''}`)}
-                  >
-                    {nft.image_url
-                      ? <img src={nft.image_url} alt={nft.name || ''} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                      : <div style={{ aspectRatio: '1', background: '#0f1016' }} />}
-                    <div className="mp-gallery-item-foot">
-                      {nft.name || (nft.token_index != null ? `#${nft.token_index + 1}` : nft.nft_id?.slice(0, 10) + '…')}
-                      {nft.rarity_rank && <span style={{ float: 'right', color: '#f97316', fontSize: 10 }}>#{nft.rarity_rank}</span>}
-                    </div>
+              <>
+                {collections.length > 0 && (
+                  <div className="mp-profile-filters" style={{ marginBottom: 20 }}>
+                    <button
+                      className={`mp-profile-filter-pill${!activeCol ? ' active' : ''}`}
+                      onClick={() => setActiveCol(null)}
+                    >
+                      All <span className="mp-profile-filter-count">{nfts.length}</span>
+                    </button>
+                    {collections.map(c => (
+                      <button
+                        key={c.id}
+                        className={`mp-profile-filter-pill${activeCol === c.id ? ' active' : ''}`}
+                        onClick={() => setActiveCol(activeCol === c.id ? null : c.id)}
+                      >
+                        {c.thumbnail_url && <img src={c.thumbnail_url} alt="" className="mp-profile-filter-thumb" />}
+                        {c.name}
+                        <span className="mp-profile-filter-count">{c.count}</span>
+                      </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )
-          )}
+                )}
+                {visible.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 24px', color: '#4b5563' }}>
+                    No NFTs in {activeColName}.
+                  </div>
+                ) : (
+                  <div className="mp-gallery-grid">
+                    {visible.map((nft, i) => (
+                      <div
+                        key={nft.nft_id || i}
+                        className="mp-gallery-item"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => nft.collection_id && navigate(`/marketplace/${nft.collection_id}${nft.nft_id ? `?nft=${encodeURIComponent(nft.nft_id)}` : ''}`)}
+                      >
+                        {nft.image_url
+                          ? <img src={nft.image_url} alt={nft.name || ''} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          : <div style={{ aspectRatio: '1', background: '#0f1016' }} />}
+                        <div className="mp-gallery-item-foot">
+                          {nft.name || (nft.token_index != null ? `#${nft.token_index + 1}` : nft.nft_id?.slice(0, 10) + '…')}
+                          {nft.rarity_rank && <span style={{ float: 'right', color: '#f97316', fontSize: 10 }}>#{nft.rarity_rank}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* Activity tab */}
           {activeTab === 'activity' && (
