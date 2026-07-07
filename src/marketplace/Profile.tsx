@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './marketplace.css';
 import TopNav from '../components/TopNav';
@@ -7,6 +7,41 @@ import { useCart } from './CartContext';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
 const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
+
+const EVENT_COLOR: Record<string, string> = {
+  sale: '#4ade80', transfer: '#22d3ee', listing: '#f97316',
+  listing_cancelled: '#6b7280', offer: '#a78bfa',
+};
+const EVENT_LABEL: Record<string, string> = {
+  sale: 'Sale', transfer: 'Transfer', listing: 'Listed',
+  listing_cancelled: 'Delisted', offer: 'Offer',
+};
+interface ActivityEvent {
+  event_type: string; nft_id: string | null; nft_name: string | null;
+  token_index: number | null; image_url: string | null;
+  collection_id: string | null; collection_name: string | null;
+  price_mojo: number | null; price_token: string;
+  from_address: string | null; to_address: string | null; timestamp: string;
+}
+function fmtXch(mojo: number) {
+  const v = mojo / 1e12;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+  return v.toFixed(v >= 1 ? 3 : 6).replace(/0+$/, '').replace(/\.$/, '');
+}
+function shortAddrFmt(addr: string | null) {
+  if (!addr) return '—';
+  return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
+}
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d < 7 ? `${d}d ago` : new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 interface ProfileNft {
   nft_id: string | null;
@@ -59,7 +94,7 @@ export default function ProfilePage() {
   const [selectedNft, setSelectedNft] = useState<ProfileNft | null>(null);
   const [copied, setCopied] = useState(false);
   const [listedNftIds, setListedNftIds] = useState<Set<string>>(new Set());
-  const [profileTab, setProfileTab] = useState<'nfts' | 'bids'>('nfts');
+  const [profileTab, setProfileTab] = useState<'nfts' | 'bids' | 'activity'>('nfts');
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkListOpen, setBulkListOpen] = useState(false);
@@ -69,7 +104,27 @@ export default function ProfilePage() {
   const [cartOpen, setCartOpen] = useState(false);
   const [collBids, setCollBids] = useState<CollectionBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
+  const [actEvents, setActEvents] = useState<ActivityEvent[]>([]);
+  const [actLoading, setActLoading] = useState(false);
+  const [actHasMore, setActHasMore] = useState(false);
+  const [actOffset, setActOffset] = useState(0);
   useCart(); // provides CartContext for CartDrawer and TopNav badge
+
+  const loadActivity = useCallback(async (address: string, off: number) => {
+    if (!address) return;
+    setActLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/api/marketplace/activity?address=${encodeURIComponent(address)}&offset=${off}`, { signal: AbortSignal.timeout(12000) });
+      if (r.ok) {
+        const d = await r.json();
+        const evs: ActivityEvent[] = d.events ?? [];
+        setActEvents(prev => off === 0 ? evs : [...prev, ...evs]);
+        setActHasMore(d.hasMore ?? false);
+        setActOffset(off + evs.length);
+      }
+    } catch { /* ignore */ }
+    finally { setActLoading(false); }
+  }, []);
 
   function loadProfile(address: string) {
     if (!address) { setLoading(false); return; }
@@ -206,6 +261,9 @@ export default function ProfilePage() {
       <div className="mp-tab-bar">
         <button className={`mp-tab-btn${profileTab === 'nfts' ? ' active' : ''}`} onClick={() => setProfileTab('nfts')}>
           My NFTs {nfts.length > 0 && <span style={{ color: '#4b5563', marginLeft: 4, fontSize: 12 }}>{nfts.length}</span>}
+        </button>
+        <button className={`mp-tab-btn${profileTab === 'activity' ? ' active' : ''}`} onClick={() => { setProfileTab('activity'); if (actEvents.length === 0) loadActivity(walletAddress, 0); }}>
+          Activity
         </button>
         <button className={`mp-tab-btn${profileTab === 'bids' ? ' active' : ''}`} onClick={() => setProfileTab('bids')}>
           Collection Bids {collBids.length > 0 && <span style={{ color: '#f97316', marginLeft: 4, fontSize: 12 }}>{collBids.length}</span>}
@@ -404,6 +462,60 @@ export default function ProfilePage() {
                 )}
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Activity tab */}
+      {profileTab === 'activity' && (
+        <div className="mp-activity mp-activity-global" style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 64px' }}>
+          {actLoading && actEvents.length === 0 ? (
+            <div className="mp-empty"><div className="mp-spinner" /></div>
+          ) : actEvents.length === 0 ? (
+            <div className="mp-empty" style={{ padding: '60px 0' }}>No activity found for this address.</div>
+          ) : (
+            <>
+              {actEvents.map((ev, i) => {
+                const displayName = ev.nft_name || (ev.token_index != null ? `#${ev.token_index + 1}` : ev.nft_id?.slice(0, 12) + '…' || '—');
+                return (
+                  <div key={`${ev.event_type}-${ev.nft_id ?? i}-${ev.timestamp}`} className="mp-activity-row mp-activity-row-global">
+                    <div className="mp-activity-thumb">
+                      {ev.image_url
+                        ? <img src={ev.image_url} alt={displayName} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        : <div className="mp-activity-thumb-ph" />}
+                    </div>
+                    <div className="mp-activity-nft-info">
+                      <div className="mp-activity-name">{displayName}</div>
+                      {ev.collection_id && (
+                        <button className="mp-activity-col-link" onClick={() => navigate(`/marketplace/${ev.collection_id}`)}>
+                          {ev.collection_name || ev.collection_id?.slice(0, 12) + '…'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="mp-activity-type" style={{ color: EVENT_COLOR[ev.event_type] || '#94a3b8' }}>
+                      {EVENT_LABEL[ev.event_type] || ev.event_type}
+                    </div>
+                    <div className="mp-activity-price">
+                      {ev.price_mojo != null
+                        ? <>{fmtXch(ev.price_mojo)} {ev.price_token === 'xch' ? 'XCH' : ev.price_token.slice(0, 6)}</>
+                        : <span style={{ color: '#4b5563' }}>—</span>}
+                    </div>
+                    <div className="mp-activity-addrs">
+                      {ev.from_address && <span title={ev.from_address}>{shortAddrFmt(ev.from_address)}</span>}
+                      {ev.to_address && <><span style={{ color: '#4b5563', margin: '0 4px' }}>→</span><span title={ev.to_address}>{shortAddrFmt(ev.to_address)}</span></>}
+                    </div>
+                    <div className="mp-activity-time">{timeAgo(ev.timestamp)}</div>
+                  </div>
+                );
+              })}
+              {actHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>
+                  <button className="mp-load-more" onClick={() => loadActivity(walletAddress, actOffset)} disabled={actLoading}>
+                    {actLoading ? 'Loading…' : 'Load More'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

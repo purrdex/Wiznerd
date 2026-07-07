@@ -2,15 +2,37 @@ import { useState, useEffect, useRef } from 'react';
 import './TopNav.css';
 import { useCart } from '../marketplace/CartContext';
 
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3002';
+
 interface StoredWallet {
   id: string;
   name: string;
   primaryAddress?: string;
 }
 
+interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  link_url: string | null;
+  read: boolean;
+  created_at: string;
+}
+
 function shortAddr(addr: string) {
   if (!addr || addr.length < 16) return addr;
   return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 interface TopNavProps {
@@ -27,11 +49,14 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
   const path = activePath ?? window.location.pathname;
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
   const [wallets, setWallets] = useState<StoredWallet[]>([]);
   const [activeWalletId, setActiveWalletId] = useState('');
   const [walletAddress, setWalletAddress] = useState('');
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const menuRef   = useRef<HTMLDivElement>(null);
   const walletRef = useRef<HTMLDivElement>(null);
+  const bellRef   = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -41,11 +66,26 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
     } catch {}
   }, []);
 
+  // Poll notifications every 60 s when wallet is connected
+  useEffect(() => {
+    if (!walletAddress) return;
+    const fetchNotifs = () => {
+      fetch(`${API_URL}/api/notifications?address=${encodeURIComponent(walletAddress)}`, { signal: AbortSignal.timeout(8000) })
+        .then(r => r.ok ? r.json() : [])
+        .then(setNotifications)
+        .catch(() => {});
+    };
+    fetchNotifs();
+    const iv = setInterval(fetchNotifs, 60000);
+    return () => clearInterval(iv);
+  }, [walletAddress]);
+
   // Close dropdowns on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (menuRef.current   && !menuRef.current.contains(e.target as Node))   setMenuOpen(false);
       if (walletRef.current && !walletRef.current.contains(e.target as Node)) setWalletOpen(false);
+      if (bellRef.current   && !bellRef.current.contains(e.target as Node))   setBellOpen(false);
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -67,6 +107,18 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
     onWalletSwitch?.(w.primaryAddress);
   }
 
+  function markRead(id: string) {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    fetch(`${API_URL}/api/notifications/${id}/read`, { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => {});
+  }
+
+  function markAllRead() {
+    if (!walletAddress) return;
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    fetch(`${API_URL}/api/notifications/read-all?address=${encodeURIComponent(walletAddress)}`, { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => {});
+  }
+
+  const unreadCount = notifications.filter(n => !n.read).length;
   const activeWallet = wallets.find(w => w.id === activeWalletId);
 
   const links = [
@@ -75,6 +127,7 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
     { href: '/marketplace/rankings',   label: 'Rankings',    match: (p: string) => p === '/marketplace/rankings' },
     { href: '/marketplace/activity',   label: 'Activity',    match: (p: string) => p === '/marketplace/activity' },
     { href: '/marketplace/offers',     label: 'Offer Board', match: (p: string) => p === '/marketplace/offers' },
+    { href: '/marketplace/watchlist',  label: 'Watchlist',   match: (p: string) => p === '/marketplace/watchlist' },
     { href: '/create',                 label: 'Create',      match: (p: string) => p.startsWith('/create') },
     { href: '/marketplace/profile',    label: 'My NFTs',     match: (p: string) => p === '/marketplace/profile' },
   ];
@@ -109,6 +162,56 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
           value={searchValue ?? ''}
           onChange={e => onSearchChange(e.target.value)}
         />
+      )}
+
+      {/* Notifications bell */}
+      {walletAddress && (
+        <div className="wiz-bell" ref={bellRef}>
+          <button
+            className={`wiz-bell-btn${unreadCount > 0 ? ' has-unread' : ''}`}
+            onClick={() => setBellOpen(o => !o)}
+            aria-label="Notifications"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            {unreadCount > 0 && (
+              <span className="wiz-bell-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
+            )}
+          </button>
+
+          {bellOpen && (
+            <div className="wiz-notif-dropdown">
+              <div className="wiz-notif-header">
+                <span className="wiz-notif-title-text">Notifications</span>
+                {unreadCount > 0 && (
+                  <button className="wiz-notif-mark-read" onClick={markAllRead}>
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              {notifications.length === 0 ? (
+                <div className="wiz-notif-empty">No notifications yet</div>
+              ) : (
+                <div className="wiz-notif-list">
+                  {notifications.slice(0, 12).map(n => (
+                    <a
+                      key={n.id}
+                      href={n.link_url || '#'}
+                      className={`wiz-notif-item${!n.read ? ' unread' : ''}`}
+                      onClick={() => { markRead(n.id); setBellOpen(false); }}
+                    >
+                      <div className="wiz-notif-item-title">{n.title}</div>
+                      {n.body && <div className="wiz-notif-item-body">{n.body}</div>}
+                      <div className="wiz-notif-item-time">{timeAgo(n.created_at)}</div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Wallet switcher (desktop) */}

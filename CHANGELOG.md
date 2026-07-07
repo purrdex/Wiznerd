@@ -1,5 +1,50 @@
 # Changelog
 
+## v1.5.0 — 2026-07-06 (Social & Notifications)
+
+### N1 — Watchlist / Favorites
+- Heart button on every collection card in the browse grid — hover to reveal, always visible when favorited
+- Heart button on collection detail page header — toggles inline
+- New `/marketplace/watchlist` page — shows all favorited collections with live floor/volume data
+- "Watchlist" added to nav (desktop links + mobile menu)
+- Favorites persist in `favorites` table keyed by wallet address + collection ID
+- Server: `GET /api/favorites`, `POST /api/favorites`, `DELETE /api/favorites/:type/:id`, `GET /api/favorites/collections`
+
+### N2 — In-app notifications
+- Bell icon in TopNav — shows red unread badge, polls every 60 seconds
+- Dropdown lists up to 12 recent notifications with title, body, timestamp, and link
+- "Mark all read" button clears the badge
+- Notifications fire automatically on offer events:
+  - Bid posted on your NFT → "New offer on [NFT name]"
+  - Your listing sold (ask taken) → "[NFT name] sold!"
+  - Your bid was accepted → "Your bid on [NFT] was accepted"
+- Server: `GET /api/notifications`, `POST /api/notifications/read-all`, `POST /api/notifications/:id/read`
+- DB: `supabase/migrations/024_social.sql` — notifications table with wallet_address, type, title, body, link_url, read
+
+### N4 — User public profile
+- New page `/marketplace/profile/:address` — public view of any wallet
+- Shows avatar (initials), display name, bio, Twitter, website URL
+- NFT gallery with click-through to collection+NFT modal
+- Activity tab showing all on-chain events for that address
+- Own wallet address gets an "Edit Profile" form (display_name, bio, twitter, website)
+- Server: `GET /api/user-profile/:address`, `PUT /api/user-profile/:address`
+- DB: `user_profiles` table in `024_social.sql`
+
+### N6 — Cross-collection activity in Profile
+- "Activity" tab added to `/marketplace/profile` (own wallet page) between "My NFTs" and "Collection Bids"
+- Shows all on-chain sales, transfers, listings, and offers for the connected wallet
+- Uses address filter on the global `/api/marketplace/activity` endpoint
+- Load More pagination
+
+### N7 — Toast notification queue
+- New `ToastProvider` wrapping the entire app (in `main.tsx`)
+- Stacked toast queue: up to 5 simultaneous toasts, 4-second auto-dismiss
+- Three types: success (green), error (red), info (blue) — each with distinct left border and icon
+- `useToast()` hook exportable across all marketplace pages
+- Files: `src/components/ToastContext.tsx`, `src/components/ToastContext.css`
+
+---
+
 ## v1.4.0 — 2026-07-06 (Creator Suite)
 
 ### C2 — Creator public profiles

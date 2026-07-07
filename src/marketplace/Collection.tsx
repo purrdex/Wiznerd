@@ -206,6 +206,7 @@ export default function CollectionScreen() {
   const [collBidSubmitting, setCollBidSubmitting] = useState(false);
   const [collBidError, setCollBidError] = useState<string | null>(null);
   const { addItem, hasItem } = useCart();
+  const [isFavorited, setIsFavorited] = useState(false);
 
   const msLeft = useCountdown(coll?.launch_at ?? null);
   const isLive = coll?.marketplace_status === 'live' && (!coll.launch_at || msLeft <= 0);
@@ -404,6 +405,30 @@ export default function CollectionScreen() {
   // One-time loads
   useEffect(() => { loadColl(); loadPrice(); loadTraits(); loadCatWallets(); loadFloorHistory(); loadCollBids(); }, [loadColl, loadPrice, loadTraits, loadCatWallets, loadFloorHistory, loadCollBids]);
 
+  // Check if this collection is favorited
+  useEffect(() => {
+    if (!walletAddress || !id) return;
+    fetch(`${API_URL}/api/favorites?address=${encodeURIComponent(walletAddress)}&type=collection`, { signal: AbortSignal.timeout(6000) })
+      .then(r => r.ok ? r.json() : [])
+      .then((favs: { item_id: string }[]) => setIsFavorited(favs.some(f => f.item_id === id)))
+      .catch(() => {});
+  }, [walletAddress, id]);
+
+  function toggleFavorite() {
+    if (!walletAddress || !id) return;
+    if (isFavorited) {
+      setIsFavorited(false);
+      fetch(`${API_URL}/api/favorites/collection/${encodeURIComponent(id)}?address=${encodeURIComponent(walletAddress)}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {});
+    } else {
+      setIsFavorited(true);
+      fetch(`${API_URL}/api/favorites`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddress, item_type: 'collection', item_id: id }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    }
+  }
+
   useEffect(() => {
     if (!id) return;
     fetch(`${API_URL}/api/marketplace/collections/${id}/stats`, { signal: AbortSignal.timeout(10000) })
@@ -507,7 +532,18 @@ export default function CollectionScreen() {
       <div className="mp-collection-body">
         {/* Left: meta */}
         <div className="mp-coll-meta">
-          <h2>{coll.name} <span className="mp-symbol">{coll.symbol}</span></h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+            <h2 style={{ margin: 0 }}>{coll.name} <span className="mp-symbol">{coll.symbol}</span></h2>
+            {walletAddress && (
+              <button
+                className={`mp-heart-btn${isFavorited ? ' hearted' : ''}`}
+                onClick={toggleFavorite}
+                title={isFavorited ? 'Remove from watchlist' : 'Add to watchlist'}
+              >
+                {isFavorited ? '♥' : '♡'}
+              </button>
+            )}
+          </div>
           {coll.creator_address && (
             <div className="mp-coll-creator">
               Created by{' '}

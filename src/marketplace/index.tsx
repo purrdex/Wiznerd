@@ -84,6 +84,36 @@ export default function MarketplaceScreen() {
   const [search, setSearch] = useState('');
   const [xchPrice, setXchPrice] = useState(0);
   const [notableSales, setNotableSales] = useState<NotableSale[]>([]);
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const walletAddress = (() => { try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; } })();
+
+  // Load favorites once on mount (wallet-connected users only)
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetch(`${API_URL}/api/favorites?address=${encodeURIComponent(walletAddress)}&type=collection`, { signal: AbortSignal.timeout(8000) })
+      .then(r => r.ok ? r.json() : [])
+      .then((favs: { item_id: string }[]) => setFavorites(new Set(favs.map(f => f.item_id))))
+      .catch(() => {});
+  }, [walletAddress]);
+
+  function toggleFav(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    if (!walletAddress) return;
+    const isFav = favorites.has(id);
+    const next = new Set(favorites);
+    if (isFav) {
+      next.delete(id);
+      fetch(`${API_URL}/api/favorites/collection/${encodeURIComponent(id)}?address=${encodeURIComponent(walletAddress)}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {});
+    } else {
+      next.add(id);
+      fetch(`${API_URL}/api/favorites`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddress, item_type: 'collection', item_id: id }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    }
+    setFavorites(next);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -217,7 +247,16 @@ export default function MarketplaceScreen() {
           const pct = Math.min(100, Math.round((c.minted_count / Math.max(1, c.total_supply)) * 100));
           const img = cardImage(c);
           return (
-            <div key={`${c.source}-${c.id}`} className="mp-card" onClick={() => handleCardClick(c)}>
+            <div key={`${c.source}-${c.id}`} className="mp-card" onClick={() => handleCardClick(c)} style={{ position: 'relative' }}>
+              {walletAddress && (
+                <button
+                  className={`mp-card-heart${favorites.has(c.id) ? ' hearted' : ''}`}
+                  onClick={e => toggleFav(e, c.id)}
+                  title={favorites.has(c.id) ? 'Remove from watchlist' : 'Add to watchlist'}
+                >
+                  {favorites.has(c.id) ? '♥' : '♡'}
+                </button>
+              )}
               <div className="mp-card-img">
                 {img ? (
                   <img src={img} alt={c.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />

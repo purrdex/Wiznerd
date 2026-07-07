@@ -145,6 +145,63 @@
 .wiz-mobile-link:hover { background: #1e2030; color: #e2e8f0; }
 .wiz-mobile-link.active { color: #f97316; font-weight: 600; }
 
+/* Notifications bell */
+.wiz-bell { position: relative; flex-shrink: 0; }
+.wiz-bell-btn {
+  display: flex; align-items: center; justify-content: center;
+  position: relative; width: 34px; height: 34px;
+  background: none; border: 1px solid transparent; border-radius: 8px;
+  color: #6b7280; cursor: pointer; padding: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.wiz-bell-btn:hover { color: #e2e8f0; background: #1e2030; border-color: #2d2f3d; }
+.wiz-bell-btn.has-unread { color: #f97316; }
+.wiz-bell-badge {
+  position: absolute; top: -4px; right: -4px;
+  background: #ef4444; color: #fff;
+  font-size: 9px; font-weight: 700;
+  min-width: 15px; height: 15px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 3px; line-height: 1;
+}
+
+.wiz-notif-dropdown {
+  position: absolute; top: calc(100% + 8px); right: -8px; z-index: 300;
+  background: #111218; border: 1px solid #2d2f3d; border-radius: 12px;
+  min-width: 300px; max-width: 340px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.wiz-notif-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid #1e2030;
+}
+.wiz-notif-title-text { font-size: 13px; font-weight: 700; color: #e2e8f0; }
+.wiz-notif-mark-read {
+  background: none; border: none; color: #6b7280; font-size: 11px;
+  cursor: pointer; padding: 0; transition: color 0.15s;
+}
+.wiz-notif-mark-read:hover { color: #f97316; }
+.wiz-notif-empty {
+  padding: 24px 14px; text-align: center; font-size: 13px; color: #4b5563;
+}
+.wiz-notif-list { max-height: 360px; overflow-y: auto; }
+.wiz-notif-item {
+  display: block; padding: 10px 14px;
+  border-bottom: 1px solid #1e2030; text-decoration: none;
+  transition: background 0.1s;
+}
+.wiz-notif-item:last-child { border-bottom: none; }
+.wiz-notif-item:hover { background: #1e2030; }
+.wiz-notif-item.unread { background: rgba(249, 115, 22, 0.04); }
+.wiz-notif-item.unread:hover { background: rgba(249, 115, 22, 0.08); }
+.wiz-notif-item-title { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 2px; }
+.wiz-notif-item.unread .wiz-notif-item-title::before {
+  content: '● '; color: #f97316; font-size: 8px; vertical-align: middle; margin-right: 2px;
+}
+.wiz-notif-item-body { font-size: 12px; color: #94a3b8; margin-bottom: 3px; }
+.wiz-notif-item-time { font-size: 11px; color: #4b5563; }
+
 /* Cart button */
 .wiz-cart-btn {
   position: relative;

@@ -880,6 +880,29 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     }).select().single();
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // Notify the NFT owner when someone places a bid
+    if (offer_type === 'bid') {
+      try {
+        const { data: nftRow } = await supabase.from('indexed_nfts')
+          .select('owner_puzzle_hash,name,token_index,collection_id').eq('nft_id', nftId).maybeSingle();
+        if (nftRow?.owner_puzzle_hash) {
+          const ownerAddr = puzzleHashToAddress(nftRow.owner_puzzle_hash);
+          if (ownerAddr) {
+            const nftLabel = nftRow.name || (nftRow.token_index != null ? `#${nftRow.token_index + 1}` : 'your NFT');
+            const xchAmt = (priceAmount / 1e12).toFixed(priceAmount >= 1e12 ? 2 : 4).replace(/\.?0+$/, '');
+            await supabase.from('notifications').insert({
+              wallet_address: ownerAddr,
+              type:     'offer_received',
+              title:    `New offer on ${nftLabel}`,
+              body:     `${xchAmt} XCH bid`,
+              link_url: nftRow.collection_id ? `/marketplace/${nftRow.collection_id}?nft=${encodeURIComponent(nftId)}` : null,
+            });
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
     res.json(data);
   });
 
@@ -943,6 +966,27 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       await supabase.from('nft_offers')
         .update({ status: 'taken', updated_at: new Date().toISOString() })
         .eq('id', offerId);
+
+      // Notify the offer maker that their listing sold (ask) or bid was accepted (bid)
+      try {
+        if (offer.maker_puzzle_hash) {
+          const makerAddr = puzzleHashToAddress(offer.maker_puzzle_hash);
+          if (makerAddr) {
+            const { data: nftRow } = await supabase.from('indexed_nfts')
+              .select('name,token_index,collection_id').eq('nft_id', offer.nft_id).maybeSingle();
+            const nftLabel = nftRow?.name || (nftRow?.token_index != null ? `#${nftRow.token_index + 1}` : 'NFT');
+            const xchAmt = offer.price_mojo ? ((offer.price_mojo / 1e12).toFixed(2).replace(/\.?0+$/, '')) : '';
+            const isAsk = offer.offer_type === 'ask';
+            await supabase.from('notifications').insert({
+              wallet_address: makerAddr,
+              type:     isAsk ? 'offer_taken' : 'bid_accepted',
+              title:    isAsk ? `${nftLabel} sold!` : `Your bid on ${nftLabel} was accepted`,
+              body:     xchAmt ? `${xchAmt} XCH` : undefined,
+              link_url: nftRow?.collection_id ? `/marketplace/${nftRow.collection_id}` : null,
+            });
+          }
+        }
+      } catch { /* non-critical */ }
 
       // Record the sale in nft_transfers with known price
       if (offer.nft_id && offer.price_mojo) {
@@ -1548,6 +1592,16 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
     const PAGE   = 50;
 
+    // Optional address filter for profile activity tab
+    let puzzleFilter = null;
+    if (req.query.address) {
+      try {
+        const { bech32m: bm } = require('bech32');
+        const d = bm.decode(String(req.query.address), 90);
+        puzzleFilter = Buffer.from(bm.fromWords(d.words)).toString('hex');
+      } catch { /* invalid address — ignore filter */ }
+    }
+
     // Transfers
     let xferQuery = supabase
       .from('nft_transfers')
@@ -1557,12 +1611,15 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     if (type === 'sale')     xferQuery = xferQuery.not('price_mojo', 'is', null);
     if (type === 'transfer') xferQuery = xferQuery.is('price_mojo', null);
+    if (puzzleFilter) xferQuery = xferQuery.or(`from_puzzle_hash.eq.${puzzleFilter},to_puzzle_hash.eq.${puzzleFilter},from_puzzle_hash.eq.0x${puzzleFilter},to_puzzle_hash.eq.0x${puzzleFilter}`);
 
     // Offers
     let offerQuery = supabase
       .from('nft_offers')
       .select('id,nft_id,collection_id,offer_type,price_mojo,price_token,maker_puzzle_hash,created_at,status')
       .order('created_at', { ascending: false });
+
+    if (puzzleFilter) offerQuery = offerQuery.or(`maker_puzzle_hash.eq.${puzzleFilter},maker_puzzle_hash.eq.0x${puzzleFilter}`);
 
     const includeXfers  = ['all', 'sale', 'transfer'].includes(type);
     const includeOffers = ['all', 'listing', 'offer'].includes(type);
@@ -1682,6 +1739,112 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       price_token:      t.price_token || 'xch',
       sold_at:          t.transferred_at,
     })));
+  });
+
+  // ── Favorites ─────────────────────────────────────────────────────────────────
+
+  app.get('/api/favorites', async (req, res) => {
+    const { address, type } = req.query;
+    if (!address) return res.status(400).json({ error: 'address required' });
+    let q = supabase.from('favorites').select('item_type,item_id,created_at').eq('wallet_address', address);
+    if (type) q = q.eq('item_type', type);
+    const { data, error } = await q.order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  });
+
+  app.post('/api/favorites', async (req, res) => {
+    const { address, item_type, item_id } = req.body;
+    if (!address || !item_type || !item_id) return res.status(400).json({ error: 'address, item_type, item_id required' });
+    const { error } = await supabase.from('favorites')
+      .upsert({ wallet_address: address, item_type, item_id }, { onConflict: 'wallet_address,item_type,item_id' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/favorites/:itemType/:itemId', async (req, res) => {
+    const { address } = req.query;
+    if (!address) return res.status(400).json({ error: 'address required' });
+    const { error } = await supabase.from('favorites').delete()
+      .eq('wallet_address', address)
+      .eq('item_type', req.params.itemType)
+      .eq('item_id', decodeURIComponent(req.params.itemId));
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  });
+
+  // Enrich favorited collections with live market data for the Watchlist page
+  app.get('/api/favorites/collections', async (req, res) => {
+    const { address } = req.query;
+    if (!address) return res.status(400).json({ error: 'address required' });
+    const { data: favs } = await supabase.from('favorites').select('item_id')
+      .eq('wallet_address', address).eq('item_type', 'collection');
+    if (!favs?.length) return res.json([]);
+    const ids = favs.map(f => f.item_id);
+    const { data: cols } = await supabase.from('indexed_collections')
+      .select('collection_id,name,thumbnail_url,thumbnail_uri,verified,total_supply,minted_count,floor_price_mojo,volume_7d_mojo,sales_7d,trending_score,listed_count')
+      .in('collection_id', ids);
+    res.json((cols || []).map(c => ({
+      id:              c.collection_id,
+      name:            c.name,
+      thumbnail_url:   c.thumbnail_url || c.thumbnail_uri || '',
+      verified:        c.verified || false,
+      total_supply:    c.total_supply || 0,
+      minted_count:    c.minted_count || 0,
+      floor_price_mojo: c.floor_price_mojo || 0,
+      volume_7d_mojo:  c.volume_7d_mojo || 0,
+      sales_7d:        c.sales_7d || 0,
+      trending_score:  c.trending_score || 0,
+      listed_count:    c.listed_count || 0,
+    })));
+  });
+
+  // ── User profiles ─────────────────────────────────────────────────────────────
+
+  app.get('/api/user-profile/:address', async (req, res) => {
+    const { data } = await supabase.from('user_profiles').select('*')
+      .eq('address', req.params.address).maybeSingle();
+    res.json(data || { address: req.params.address });
+  });
+
+  app.put('/api/user-profile/:address', async (req, res) => {
+    const { display_name, bio, twitter_handle, website_url } = req.body;
+    const { data, error } = await supabase.from('user_profiles')
+      .upsert({
+        address:       req.params.address,
+        display_name:  display_name  || null,
+        bio:           bio           || null,
+        twitter_handle: twitter_handle || null,
+        website_url:   website_url   || null,
+        updated_at:    new Date().toISOString(),
+      }, { onConflict: 'address' })
+      .select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  });
+
+  // ── Notifications ─────────────────────────────────────────────────────────────
+
+  app.get('/api/notifications', async (req, res) => {
+    const { address } = req.query;
+    if (!address) return res.status(400).json({ error: 'address required' });
+    const { data, error } = await supabase.from('notifications').select('*')
+      .eq('wallet_address', address).order('created_at', { ascending: false }).limit(50);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  });
+
+  app.post('/api/notifications/read-all', async (req, res) => {
+    const { address } = req.query;
+    if (!address) return res.status(400).json({ error: 'address required' });
+    await supabase.from('notifications').update({ read: true })
+      .eq('wallet_address', address).eq('read', false);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/notifications/:notifId/read', async (req, res) => {
+    await supabase.from('notifications').update({ read: true }).eq('id', req.params.notifId);
+    res.json({ ok: true });
   });
 
   // ── Floor price history (for collection chart) ────────────────────────────────
