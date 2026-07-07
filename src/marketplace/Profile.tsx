@@ -219,6 +219,15 @@ export default function ProfilePage() {
             <button className="mp-profile-copy" onClick={copy} title="Copy address">
               {copied ? '✓' : '⎘'}
             </button>
+            <a
+              href={`/marketplace/profile/${walletAddress}`}
+              style={{ marginLeft: 8, fontSize: 12, color: '#6b7280', textDecoration: 'none', padding: '2px 8px', border: '1px solid #2d2f3d', borderRadius: 12, transition: 'color 0.15s, border-color 0.15s' }}
+              onMouseEnter={e => { (e.target as HTMLAnchorElement).style.color = '#f97316'; (e.target as HTMLAnchorElement).style.borderColor = '#f97316'; }}
+              onMouseLeave={e => { (e.target as HTMLAnchorElement).style.color = '#6b7280'; (e.target as HTMLAnchorElement).style.borderColor = '#2d2f3d'; }}
+              title="Edit public profile"
+            >
+              Edit profile →
+            </a>
           </div>
           <div className="mp-profile-stats">
             {xchMojo != null && <span>{formatXch(xchMojo)} XCH</span>}
