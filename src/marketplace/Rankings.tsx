@@ -57,7 +57,11 @@ export default function RankingsPage() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(sort); }, [load, sort]);
+  useEffect(() => {
+    load(sort);
+    const iv = setInterval(() => load(sort), 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, [load, sort]);
 
   function thumb(c: RankedCollection): string {
     return c.thumbnail_url || c.thumbnail_uri || '';

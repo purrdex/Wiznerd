@@ -13,10 +13,10 @@ const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
 const PROXY      = process.env.PROXY_URL || 'http://localhost:3001';
-const CONCURRENCY  = 3;    // parallel NFT lookups
-const COIN_DELAY   = 100;  // ms between wallet RPC calls per worker
-const MG_DELAY     = 600;  // ms between MintGarden discovery pages
-const MG_NFT_DELAY = 600;  // ms between per-NFT MintGarden fetches per worker
+const CONCURRENCY  = 2;     // parallel NFT lookups
+const COIN_DELAY   = 200;   // ms between wallet RPC calls per worker
+const MG_DELAY     = 1500;  // ms between MintGarden discovery pages
+const MG_NFT_DELAY = 1200;  // ms between per-NFT MintGarden fetches per worker
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -294,7 +294,14 @@ async function* getAllNftIds(collectionId, maxItems = 60000) {
       ? `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48&page=${encodeURIComponent(cursor)}`
       : `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48`;
 
-    const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    let res, retryDelay = 5000;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+      if (res.status !== 429) break;
+      process.stdout.write(`\n  429 on discovery page ${page} — waiting ${retryDelay / 1000}s...`);
+      await new Promise(r => setTimeout(r, retryDelay));
+      retryDelay = Math.min(retryDelay * 2, 60000);
+    }
     if (!res.ok) throw new Error(`MintGarden HTTP ${res.status} on page ${page}`);
     const json = await res.json();
 
@@ -377,12 +384,13 @@ async function backfillCollection(collectionId) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const flags = { all: false, minCount: 0, id: null, mg: false, test: false };
+  const flags = { all: false, minCount: 0, maxCount: 0, id: null, mg: false, test: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--all') flags.all = true;
     else if (args[i] === '--mg') flags.mg = true;
     else if (args[i] === '--test') flags.test = true;
     else if (args[i] === '--min-count' && args[i + 1]) { flags.minCount = parseInt(args[++i], 10); }
+    else if (args[i] === '--max-count' && args[i + 1]) { flags.maxCount = parseInt(args[++i], 10); }
     else if (!args[i].startsWith('--')) flags.id = args[i];
   }
   return flags;
@@ -401,6 +409,7 @@ async function main() {
       .order('minted_count', { ascending: false });
 
     if (flags.minCount > 0) query = query.gte('minted_count', flags.minCount);
+    if (flags.maxCount > 0) query = query.lte('minted_count', flags.maxCount);
 
     const { data, error } = await query;
     if (error) { console.error('Supabase error:', error.message); process.exit(1); }
@@ -408,7 +417,8 @@ async function main() {
     collectionIds = (data || []).map(c => ({ id: c.collection_id, name: c.name, count: c.minted_count }));
     const totalNfts = collectionIds.reduce((s, c) => s + (c.count || 0), 0);
 
-    console.log(`\n${collectionIds.length} collections${flags.minCount ? ` (≥ ${flags.minCount} NFTs)` : ''} · ${totalNfts.toLocaleString()} total NFTs\n`);
+    const countLabel = [flags.minCount ? `≥ ${flags.minCount}` : '', flags.maxCount ? `≤ ${flags.maxCount}` : ''].filter(Boolean).join(', ');
+    console.log(`\n${collectionIds.length} collections${countLabel ? ` (${countLabel} NFTs)` : ''} · ${totalNfts.toLocaleString()} total NFTs\n`);
     collectionIds.forEach((c, i) => console.log(`  ${String(i + 1).padStart(4)}. ${c.name.padEnd(40)} ${String(c.count).padStart(6)} NFTs`));
 
     const estMinutes = Math.round(totalNfts / CONCURRENCY / (1000 / COIN_DELAY) / 60);

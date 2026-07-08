@@ -35,7 +35,7 @@ import {
   decryptMnemonic,
 } from './lib/crypto';
 
-type Screen = 'setup' | 'wallet' | 'nfts' | 'send' | 'receive' | 'history' | 'settings' | 'offers';
+type Screen = 'setup' | 'wallet' | 'send' | 'receive' | 'history' | 'settings' | 'offers';
 
 interface WalletState {
   mnemonic: string;
@@ -87,14 +87,6 @@ const IconSettings = () => (
 const IconSend = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
     <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-const IconNFTs = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-    <rect x="3" y="3" width="7" height="7" rx="1" strokeLinecap="round"/>
-    <rect x="14" y="3" width="7" height="7" rx="1" strokeLinecap="round"/>
-    <rect x="3" y="14" width="7" height="7" rx="1" strokeLinecap="round"/>
-    <rect x="14" y="14" width="7" height="7" rx="1" strokeLinecap="round"/>
   </svg>
 );
 const IconHistory = () => (
@@ -685,17 +677,16 @@ function passwordStrength(pw: string): { label: string; color: string } | null {
   if (/[^A-Za-z0-9]/.test(pw)) score++;
   if (score <= 1) return { label: 'Weak', color: '#ff6b6b' };
   if (score === 2) return { label: 'Fair', color: '#e07b3a' };
-  return { label: 'Strong', color: '#4daa87' };
+  return { label: 'Strong', color: '#f97316' };
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, theme, onToggleTheme, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
     onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
     walletList: WalletEntry[]; activeWalletId: string|null;
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
     hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void;
-    theme: 'dark'|'light'; onToggleTheme:()=>void;
     currentMnemonic: string;
     proxyUrl: string; onProxyChange:(url:string)=>void;
     idleLockMinutes: number; onIdleLockChange:(minutes:number)=>void;
@@ -829,28 +820,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           }}/>
         </button>
       </div>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
-        background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'var(--radius)',
-        padding:'12px 14px',marginTop:8}}>
-        <div>
-          <div style={{fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>Light mode</div>
-          <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>Switch between dark and light theme</div>
-        </div>
-        <button
-          onClick={onToggleTheme}
-          style={{
-            width:44,height:24,borderRadius:12,border:'none',cursor:'pointer',
-            background: theme === 'light' ? 'var(--accent)' : 'var(--border)',
-            position:'relative',transition:'background 0.2s',flexShrink:0,
-          }}
-        >
-          <div style={{
-            position:'absolute',top:3,left: theme === 'light' ? 23 : 3,
-            width:18,height:18,borderRadius:'50%',background:'#fff',transition:'left 0.2s',
-          }}/>
-        </button>
-      </div>
-
       <div className="section-label mt-16">Address Book</div>
       {addressBook.length === 0 && (
         <div style={{fontSize:12,color:'var(--text-secondary)',padding:'8px 0'}}>No saved addresses.</div>
@@ -1161,7 +1130,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
 function TokenAvatar({ ticker, logoUrl }: { ticker: string; logoUrl?: string }) {
   const [imgFailed, setImgFailed] = useState(false);
   const colors = [
-    '#4daa87', '#e07b3a', '#7b6fd8', '#d85c8a',
+    '#f97316', '#e07b3a', '#7b6fd8', '#d85c8a',
     '#5ca8d8', '#d8c25c', '#8ad85c', '#d85c5c'
   ];
   const color = colors[ticker.charCodeAt(0) % colors.length];
@@ -1189,20 +1158,6 @@ function TokenAvatar({ ticker, logoUrl }: { ticker: string; logoUrl?: string }) 
   );
 }
 
-interface NftData {
-  nft_id: string;
-  nft_coin_id: string;
-  launcher_id: string;
-  data_uris: string[];
-  metadata_uris: string[];
-  mint_height: number;
-  royalty_percentage?: number;
-  name?: string;
-  description?: string;
-  collection?: string;
-  preview_url?: string;
-  is_video?: boolean;
-}
 
 const PROXY_URL_KEY = 'chia_proxy_url';
 const _DEFAULT_PROXY = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
@@ -1263,11 +1218,6 @@ async function getCatWalletId(assetId: string): Promise<number | null> {
     );
     return match?.id ?? null;
   } catch { return null; }
-}
-
-function resolveUri(uri: string): string {
-  if (uri.startsWith('ipfs://')) return uri.replace('ipfs://', 'https://ipfs.mintgarden.io/ipfs/');
-  return uri;
 }
 
 function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
@@ -1401,7 +1351,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
       )}
 
       {!token.isCat1 && !loadingWallet && catWalletId === null && (
-        <div style={{background:'rgba(77,170,135,0.07)',border:'1px solid var(--accent)',
+        <div style={{background:'rgba(249,115,22,0.07)',border:'1px solid var(--accent)',
           borderRadius:8,padding:'8px 12px',fontSize:11,color:'var(--accent)'}}>
           Direct chain send — no wallet daemon registration required. Fee: 0 XCH.
         </div>
@@ -1501,7 +1451,7 @@ function CatDetailScreen({ token, onBack, onSendSuccess, wallet, nodeUrl }: {
           </button>
 
           {status === 'success' && (
-            <div style={{padding:'12px',background:'rgba(77,170,135,0.1)',
+            <div style={{padding:'12px',background:'rgba(249,115,22,0.1)',
               border:'1px solid var(--accent)',borderRadius:8,fontSize:13,color:'var(--accent)'}}>
               ✓ {message}
             </div>
@@ -1532,316 +1482,6 @@ async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => P
   return results;
 }
 
-async function fetchNftMetadata(nft: NftData): Promise<NftData> {
-  const dataUri = nft.data_uris?.[0] || '';
-  const isVideo = dataUri.match(/\.(mp4|webm|mov|avi)(\?|$)/i) !== null;
-
-  let name = nft.name;
-  let description = nft.description;
-  let collection = nft.collection;
-  let preview_url: string | undefined;
-
-  if (nft.metadata_uris?.length) {
-    const url = resolveUri(nft.metadata_uris[0]);
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const meta = await res.json();
-        name = meta.name;
-        description = meta.description;
-        collection = meta.collection?.name || meta.series_name || meta.collection;
-        // Many collections store a preview image separately
-        preview_url = meta.preview_image_url || meta.preview_url ||
-                      meta.image || meta.thumbnail_url || undefined;
-        if (preview_url) preview_url = resolveUri(preview_url);
-      }
-    } catch { /* fall through */ }
-  }
-
-  return { ...nft, name, description, collection, is_video: isVideo, preview_url };
-}
-
-function NFTDetailView({ nft, onBack }: { nft: NftData; onBack: () => void }) {
-  const [transferring, setTransferring] = useState(false);
-  const [toAddress, setToAddress] = useState('');
-  const [fee, setFee] = useState('0.00005');
-  const [status, setStatus] = useState<'idle'|'sending'|'success'|'error'>('idle');
-  const [message, setMessage] = useState('');
-  const [nftIdCopied, setNftIdCopied] = useState(false);
-  const sendingRef = React.useRef(false);
-
-  const handleCopyNftId = () => {
-    navigator.clipboard.writeText(nft.nft_id);
-    setNftIdCopied(true);
-    setTimeout(() => setNftIdCopied(false), 2000);
-  };
-
-  const isValidAddress = isValidXchAddress(toAddress);
-  const feeNftF = parseFloat(fee || '0');
-  const feeMojo = BigInt(isNaN(feeNftF) ? 0 : Math.round(feeNftF * 1_000_000_000_000));
-
-  async function handleTransfer() {
-    if (!isValidAddress || sendingRef.current) return;
-    sendingRef.current = true;
-    setStatus('sending');
-    setMessage('');
-    try {
-      // Find the NFT wallet that owns this coin
-      const walletsRes = await walletRpc('get_wallets', { include_data: true });
-      if (!walletsRes.success) throw new Error('Could not load wallets');
-      const nftWallets: any[] = (walletsRes.wallets || []).filter((w: any) => w.type === 10);
-      let ownerWalletId: number | null = null;
-      for (const w of nftWallets) {
-        const nftsRes = await walletRpc('nft_get_nfts', { wallet_id: w.id, start_index: 0, num: 200 });
-        if (nftsRes.success && (nftsRes.nft_list || []).some((n: any) => n.nft_coin_id === nft.nft_coin_id)) {
-          ownerWalletId = w.id;
-          break;
-        }
-      }
-      if (ownerWalletId === null) throw new Error('NFT not found in any wallet');
-      const transferBody = `{"wallet_id":${ownerWalletId},"target_address":${JSON.stringify(toAddress)},"nft_coin_id":${JSON.stringify(nft.nft_coin_id)},"fee":${feeMojo}}`;
-      const res = await fetch(`${WALLET_PROXY}/wallet/nft_transfer_nft`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: transferBody,
-        signal: AbortSignal.timeout(30000),
-      }).then(r => r.json());
-      if (res.success) {
-        setStatus('success');
-        setMessage('NFT transferred successfully!');
-        setToAddress('');
-      } else {
-        setStatus('error');
-        setMessage(res.error || 'Transfer failed');
-      }
-    } catch (e: any) {
-      setStatus('error');
-      setMessage(e.message);
-    } finally {
-      sendingRef.current = false;
-    }
-  }
-
-  const mediaUrl = nft.preview_url || resolveUri(nft.data_uris?.[0] || '');
-
-  return (
-    <div className="wallet-screen">
-      <button onClick={onBack} style={{
-        background:'none',border:'none',color:'var(--accent)',
-        fontSize:13,cursor:'pointer',textAlign:'left',padding:0,marginBottom:4
-      }}>← Back</button>
-
-      {/* Media */}
-      <div style={{borderRadius:16,overflow:'hidden',border:'1px solid var(--border)'}}>
-        {nft.is_video && nft.data_uris?.[0] ? (
-          <video src={resolveUri(nft.data_uris[0])}
-            style={{width:'100%',aspectRatio:'1',objectFit:'cover',display:'block'}}
-            autoPlay loop muted playsInline controls/>
-        ) : mediaUrl ? (
-          <img src={mediaUrl} alt={nft.name || ''}
-            style={{width:'100%',aspectRatio:'1',objectFit:'cover',display:'block'}}
-            onError={e => (e.currentTarget.style.display='none')}/>
-        ) : null}
-      </div>
-
-      {/* Info */}
-      <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:12,padding:'14px 16px'}}>
-        <div style={{fontWeight:700,fontSize:16,color:'var(--text-primary)',marginBottom:2}}>
-          {nft.name || 'Unknown NFT'}
-        </div>
-        {nft.collection && (
-          <div style={{fontSize:12,color:'var(--accent)',marginBottom:8}}>{nft.collection}</div>
-        )}
-        {nft.description && (
-          <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6,marginBottom:10}}>
-            {nft.description}
-          </div>
-        )}
-        {nft.royalty_percentage && (
-          <div style={{fontSize:11,color:'var(--text-dim)',marginBottom:4}}>
-            Royalty: {(nft.royalty_percentage / 100).toFixed(1)}%
-          </div>
-        )}
-        <div style={{display:'flex',alignItems:'flex-start',gap:8,marginTop:4}}>
-          <div style={{fontSize:10,color:'var(--text-dim)',fontFamily:'var(--font-mono)',
-            wordBreak:'break-all',flex:1}}>
-            {nft.nft_id}
-          </div>
-          <button className={`copy-btn ${nftIdCopied?'copied':''}`} onClick={handleCopyNftId}
-            style={{flexShrink:0,fontSize:10,padding:'4px 8px'}}>
-            {nftIdCopied?'✓':'Copy ID'}
-          </button>
-        </div>
-        <div style={{fontSize:10,color:'var(--text-dim)',marginTop:2}}>
-          Block #{nft.mint_height?.toLocaleString()}
-        </div>
-      </div>
-
-      {/* Transfer */}
-      {status === 'success' ? (
-        <div style={{padding:'14px',background:'rgba(77,170,135,0.1)',border:'1px solid var(--accent)',
-          borderRadius:12,fontSize:13,color:'var(--accent)',textAlign:'center'}}>
-          ✓ {message}
-        </div>
-      ) : !transferring ? (
-        <button onClick={() => setTransferring(true)} style={{
-          width:'100%',padding:'14px',background:'var(--bg-card)',
-          border:'1px solid var(--border)',borderRadius:12,
-          color:'var(--text-primary)',fontWeight:600,fontSize:14,cursor:'pointer'
-        }}>
-          Transfer NFT →
-        </button>
-      ) : (
-        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
-          borderRadius:12,padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
-          <div style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)',letterSpacing:'0.06em'}}>
-            TRANSFER TO
-          </div>
-          <input
-            className="address-input"
-            placeholder="xch1…"
-            value={toAddress}
-            onChange={e => setToAddress(e.target.value.trim())}
-            spellCheck={false}
-          />
-          <div style={{display:'flex',gap:10,alignItems:'center'}}>
-            <div style={{fontSize:11,color:'var(--text-secondary)',flexShrink:0}}>FEE (XCH)</div>
-            <input
-              className="address-input"
-              type="number"
-              min="0"
-              step="0.00001"
-              value={fee}
-              onChange={e => setFee(e.target.value)}
-              style={{fontSize:13}}
-            />
-          </div>
-          {status === 'error' && (
-            <div style={{fontSize:12,color:'#ff6b6b',padding:'8px 10px',
-              background:'rgba(220,50,50,0.1)',borderRadius:8}}>
-              ✗ {message}
-            </div>
-          )}
-          <div style={{display:'flex',gap:8}}>
-            <button onClick={() => { setTransferring(false); setStatus('idle'); setMessage(''); }}
-              style={{flex:1,padding:'11px',background:'none',border:'1px solid var(--border)',
-                borderRadius:10,color:'var(--text-secondary)',cursor:'pointer',fontSize:13}}>
-              Cancel
-            </button>
-            <button onClick={handleTransfer}
-              disabled={!isValidAddress || status === 'sending'}
-              style={{flex:2,padding:'11px',
-                background: isValidAddress && status !== 'sending' ? '#dc3232' : 'var(--bg-input)',
-                border:'none',borderRadius:10,
-                color: isValidAddress && status !== 'sending' ? '#fff' : 'var(--text-dim)',
-                fontWeight:700,fontSize:13,cursor: isValidAddress ? 'pointer' : 'not-allowed'}}>
-              {status === 'sending' ? '⏳ Sending…' : 'Confirm Transfer'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function NFTsScreen() {
-  const [nfts, setNfts] = useState<NftData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selected, setSelected] = useState<NftData | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError('');
-      try {
-        // Find all NFT wallets (type 10)
-        const walletsRes = await walletRpc('get_wallets', { include_data: true });
-        if (!walletsRes.success) throw new Error('Could not load wallets');
-        const nftWallets = (walletsRes.wallets || []).filter((w: any) => w.type === 10);
-        if (nftWallets.length === 0) { setNfts([]); setLoading(false); return; }
-
-        // Fetch NFTs from all NFT wallets
-        const allNfts: NftData[] = [];
-        for (const wallet of nftWallets) {
-          const res = await walletRpc('nft_get_nfts', { wallet_id: wallet.id, start_index: 0, num: 50 });
-          if (res.success && res.nft_list) allNfts.push(...res.nft_list);
-        }
-
-        // Fetch metadata for each NFT in parallel
-        const withMeta = await mapConcurrent(allNfts, 5, fetchNftMetadata);
-        setNfts(withMeta);
-      } catch (e: any) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
-
-  if (selected) return (
-    <NFTDetailView
-      nft={selected}
-      onBack={() => { setSelected(null); }}
-    />
-  );
-
-  return (
-    <div className="wallet-screen">
-      <div className="section-label">NFTs</div>
-      {loading && <div className="balance-loading"><div className="spinner"/>Loading NFTs…</div>}
-      {!loading && error && <div className="error-msg">{error}</div>}
-      {!loading && !error && nfts.length === 0 && (
-        <div className="empty-state">
-          <div style={{fontSize:40,marginBottom:12}}>🖼️</div>
-          No NFTs found in this wallet.
-        </div>
-      )}
-      {nfts.length > 0 && (
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-          {nfts.map(nft => {
-            const displayUrl = nft.preview_url || resolveUri(nft.data_uris?.[0] || '');
-            return (
-              <div key={nft.nft_id} onClick={() => setSelected(nft)}
-                style={{background:'var(--bg-card)',border:'1px solid var(--border)',
-                  borderRadius:12,overflow:'hidden',cursor:'pointer'}}>
-                {nft.is_video && !nft.preview_url ? (
-                  <div style={{width:'100%',aspectRatio:'1',background:'var(--bg-input)',
-                    display:'flex',flexDirection:'column',alignItems:'center',
-                    justifyContent:'center',fontSize:28,gap:6}}>
-                    🎬
-                    <div style={{fontSize:9,color:'var(--text-dim)'}}>Video NFT</div>
-                  </div>
-                ) : displayUrl ? (
-                  <img src={displayUrl} alt={nft.name || ''}
-                    style={{width:'100%',aspectRatio:'1',objectFit:'cover',display:'block'}}
-                    onError={e => { (e.currentTarget as HTMLImageElement).style.display='none'; }}
-                  />
-                ) : (
-                  <div style={{width:'100%',aspectRatio:'1',background:'var(--bg-input)',
-                    display:'flex',alignItems:'center',justifyContent:'center',fontSize:32}}>🖼️</div>
-                )}
-                <div style={{padding:'8px 10px'}}>
-                  <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)',
-                    overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                    {nft.name || nft.nft_id.slice(0, 12) + '…'}
-                  </div>
-                  {nft.collection && (
-                    <div style={{fontSize:10,color:'var(--accent)',marginTop:2,
-                      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                      {nft.collection}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 function HistoryScreen({ wallet, nodeUrl, catBalances }: {
@@ -2547,7 +2187,7 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
         )}
 
         {status === 'success' && (
-          <div style={{padding:'14px',background:'rgba(77,170,135,0.1)',
+          <div style={{padding:'14px',background:'rgba(249,115,22,0.1)',
             border:'1px solid var(--accent)',borderRadius:12,fontSize:13,color:'var(--accent)'}}>
             ✓ {resultMsg}
           </div>
@@ -2844,13 +2484,13 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
         </button>
 
         {status === 'pending' && (
-          <div style={{padding: '12px', background: 'rgba(77,170,135,0.06)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 10}}>
+          <div style={{padding: '12px', background: 'rgba(249,115,22,0.06)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 10}}>
             <div className="spinner" style={{borderTopColor: 'var(--accent)'}}/>
             Pending confirmation…
           </div>
         )}
         {status === 'success' && (
-          <div style={{padding: '12px', background: 'rgba(77,170,135,0.1)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)'}}>
+          <div style={{padding: '12px', background: 'rgba(249,115,22,0.1)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--accent)'}}>
             ✓ {message}
           </div>
         )}
@@ -3043,7 +2683,6 @@ function LockScreen({ mode, walletList, onUnlock, onForgotPassword }: {
 const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
 const HIDE_SMALL_KEY = 'chia_hide_small';
-const THEME_KEY = 'chia_theme';
 const IDLE_LOCK_KEY = 'chia_idle_lock';
 
 export default function App() {
@@ -3062,10 +2701,6 @@ export default function App() {
   });
   const [hideSmallBalances, setHideSmallBalances] = useState(() => localStorage.getItem(HIDE_SMALL_KEY) === '1');
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
-  const [theme, setTheme] = useState<'dark'|'light'>(() => {
-    const saved = localStorage.getItem(THEME_KEY);
-    return saved === 'light' ? 'light' : 'dark';
-  });
   const [proxyUrl, setProxyUrl] = useState(() => {
     try { return localStorage.getItem(PROXY_URL_KEY) || _DEFAULT_PROXY; } catch { return _DEFAULT_PROXY; }
   });
@@ -3085,10 +2720,6 @@ export default function App() {
     setToast(msg);
     toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
 
   useEffect(() => {
     const savedNode = localStorage.getItem(NODE_KEY) || '';
@@ -3360,21 +2991,20 @@ export default function App() {
     localStorage.setItem(HIDE_SMALL_KEY, value ? '1' : '0');
   };
 
-  const handleToggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    localStorage.setItem(THEME_KEY, next);
-  };
+
 
   const isWallet = wallet !== null;
 
   const activeWalletName = walletList.find(w => w.id === activeWalletId)?.name;
 
+  const showSidebar = isWallet && !unlockMode && screen !== 'setup';
+
   return (
     <div className="app">
       <TopNav activePath="/" />
+
       {isWallet && (
-        <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',padding:'4px 16px',borderBottom:'1px solid var(--border)',minHeight:28}}>
+        <div className="node-bar">
           {walletList.length > 1 && activeWalletName && (
             <span style={{fontSize:11,color:'var(--text-secondary)',marginRight:'auto'}}>{activeWalletName}</span>
           )}
@@ -3383,8 +3013,7 @@ export default function App() {
       )}
 
       {isWallet && showBackupBanner && (
-        <div style={{background:'rgba(224,179,0,0.08)',borderBottom:'1px solid rgba(224,179,0,0.35)',
-          padding:'10px 16px',display:'flex',gap:10,alignItems:'center',flexShrink:0}}>
+        <div className="backup-banner">
           <span style={{fontSize:16}}>🔐</span>
           <span style={{flex:1,fontSize:12,color:'var(--text-primary)',lineHeight:1.4}}>
             Back up your seed phrase — it's the only way to recover this wallet.
@@ -3395,29 +3024,37 @@ export default function App() {
         </div>
       )}
 
-      {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock} onForgotPassword={handleForgotPassword}/>}
-      {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
-      {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
-      {isWallet && screen==='nfts'     && <NFTsScreen/>}
-      {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
-      {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
-      {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
-      {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
-      {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} theme={theme} onToggleTheme={handleToggleTheme} currentMnemonic={wallet?.mnemonic ?? ''} proxyUrl={proxyUrl} onProxyChange={handleProxyChange} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
+      <div className="wallet-body">
+        {showSidebar && (
+          <nav className="sidebar-nav">
+            <button className={`sidebar-item ${screen==='wallet'?'active':''}`} onClick={()=>setScreen('wallet')}><IconHome/><span>Home</span></button>
+            <button className={`sidebar-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/><span>Send</span></button>
+            <button className={`sidebar-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/><span>Receive</span></button>
+            <button className={`sidebar-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/><span>History</span></button>
+            <button className={`sidebar-item ${screen==='offers'?'active':''}`} onClick={()=>setScreen('offers')}><IconTrade/><span>Trade</span></button>
+            <button className={`sidebar-item ${screen==='settings'?'active':''}`} onClick={()=>setScreen('settings')}><IconSettings/><span>Settings</span></button>
+          </nav>
+        )}
+
+        <div className="wallet-content">
+          {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock} onForgotPassword={handleForgotPassword}/>}
+          {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
+          {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
+          {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
+          {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
+          {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
+          {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
+          {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} proxyUrl={proxyUrl} onProxyChange={handleProxyChange} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
+        </div>
+      </div>
 
       {toast && (
-        <div style={{position:'fixed',bottom:72,left:'50%',transform:'translateX(-50%)',
-          background:'var(--accent)',color:'#0a0b0f',borderRadius:'var(--radius)',
-          padding:'10px 18px',fontSize:13,fontWeight:600,zIndex:9999,whiteSpace:'nowrap',
-          boxShadow:'0 4px 16px rgba(0,0,0,0.4)',animation:'slideUp 0.25s ease',pointerEvents:'none'}}>
-          ✓ {toast}
-        </div>
+        <div className="toast-msg">✓ {toast}</div>
       )}
 
       {isWallet && screen !== 'setup' && (
         <div className="bottom-nav">
           <button className={`nav-item ${screen==='wallet'?'active':''}`} onClick={()=>setScreen('wallet')}><IconHome/>Home</button>
-          <button className={`nav-item ${screen==='nfts'?'active':''}`} onClick={()=>setScreen('nfts')}><IconNFTs/>NFTs</button>
           <button className={`nav-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/>Send</button>
           <button className={`nav-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/>Receive</button>
           <button className={`nav-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/>History</button>

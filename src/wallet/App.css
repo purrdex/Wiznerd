@@ -3,14 +3,14 @@
 
 :root {
   --bg-base:     #0a0b0f;
-  --bg-card:     #13151c;
-  --bg-input:    #1c1f2a;
-  --bg-hover:    #1f2330;
-  --border:      #2a2d3a;
-  --accent:      #4daa87;
-  --accent-dim:  #2e7a60;
-  --accent-glow: rgba(77,170,135,0.15);
-  --warn:        #e07b3a;
+  --bg-card:     #111218;
+  --bg-input:    #1a1d28;
+  --bg-hover:    #1e2030;
+  --border:      #1e2030;
+  --accent:      #f97316;
+  --accent-dim:  #c2650e;
+  --accent-glow: rgba(249,115,22,0.15);
+  --warn:        #f59e0b;
   --error:       #e05c5c;
   --text-primary:   #f0f2f8;
   --text-secondary: #7b8399;
@@ -26,10 +26,10 @@
   --bg-input:    #eef0f7;
   --bg-hover:    #e8eaf3;
   --border:      #d0d4e4;
-  --accent:      #2e7a60;
-  --accent-dim:  #1e5440;
-  --accent-glow: rgba(46,122,96,0.12);
-  --warn:        #b35a1a;
+  --accent:      #ea6c0a;
+  --accent-dim:  #b35a08;
+  --accent-glow: rgba(249,115,22,0.12);
+  --warn:        #d97706;
   --error:       #c0392b;
   --text-primary:   #0a0b0f;
   --text-secondary: #4a4f62;
@@ -47,19 +47,146 @@ body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Mobile-first layout */
-
-
 /* ── App shell ── */
 .app {
-  max-width: 420px;
   width: 100%;
-  margin: 0 auto;
-  height: 100dvh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  background: var(--bg-base);
+}
+
+/* Mobile: constrained column, full-height locked */
+@media (max-width: 767px) {
+  .app {
+    max-width: 420px;
+    margin: 0 auto;
+    height: 100dvh;
+    overflow: hidden;
+    padding: 0 0 env(safe-area-inset-bottom);
+  }
+}
+
+/* ── Full-width info bars ── */
+.node-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 20px;
+  border-bottom: 1px solid var(--border);
+  min-height: 32px;
+  flex-shrink: 0;
+}
+
+.backup-banner {
+  background: rgba(224,179,0,0.08);
+  border-bottom: 1px solid rgba(224,179,0,0.35);
+  padding: 10px 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Body: sidebar + content ── */
+.wallet-body {
+  flex: 1;
+  display: flex;
   overflow: hidden;
-  padding: 0 0 env(safe-area-inset-bottom);
+  min-height: 0;
+}
+
+.wallet-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ── Sidebar nav (desktop only) ── */
+.sidebar-nav {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    width: 210px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    padding: 20px 10px;
+    gap: 2px;
+  }
+
+  .sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    border-radius: 10px;
+    color: var(--text-secondary);
+    background: none;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    width: 100%;
+    text-align: left;
+  }
+
+  .sidebar-item svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+  .sidebar-item.active {
+    color: var(--accent);
+    background: rgba(249,115,22,0.1);
+  }
+
+  .sidebar-item:hover:not(.active) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  /* Wider wallet screens */
+  .wallet-screen {
+    max-width: 840px;
+    padding: 36px 48px;
+    gap: 16px;
+  }
+
+  /* Bigger balance display */
+  .balance-card { padding: 44px 56px; }
+  .balance-amount { font-size: 54px; }
+
+  /* Bigger token rows */
+  .token-card { padding: 14px 20px; }
+  .token-name { font-size: 14px; }
+  .token-amount { font-size: 14px; }
+}
+
+/* ── Toast ── */
+.toast-msg {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #0a0b0f;
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 9999;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  animation: slideUp 0.25s ease;
+  pointer-events: none;
+}
+
+@media (min-width: 768px) {
+  .toast-msg { bottom: 32px; }
 }
 
 /* ── Header ── */
@@ -174,7 +301,7 @@ body, #root {
   background: var(--accent);
   color: #0a0b0f;
 }
-.btn-primary:hover { background: #5bc49a; }
+.btn-primary:hover { background: #fb923c; }
 .btn-primary:disabled { background: var(--bg-input); color: var(--text-dim); cursor: not-allowed; transform: none; }
 
 .btn-secondary {
@@ -500,6 +627,10 @@ input::placeholder { color: var(--text-dim); }
 .nav-item.active { color: var(--accent); }
 .nav-item svg { width: 20px; height: 20px; }
 
+@media (min-width: 768px) {
+  .bottom-nav { display: none; }
+}
+
 /* ── Utility ── */
 .mt-8  { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }
@@ -507,16 +638,24 @@ input::placeholder { color: var(--text-dim); }
 
 /* ── Layout fixes ── */
 
-/* All screens: consistent width, scrollable, no overflow */
+/* All screens: consistent width, scrollable on mobile */
 .wallet-screen {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 20px 20px 20px;
+  padding: 20px;
   gap: 8px;
   overflow-y: auto;
   min-height: 0;
+}
+
+/* Desktop: wallet-content is the scroller, wallet-screen just fills it */
+@media (min-width: 768px) {
+  .wallet-screen {
+    overflow-y: visible;
+    flex: none;
+  }
 }
 
 /* Prevent any child from exceeding container width */
@@ -673,7 +812,7 @@ input[type="number"]:focus { border-color: var(--accent); }
 }
 
 .tx-send { background: rgba(220, 92, 92, 0.12); color: #ff6b6b; }
-.tx-recv { background: rgba(77, 170, 135, 0.12); color: var(--accent); }
+.tx-recv { background: rgba(249,115,22,0.12); color: var(--accent); }
 
 .tx-info { flex: 1; min-width: 0; }
 

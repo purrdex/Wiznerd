@@ -6,9 +6,10 @@
 // and returns only offers for that specific collection.
 //
 // Usage:
-//   node server/dexie-backfill.js <collection_id>            # single collection
-//   node server/dexie-backfill.js --all                      # all indexed collections
-//   node server/dexie-backfill.js <collection_id> --fresh    # wipe first
+//   node server/dexie-backfill.js <collection_id>               # single collection
+//   node server/dexie-backfill.js --all                         # all indexed collections
+//   node server/dexie-backfill.js --all --since 2026-07-01      # only trades on/after this date
+//   node server/dexie-backfill.js <collection_id> --fresh       # wipe first
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { createClient } = require('@supabase/supabase-js');
@@ -46,7 +47,7 @@ async function fetchPage(collectionId, page) {
 
 // ── Process one collection ────────────────────────────────────────────────────
 
-async function backfillCollection(collectionId, collName) {
+async function backfillCollection(collectionId, collName, sinceDate = null) {
   let page = 0;
   let totalInserted = 0;
   const seen = new Set();
@@ -71,7 +72,7 @@ async function backfillCollection(collectionId, collName) {
   }
 
   async function processPage(d) {
-    const trades = [];
+    let trades = [];
     for (const offer of d.offers || []) {
       const off = offer.offered?.[0];
       const req = offer.requested?.[0];
@@ -137,6 +138,17 @@ async function backfillCollection(collectionId, collName) {
       }
     }
 
+    // If --since is set, drop trades older than the cutoff and signal early exit
+    let hitCutoff = false;
+    if (sinceDate) {
+      const before = trades.length;
+      trades = trades.filter(t => {
+        if (t.transferred_at < sinceDate) { hitCutoff = true; return false; }
+        return true;
+      });
+      if (hitCutoff && trades.length < before) return { done: true };
+    }
+
     // Deduplicate by nft_id + block_height
     const fresh = trades.filter(t => {
       const key = `${t.nft_id}:${t.block_height}`;
@@ -162,7 +174,8 @@ async function backfillCollection(collectionId, collName) {
     }
   }
 
-  await processPage(first);
+  const firstResult = await processPage(first);
+  if (firstResult?.done) return totalInserted;
 
   // Dexie is 1-indexed; page=1 was already fetched above, continue from page=2
   for (page = 2; page <= pages; page++) {
@@ -174,8 +187,9 @@ async function backfillCollection(collectionId, collName) {
       console.error(`  Page ${page} error: ${e.message} — skipping`);
       continue;
     }
-    await processPage(d);
+    const result = await processPage(d);
     process.stdout.write(`\r  [${collName}] ${page}/${pages} pages · ${totalInserted} trades inserted   `);
+    if (result?.done) break;
   }
 
   if (pages > 1) process.stdout.write('\n');
@@ -189,6 +203,9 @@ async function main() {
   const all   = args.includes('--all');
   const fresh = args.includes('--fresh');
   const colId = args.find(a => !a.startsWith('--')) || null;
+  const sinceIdx = args.indexOf('--since');
+  const sinceDate = sinceIdx !== -1 ? args[sinceIdx + 1] : null;
+  if (sinceDate) console.log(`--since ${sinceDate}: stopping per collection once older trades are hit`);
 
   if (!all && !colId) {
     console.error('Usage: node server/dexie-backfill.js <collection_id> | --all [--fresh]');
@@ -235,7 +252,7 @@ async function main() {
     const shortName = (name || collection_id).slice(0, 30);
     process.stdout.write(`  [${i + 1}/${collections.length}] ${shortName} ...`);
 
-    const inserted = await backfillCollection(collection_id, shortName);
+    const inserted = await backfillCollection(collection_id, shortName, sinceDate);
     grandTotal += inserted;
 
     if (inserted > 0) {
