@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, useRef, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
 import './ToastContext.css';
 
 interface Toast {

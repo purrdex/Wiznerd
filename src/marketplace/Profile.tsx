@@ -141,7 +141,7 @@ export default function ProfilePage() {
     })
       .then(r => r.ok ? r.json() : null)
       .then((d: { synced: number; total: number; nft_ids?: string[] } | null) => {
-        if (d?.synced > 0) setSyncStatus('done'); else setSyncStatus('idle');
+        if ((d?.synced ?? 0) > 0) setSyncStatus('done'); else setSyncStatus('idle');
         return d?.nft_ids || null;
       })
       .catch(() => { setSyncStatus('idle'); return null; });
