@@ -88,6 +88,8 @@ export default function ProfilePage() {
       return params.get('address') || localStorage.getItem('chia_primary_address') || '';
     } catch { return ''; }
   });
+  const myAddress = (() => { try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; } })();
+  const isOwnProfile = !walletAddress || walletAddress === myAddress;
 
   const [nfts, setNfts] = useState<ProfileNft[]>([]);
   const [collections, setCollections] = useState<ProfileCollection[]>([]);
@@ -135,19 +137,20 @@ export default function ProfilePage() {
     setLoading(true);
     setNfts([]); setCollections([]); setActiveCol(null); setXchMojo(null); setListedNftIds(new Set());
 
-    // Sync wallet first — indexes unindexed NFTs and returns all wallet NFT IDs
-    // so the profile query can find NFTs at any derivation address, not just primary
-    setSyncStatus('syncing');
-    const syncPromise = fetch(`${API_URL}/api/marketplace/profile/sync`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(30000),
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then((d: { synced: number; total: number; nft_ids?: string[] } | null) => {
-        if ((d?.synced ?? 0) > 0) setSyncStatus('done'); else setSyncStatus('idle');
-        return d?.nft_ids || null;
-      })
-      .catch(() => { setSyncStatus('idle'); return null; });
+    // Only sync when viewing own profile — sync talks to local wallet daemon
+    // and only knows about the current user's NFTs, not other addresses.
+    const syncPromise: Promise<string[] | null> = isOwnProfile
+      ? (setSyncStatus('syncing'), fetch(`${API_URL}/api/marketplace/profile/sync`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(30000),
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then((d: { synced: number; total: number; nft_ids?: string[] } | null) => {
+            if ((d?.synced ?? 0) > 0) setSyncStatus('done'); else setSyncStatus('idle');
+            return d?.nft_ids || null;
+          })
+          .catch(() => { setSyncStatus('idle'); return null; }))
+      : Promise.resolve(null);
 
     Promise.all([
       syncPromise.then((nftIds: string[] | null) => {
