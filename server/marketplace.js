@@ -1075,6 +1075,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     if (phResult.error) return res.status(500).json({ error: phResult.error.message });
 
     const collectionIds = [...new Set((nfts || []).map(n => n.collection_id).filter(Boolean))];
+    const uncategorised = (nfts || []).filter(n => !n.collection_id).length;
 
     const { data: colRows } = await supabase
       .from('indexed_collections')
@@ -1085,17 +1086,19 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     const collectionCounts = {};
     (nfts || []).forEach(n => {
-      if (n.collection_id) collectionCounts[n.collection_id] = (collectionCounts[n.collection_id] || 0) + 1;
+      const key = n.collection_id || '__other__';
+      collectionCounts[key] = (collectionCounts[key] || 0) + 1;
     });
 
-    const collections = collectionIds
-      .map(id => ({
+    const collections = [
+      ...collectionIds.map(id => ({
         id,
         name: colMap[id]?.name || id.slice(0, 12) + '…',
         thumbnail_url: colMap[id]?.thumbnail_url || null,
         count: collectionCounts[id] || 0,
-      }))
-      .sort((a, b) => b.count - a.count);
+      })),
+      ...(uncategorised > 0 ? [{ id: '__other__', name: 'Other', thumbnail_url: null, count: uncategorised }] : []),
+    ].sort((a, b) => b.count - a.count);
 
     res.json({ nfts: nfts || [], collections });
   }

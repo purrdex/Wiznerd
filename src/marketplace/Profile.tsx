@@ -212,7 +212,9 @@ export default function ProfilePage() {
     });
   }
 
-  const visible = activeCol ? nfts.filter(n => n.collection_id === activeCol) : nfts;
+  const visible = activeCol
+    ? nfts.filter(n => activeCol === '__other__' ? !n.collection_id : n.collection_id === activeCol)
+    : nfts;
   const activeColName = activeCol ? (collections.find(c => c.id === activeCol)?.name || 'Collection') : null;
 
   if (!walletAddress) {
