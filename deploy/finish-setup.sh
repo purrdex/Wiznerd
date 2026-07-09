@@ -58,7 +58,19 @@ echo "[dexie-sync] $(date) - syncing trades since $SINCE"
 node server/dexie-backfill.js --all --since "$SINCE"
 CRONEOF
 chmod +x /opt/wiznerd/dexie-sync.sh
-(crontab -l 2>/dev/null | grep -v dexie-sync; echo "0 2 * * * /opt/wiznerd/dexie-sync.sh >> /var/log/wiznerd-dexie.log 2>&1") | crontab -
+
+cat > /opt/wiznerd/ownership-sync.sh << 'CRONEOF'
+#!/bin/bash
+cd /opt/wiznerd/Wiznerd
+echo "[ownership-sync] $(date) — refreshing NFT ownership from MintGarden"
+node server/nft-backfill.js --all --ownership
+CRONEOF
+chmod +x /opt/wiznerd/ownership-sync.sh
+
+(crontab -l 2>/dev/null | grep -v dexie-sync | grep -v ownership-sync
+ echo "0 2 * * * /opt/wiznerd/dexie-sync.sh >> /var/log/wiznerd-dexie.log 2>&1"
+ echo "0 3 * * * /opt/wiznerd/ownership-sync.sh >> /var/log/wiznerd-ownership.log 2>&1"
+) | crontab -
 echo "[cron] done"
 
 echo ""

@@ -55,6 +55,7 @@ PINATA_JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQi
 PINATASECRET=9e6844b10b5508d9ad4222bf1d5714a4d5532d430439b9dd1b62b761c1287416
 MINTER_DID=did:chia:19vw9zz7uzu0gh3r3t7am6zt7gw4yc23k56lt9w2y9vfvs3eefy7scv4mmz
 MINTER_NFT_WALLET_ID=4
+PROFILE_OWNER_ADDRESS=xch1vcthngy6a69r93vr9grauj6wm3dpf54z6u2vkzzjmwqpahpjdklq45hjkd
 VITE_SUPABASE_URL=https://eigmggwmktiugfgkdtri.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVpZ21nZ3dta3RpdWdmZ2tkdHJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEwMDY3ODgsImV4cCI6MjA4NjU4Mjc4OH0.GbDo8xq5Pa8So8AV66mQ-AkIEZuzSOC3WVUThS2KfWQ
 VITE_API_URL=https://wiznerd.fun
@@ -181,9 +182,21 @@ echo "[dexie-sync] done"
 CRONEOF
 chmod +x /opt/wiznerd/dexie-sync.sh
 
-# Add cron job (2 AM nightly)
-(crontab -l 2>/dev/null; echo "0 2 * * * /opt/wiznerd/dexie-sync.sh >> /var/log/wiznerd-dexie.log 2>&1") | crontab -
-echo "      Cron set."
+cat > /opt/wiznerd/ownership-sync.sh << 'CRONEOF'
+#!/bin/bash
+cd /opt/wiznerd/Wiznerd
+echo "[ownership-sync] $(date) — refreshing NFT ownership from MintGarden"
+node server/nft-backfill.js --all --ownership
+echo "[ownership-sync] done"
+CRONEOF
+chmod +x /opt/wiznerd/ownership-sync.sh
+
+# 2 AM — Dexie trade data; 3 AM — ownership refresh
+(crontab -l 2>/dev/null | grep -v dexie-sync | grep -v ownership-sync
+ echo "0 2 * * * /opt/wiznerd/dexie-sync.sh >> /var/log/wiznerd-dexie.log 2>&1"
+ echo "0 3 * * * /opt/wiznerd/ownership-sync.sh >> /var/log/wiznerd-ownership.log 2>&1"
+) | crontab -
+echo "      Crons set."
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""

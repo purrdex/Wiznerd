@@ -380,14 +380,80 @@ async function backfillCollection(collectionId) {
   console.log(`\n  Done: ${done} processed · ${withTraits} with traits · ${errors} errors`);
 }
 
+// ── Ownership-only refresh (fast) ─────────────────────────────────────────────
+// Pages through the MintGarden collection listing (which already includes
+// owner_address_encoded_id for each NFT) and batch-upserts owner_puzzle_hash.
+// No per-NFT API calls — ~48 NFTs per HTTP request. Suitable for nightly cron.
+
+async function refreshOwnershipFromMG(collectionId, collName) {
+  process.stdout.write(`  [${collName || collectionId.slice(0, 20)}] refreshing ownership...`);
+  let cursor = null;
+  let updated = 0;
+  let pages = 0;
+
+  while (true) {
+    const url = cursor
+      ? `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48&page=${encodeURIComponent(cursor)}`
+      : `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48`;
+
+    let res;
+    let retryDelay = 5000;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      } catch (e) {
+        if (attempt === 4) throw e;
+        await new Promise(r => setTimeout(r, retryDelay));
+        retryDelay = Math.min(retryDelay * 2, 30000);
+        continue;
+      }
+      if (res.status !== 429) break;
+      process.stdout.write(` [429, waiting ${retryDelay / 1000}s]`);
+      await new Promise(r => setTimeout(r, retryDelay));
+      retryDelay = Math.min(retryDelay * 2, 60000);
+    }
+    if (!res || !res.ok) { process.stdout.write(` HTTP ${res?.status} — skip\n`); return updated; }
+
+    const json = await res.json();
+    const items = json.items || [];
+    if (!items.length) break;
+
+    const batch = [];
+    for (const item of items) {
+      if (!item.encoded_id || !item.owner_address_encoded_id) continue;
+      try {
+        const d = bech32m.decode(item.owner_address_encoded_id, 90);
+        const ph = Buffer.from(bech32m.fromWords(d.words)).toString('hex');
+        batch.push({ nft_id: item.encoded_id, owner_puzzle_hash: ph, updated_at: new Date().toISOString() });
+      } catch { /* skip invalid address */ }
+    }
+
+    if (batch.length) {
+      const { error } = await supabase.from('indexed_nfts')
+        .upsert(batch, { onConflict: 'nft_id' });
+      if (error) process.stdout.write(` [db error: ${error.message}]`);
+      else updated += batch.length;
+    }
+
+    pages++;
+    if (!json.next) break;
+    cursor = json.next;
+    await new Promise(r => setTimeout(r, MG_DELAY));
+  }
+
+  process.stdout.write(` ${updated} updated (${pages} pages)\n`);
+  return updated;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const flags = { all: false, minCount: 0, maxCount: 0, id: null, mg: false, test: false };
+  const flags = { all: false, minCount: 0, maxCount: 0, id: null, mg: false, ownership: false, test: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--all') flags.all = true;
     else if (args[i] === '--mg') flags.mg = true;
+    else if (args[i] === '--ownership') flags.ownership = true;
     else if (args[i] === '--test') flags.test = true;
     else if (args[i] === '--min-count' && args[i + 1]) { flags.minCount = parseInt(args[++i], 10); }
     else if (args[i] === '--max-count' && args[i + 1]) { flags.maxCount = parseInt(args[++i], 10); }
@@ -430,9 +496,10 @@ async function main() {
   } else {
     console.error('Usage:');
     console.error('  node server/nft-backfill.js <collection_id>             # on-chain singleton walk');
-    console.error('  node server/nft-backfill.js <collection_id> --mg        # MintGarden source (for collections without on-chain metadata URIs)');
+    console.error('  node server/nft-backfill.js <collection_id> --mg        # MintGarden source');
     console.error('  node server/nft-backfill.js --all --min-count 500       # on-chain, all large collections');
     console.error('  node server/nft-backfill.js --all --mg                  # MintGarden source, all collections');
+    console.error('  node server/nft-backfill.js --all --ownership           # fast: ownership refresh only (nightly cron)');
     process.exit(1);
   }
 
@@ -473,6 +540,15 @@ async function main() {
     if (error) console.error('Supabase upsert error:', error);
     else console.log('Supabase upsert OK — check DB for nft_id:', nftId);
     return;
+  }
+
+  if (flags.ownership) {
+    let totalUpdated = 0;
+    for (const col of collectionIds) {
+      totalUpdated += await refreshOwnershipFromMG(col.id, col.name);
+    }
+    console.log(`\nOwnership refresh complete — ${totalUpdated} NFTs updated.`);
+    process.exit(0);
   }
 
   const runFn = flags.mg ? backfillCollectionFromMG : backfillCollection;

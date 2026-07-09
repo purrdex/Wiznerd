@@ -1134,8 +1134,23 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
   // any not already in indexed_nfts, and upserts them so the profile page shows
   // the full wallet contents even for collections the block crawler hasn't hit yet.
 
+  // The address of the site/node operator. When set, sync returns wallet daemon
+  // NFTs for this address (and only this address) even without a connected browser wallet.
+  // Set PROFILE_OWNER_ADDRESS in .env to the operator's primary XCH address.
+  const PROFILE_OWNER_ADDRESS = (process.env.PROFILE_OWNER_ADDRESS || '').toLowerCase().trim();
+
   app.post('/api/marketplace/profile/sync', async (req, res) => {
     try {
+      const requestedAddress = (req.body?.address || '').toLowerCase().trim();
+
+      // If an address is provided and PROFILE_OWNER_ADDRESS is configured,
+      // only return wallet NFTs when the request is for the owner's address.
+      // This prevents a visitor from accidentally loading the operator's wallet
+      // into someone else's profile view.
+      if (requestedAddress && PROFILE_OWNER_ADDRESS && requestedAddress !== PROFILE_OWNER_ADDRESS) {
+        return res.json({ synced: 0, total: 0, nft_ids: [] });
+      }
+
       const { wallets } = await walletRpc('get_wallets', { include_data: false });
       const nftWallets = (wallets || []).filter(w => w.type === 10);
 
