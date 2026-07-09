@@ -82,6 +82,14 @@ export default function MarketplaceScreen() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [search, setSearch] = useState('');
+
+  function handleSearch(v: string) {
+    if (/^xch1[ac-hj-np-z02-9]{58}$/.test(v.trim())) {
+      window.location.href = `/marketplace/profile?address=${encodeURIComponent(v.trim())}`;
+      return;
+    }
+    setSearch(v);
+  }
   const [xchPrice, setXchPrice] = useState(0);
   const [notableSales, setNotableSales] = useState<NotableSale[]>([]);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -188,7 +196,7 @@ export default function MarketplaceScreen() {
 
   return (
     <div className="mp-page">
-      <TopNav searchValue={search} onSearchChange={setSearch} searchPlaceholder="Search collections…" />
+      <TopNav searchValue={search} onSearchChange={handleSearch} searchPlaceholder="Search collections or paste xch1… address…" />
 
       {/* Filters */}
       <div className="mp-filters">
