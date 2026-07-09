@@ -82,9 +82,12 @@ function formatXch(mojo: number) {
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const [walletAddress, setWalletAddress] = useState(
-    () => { try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; } }
-  );
+  const [walletAddress, setWalletAddress] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('address') || localStorage.getItem('chia_primary_address') || '';
+    } catch { return ''; }
+  });
 
   const [nfts, setNfts] = useState<ProfileNft[]>([]);
   const [collections, setCollections] = useState<ProfileCollection[]>([]);
