@@ -164,8 +164,9 @@ async function backfillCollection(collectionId, collName, sinceDate = null) {
       const { error } = await supabase.from('nft_transfers').insert(batch);
       if (error) {
         // Fall back to upsert if unique constraint exists (migration 013)
+        // ignoreDuplicates:false so collection_id gets corrected on conflict
         const { error: e2 } = await supabase.from('nft_transfers')
-          .upsert(batch, { onConflict: 'nft_id,block_height', ignoreDuplicates: true });
+          .upsert(batch, { onConflict: 'nft_id,block_height', ignoreDuplicates: false });
         if (e2) console.error('\n  Insert error:', e2.message);
         else totalInserted += batch.length;
       } else {
@@ -202,9 +203,12 @@ async function main() {
   const args  = process.argv.slice(2);
   const all   = args.includes('--all');
   const fresh = args.includes('--fresh');
-  const colId = args.find(a => !a.startsWith('--')) || null;
   const sinceIdx = args.indexOf('--since');
   const sinceDate = sinceIdx !== -1 ? args[sinceIdx + 1] : null;
+  // Exclude --flag values (like the --since date) from positional args
+  const skipNext = new Set();
+  if (sinceIdx !== -1) skipNext.add(sinceIdx + 1);
+  const colId = args.find((a, i) => !a.startsWith('--') && !skipNext.has(i)) || null;
   if (sinceDate) console.log(`--since ${sinceDate}: stopping per collection once older trades are hit`);
 
   if (!all && !colId) {
