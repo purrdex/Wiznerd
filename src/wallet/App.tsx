@@ -947,7 +947,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           value={PUBLIC_NODES.find(n => n.url === input)?.url ?? (input ? '' : '__local__')}
           onChange={e => {
             const val = e.target.value;
-            if (val === '__local__') { setInput(''); setTestResult(null); }
+            if (val === '__local__') { setInput(proxyUrl); setTestResult(null); }
             else if (val) { setInput(val); setTestResult(null); }
           }}
           style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
