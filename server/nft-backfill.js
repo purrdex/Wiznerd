@@ -294,13 +294,13 @@ async function* getAllNftIds(collectionId, maxItems = 60000) {
       ? `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48&page=${encodeURIComponent(cursor)}`
       : `https://api.mintgarden.io/collections/${encodeURIComponent(collectionId)}/nfts?size=48`;
 
-    let res, retryDelay = 5000;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    let res, retryDelay = 8000;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
       if (res.status !== 429) break;
       process.stdout.write(`\n  429 on discovery page ${page} — waiting ${retryDelay / 1000}s...`);
       await new Promise(r => setTimeout(r, retryDelay));
-      retryDelay = Math.min(retryDelay * 2, 60000);
+      retryDelay = Math.min(retryDelay * 2, 120000);
     }
     if (!res.ok) throw new Error(`MintGarden HTTP ${res.status} on page ${page}`);
     const json = await res.json();
@@ -310,6 +310,7 @@ async function* getAllNftIds(collectionId, maxItems = 60000) {
 
     yield* ids;
     totalYielded += ids.length;
+    if (totalYielded % 500 === 0) process.stdout.write(`\r  Scanned ${totalYielded} IDs...   `);
 
     if (totalYielded >= maxItems) { console.warn(`\n  Hit max ${maxItems} — stopping discovery`); break; }
     if (!json.next) break;
@@ -424,7 +425,7 @@ async function refreshOwnershipFromMG(collectionId, collName) {
       try {
         const d = bech32m.decode(item.owner_address_encoded_id, 90);
         const ph = Buffer.from(bech32m.fromWords(d.words)).toString('hex');
-        batch.push({ nft_id: item.encoded_id, owner_puzzle_hash: ph, updated_at: new Date().toISOString() });
+        batch.push({ nft_id: item.encoded_id, collection_id: collectionId, owner_puzzle_hash: ph, updated_at: new Date().toISOString() });
       } catch { /* skip invalid address */ }
     }
 
@@ -449,12 +450,15 @@ async function refreshOwnershipFromMG(collectionId, collName) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const flags = { all: false, minCount: 0, maxCount: 0, id: null, mg: false, ownership: false, test: false };
+  const flags = { all: false, minCount: 0, maxCount: 0, id: null, slug: null, mg: false, ownership: false, missingOwnership: false, missing: false, test: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--all') flags.all = true;
     else if (args[i] === '--mg') flags.mg = true;
     else if (args[i] === '--ownership') flags.ownership = true;
+    else if (args[i] === '--missing-ownership') flags.missingOwnership = true;
+    else if (args[i] === '--missing') flags.missing = true;
     else if (args[i] === '--test') flags.test = true;
+    else if (args[i] === '--slug' && args[i + 1]) { flags.slug = args[++i]; }
     else if (args[i] === '--min-count' && args[i + 1]) { flags.minCount = parseInt(args[++i], 10); }
     else if (args[i] === '--max-count' && args[i + 1]) { flags.maxCount = parseInt(args[++i], 10); }
     else if (!args[i].startsWith('--')) flags.id = args[i];
@@ -493,13 +497,17 @@ async function main() {
     await new Promise(r => setTimeout(r, 5000));
   } else if (flags.id) {
     collectionIds = [{ id: flags.id, name: flags.id, count: '?' }];
-  } else {
+  } else if (!flags.missingOwnership && !flags.missing) {
     console.error('Usage:');
     console.error('  node server/nft-backfill.js <collection_id>             # on-chain singleton walk');
     console.error('  node server/nft-backfill.js <collection_id> --mg        # MintGarden source');
     console.error('  node server/nft-backfill.js --all --min-count 500       # on-chain, all large collections');
     console.error('  node server/nft-backfill.js --all --mg                  # MintGarden source, all collections');
     console.error('  node server/nft-backfill.js --all --ownership           # fast: ownership refresh only (nightly cron)');
+    console.error('  node server/nft-backfill.js --missing                   # retry all collections with incomplete NFTs');
+    console.error('  node server/nft-backfill.js <collection_id> --missing   # retry only incomplete NFTs in one collection');
+    console.error('  node server/nft-backfill.js <collection_id> --missing --mg  # same, MintGarden source');
+    console.error('  node server/nft-backfill.js --missing-ownership         # retry collections with NULL owner_puzzle_hash');
     process.exit(1);
   }
 
@@ -548,6 +556,182 @@ async function main() {
       totalUpdated += await refreshOwnershipFromMG(col.id, col.name);
     }
     console.log(`\nOwnership refresh complete — ${totalUpdated} NFTs updated.`);
+    process.exit(0);
+  }
+
+  if (flags.missingOwnership) {
+    console.log('Querying for collections with missing owner_puzzle_hash...');
+    const { data, error } = await supabase
+      .from('indexed_nfts')
+      .select('collection_id')
+      .is('owner_puzzle_hash', null)
+      .not('collection_id', 'is', null);
+    if (error) { console.error('Supabase error:', error.message); process.exit(1); }
+    const ids = [...new Set((data || []).map(r => r.collection_id))];
+    console.log(`${ids.length} collections have NFTs missing ownership.\n`);
+    if (!ids.length) { console.log('Nothing to do.'); process.exit(0); }
+    let totalUpdated = 0;
+    for (const id of ids) {
+      totalUpdated += await refreshOwnershipFromMG(id, id.slice(0, 20));
+    }
+    console.log(`\nDone — ${totalUpdated} NFTs updated across ${ids.length} collections.`);
+    process.exit(0);
+  }
+
+  if (flags.missing) {
+    if (flags.id) {
+      // Single collection --missing:
+      // 1. Find partially-indexed rows (in DB but missing image/traits)
+      // 2. Find never-inserted rows (compare DB count vs indexed_collections.minted_count)
+      // 3. Process the union of both — skip full MintGarden paginate unless counts differ
+
+      // Step 1: null/empty-field rows already in DB
+      const { data: incompleteRows, error: incErr } = await supabase
+        .from('indexed_nfts')
+        .select('nft_id')
+        .eq('collection_id', flags.id)
+        .or('image_url.is.null,traits.is.null,traits.eq.{}');
+      if (incErr) { console.error('Supabase error:', incErr.message); process.exit(1); }
+      const incompleteIds = new Set((incompleteRows || []).map(r => r.nft_id).filter(Boolean));
+
+      // Step 2: detect never-inserted rows by comparing counts
+      const [{ count: dbCount }, { data: colInfo }] = await Promise.all([
+        supabase.from('indexed_nfts').select('*', { count: 'exact', head: true }).eq('collection_id', flags.id),
+        supabase.from('indexed_collections').select('minted_count, total_supply, name').eq('collection_id', flags.id).maybeSingle(),
+      ]);
+      const mintedCount = colInfo?.minted_count ?? 0;
+      const totalSupply = colInfo?.total_supply ?? mintedCount;
+      const gap = mintedCount - (dbCount ?? 0);
+      console.log(`DB: ${dbCount ?? '?'} rows  ·  minted: ${mintedCount}  ·  total supply: ${totalSupply}  ·  gap: ${Math.max(0, gap)}  ·  incomplete fields: ${incompleteIds.size}`);
+
+      let toProcess = [...incompleteIds];
+
+      if (gap > 0) {
+        // Extract numbers from name field (e.g. "Meowfers #412" → 412)
+        // Must paginate — Supabase caps at 1000 rows per query
+        console.log(`\nGap detected — finding missing token numbers from name field...`);
+        const haveNumbers = new Set();
+        let namePage = 0;
+        while (true) {
+          const { data: nameRows } = await supabase
+            .from('indexed_nfts').select('name')
+            .eq('collection_id', flags.id).not('name', 'is', null)
+            .range(namePage * 1000, namePage * 1000 + 999);
+          if (!nameRows || !nameRows.length) break;
+          for (const row of nameRows) {
+            const m = row.name && row.name.match(/#(\d+)/);
+            if (m) haveNumbers.add(parseInt(m[1], 10));
+          }
+          if (nameRows.length < 1000) break;
+          namePage++;
+        }
+        process.stdout.write(`\n`);
+
+        // Upper bound: max number seen across all names (burned NFTs live anywhere in 1..max)
+        const maxSeen = haveNumbers.size > 0 ? Math.max(...haveNumbers) : mintedCount;
+        const upperBound = Math.max(totalSupply || 0, maxSeen);
+        const missingNumbers = [];
+        for (let n = 1; n <= upperBound; n++) {
+          if (!haveNumbers.has(n)) missingNumbers.push(n);
+        }
+        // missingNumbers = (burned NFTs) + (never-indexed NFTs); MintGarden search will 404 burned ones
+        console.log(`  Have names for ${haveNumbers.size} NFTs (upper bound: ${upperBound}). Gap numbers: ${missingNumbers.slice(0, 20).join(', ')}${missingNumbers.length > 20 ? ` ... (${missingNumbers.length} total)` : ''}`);
+
+        if (missingNumbers.length > 0 && missingNumbers.length <= upperBound * 0.1) {
+          // Search MintGarden for each missing number by name to get its encoded_id
+          // Scan collection listing, match by name, stop as soon as we've found `gap` NFTs
+          const missingNumberSet = new Set(missingNumbers);
+          const neverInserted = [];
+          let pages = 0, cursor = null;
+          console.log(`  Scanning collection listing — will stop after finding ${gap} NFTs...\n`);
+          outer: while (true) {
+            const url = cursor
+              ? `https://api.mintgarden.io/collections/${encodeURIComponent(flags.id)}/nfts?size=48&page=${encodeURIComponent(cursor)}`
+              : `https://api.mintgarden.io/collections/${encodeURIComponent(flags.id)}/nfts?size=48`;
+            let res, retryDelay = 8000;
+            for (let attempt = 0; attempt < 10; attempt++) {
+              res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+              if (res.status !== 429) break;
+              process.stdout.write(`\n  429 — waiting ${retryDelay / 1000}s...`);
+              await new Promise(r => setTimeout(r, retryDelay));
+              retryDelay = Math.min(retryDelay * 2, 120000);
+            }
+            if (!res.ok) { console.warn(`\n  HTTP ${res.status} on page ${pages}`); break; }
+            const json = await res.json();
+            for (const item of (json.items || [])) {
+              const m = item.name && item.name.match(/#(\d+)/);
+              if (m && missingNumberSet.has(parseInt(m[1], 10))) {
+                const n = parseInt(m[1], 10);
+                neverInserted.push(item.encoded_id);
+                missingNumberSet.delete(n);
+                console.log(`  Found #${n} → ${item.encoded_id}  (${neverInserted.length}/${gap})`);
+                if (neverInserted.length >= gap) { console.log(`\n  Found all ${gap} — stopping early at page ${pages}.`); break outer; }
+              }
+            }
+            pages++;
+            process.stdout.write(`\r  Page ${pages} scanned — found ${neverInserted.length}/${gap} so far...`);
+            if (!json.next) break;
+            cursor = json.next;
+            await new Promise(r => setTimeout(r, MG_DELAY));
+          }
+          console.log(`\n  Scanned ${pages} pages, found ${neverInserted.length} NFTs to process.`);
+          for (const id of neverInserted) { if (!incompleteIds.has(id)) toProcess.push(id); }
+        } else {
+          // Fallback: page through MintGarden collection listing
+          console.log(`  Too many missing numbers (${missingNumbers.length}) — falling back to full MintGarden listing.`);
+          const { data: allRows } = await supabase
+            .from('indexed_nfts').select('nft_id').eq('collection_id', flags.id);
+          const dbSet = new Set((allRows || []).map(r => r.nft_id));
+          const mgIds = [];
+          for await (const id of getAllNftIds(flags.id)) mgIds.push(id);
+          const neverInserted = mgIds.filter(id => !dbSet.has(id));
+          console.log(`  Found ${neverInserted.length} never-inserted NFTs.`);
+          for (const id of neverInserted) { if (!incompleteIds.has(id)) toProcess.push(id); }
+        }
+      }
+
+      console.log(`\n${toProcess.length} NFTs to process.\n`);
+      if (!toProcess.length) { console.log('Nothing to do.'); process.exit(0); }
+
+      const processFn = flags.mg
+        ? id => processNftFromMG(id, flags.id)
+        : id => processNft(id, flags.id);
+      const { done, withTraits, errors } = await runWithConcurrency(toProcess, processFn, CONCURRENCY);
+      console.log(`\nDone: ${done} processed · ${withTraits} with traits · ${errors} errors`);
+      process.exit(0);
+    }
+
+    // No collection ID: find all collections with incomplete NFTs
+    console.log('Querying for collections with incomplete NFTs (missing traits or image)...');
+    const { data, error } = await supabase
+      .from('indexed_nfts')
+      .select('collection_id')
+      .not('collection_id', 'is', null)
+      .or('image_url.is.null,traits.is.null');
+    if (error) { console.error('Supabase error:', error.message); process.exit(1); }
+    const incompleteIds = [...new Set((data || []).map(r => r.collection_id))];
+    console.log(`${incompleteIds.length} collections have incomplete NFTs.\n`);
+    if (!incompleteIds.length) { console.log('Nothing to do.'); process.exit(0); }
+
+    const { data: colRows } = await supabase
+      .from('indexed_collections')
+      .select('collection_id, name, minted_count')
+      .in('collection_id', incompleteIds);
+    const colMap = Object.fromEntries((colRows || []).map(c => [c.collection_id, c]));
+    const cols = incompleteIds.map(id => ({
+      id,
+      name: colMap[id]?.name || id.slice(0, 20),
+      count: colMap[id]?.minted_count || '?',
+    }));
+    cols.forEach((c, i) => console.log(`  ${String(i + 1).padStart(4)}. ${c.name.padEnd(40)} ${String(c.count).padStart(6)} NFTs`));
+    console.log('\nStarting in 3 seconds — Ctrl+C to abort...\n');
+    await new Promise(r => setTimeout(r, 3000));
+
+    const runFn = flags.mg ? backfillCollectionFromMG : backfillCollection;
+    for (const col of cols) {
+      await runFn(col.id);
+    }
+    console.log(`\nDone — retried ${cols.length} collections.`);
     process.exit(0);
   }
 

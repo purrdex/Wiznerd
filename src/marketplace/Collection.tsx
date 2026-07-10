@@ -583,16 +583,10 @@ export default function CollectionScreen() {
               </>
             ) : (
               <>
-                {coll.total_supply > 0 && (
+                {coll.minted_count > 0 && (
                   <div className="mp-stat">
                     <div className="mp-stat-label">Supply</div>
-                    <div className="mp-stat-val">{coll.total_supply.toLocaleString()}</div>
-                  </div>
-                )}
-                {collStats && collStats.indexed_count > 0 && (
-                  <div className="mp-stat">
-                    <div className="mp-stat-label">Supply</div>
-                    <div className="mp-stat-val">{collStats.indexed_count.toLocaleString()}</div>
+                    <div className="mp-stat-val">{coll.minted_count.toLocaleString()}</div>
                   </div>
                 )}
                 {collStats && collStats.unique_holders > 0 && (
