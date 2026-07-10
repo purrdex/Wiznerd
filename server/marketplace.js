@@ -1564,7 +1564,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       vol7d,
       volAll,
     ] = await Promise.all([
-      supabase.from('indexed_nfts').select('nft_id', { count: 'exact', head: true }).eq('collection_id', id).not('image_url', 'is', null).or('owner_puzzle_hash.is.null,owner_puzzle_hash.neq.0000000000000000000000000000000000000000000000000000000000000000'),
+      supabase.from('indexed_nfts').select('nft_id', { count: 'exact', head: true }).eq('collection_id', id).not('image_url', 'is', null),
       supabase.from('indexed_nfts').select('owner_puzzle_hash').eq('collection_id', id).not('owner_puzzle_hash', 'is', null).neq('owner_puzzle_hash', '0000000000000000000000000000000000000000000000000000000000000000'),
       supabase.from('nft_offers').select('price_mojo').eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask').eq('price_token', 'xch').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).order('price_mojo', { ascending: true }).limit(1),
       supabase.from('nft_offers').select('*', { count: 'exact', head: true }).eq('collection_id', id).eq('status', 'open').eq('offer_type', 'ask').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
