@@ -2211,20 +2211,30 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const assetId   = req.params.assetId.toLowerCase();
     const timeframe = ['1h','4h','1d','1w','1m'].includes(req.query.timeframe)
       ? req.query.timeframe : '1d';
-    const limit  = Math.min(1000, parseInt(req.query.limit) || 500);
+    const limit = Math.min(2000, parseInt(req.query.limit) || 1000);
 
-    // Fetch newest-first so the limit window is the most recent N candles,
-    // then reverse to give the chart ascending time order.
-    const { data, error } = await supabase
-      .from('cat_ohlcv')
-      .select('bucket_start, open, high, low, close, volume_xch, trade_count')
-      .eq('asset_id', assetId)
-      .eq('timeframe', timeframe)
-      .order('bucket_start', { ascending: false })
-      .limit(limit);
+    // Paginate Supabase (default row cap is often 500-1000) so we always
+    // collect all candles, then slice the newest `limit` for the response.
+    const BATCH = 500;
+    let allCandles = [];
+    let from = 0;
+    while (true) {
+      const { data: batch, error } = await supabase
+        .from('cat_ohlcv')
+        .select('bucket_start, open, high, low, close, volume_xch, trade_count')
+        .eq('asset_id', assetId)
+        .eq('timeframe', timeframe)
+        .order('bucket_start', { ascending: false })
+        .range(from, from + BATCH - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!batch?.length) break;
+      allCandles.push(...batch);
+      if (batch.length < BATCH) break;
+      from += BATCH;
+    }
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json((data || []).reverse());
+    // allCandles is newest-first; slice to limit then reverse for chart
+    res.json(allCandles.slice(0, limit).reverse());
   });
 
   // ── Token recent trades ───────────────────────────────────────────────────────
