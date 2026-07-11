@@ -119,13 +119,13 @@ export default function TokenDetailScreen() {
       .catch(() => setTrades([]));
   }, [assetId]);
 
-  // Build/update chart
+  // Build/update chart — container is always mounted so clientWidth is valid
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     if (!chartRef.current) {
       chartRef.current = createChart(chartContainerRef.current, {
-        width: chartContainerRef.current.clientWidth,
+        autoSize: true,
         height: 360,
         layout: {
           background: { color: 'var(--bg-card, #18181b)' } as any,
@@ -146,6 +146,18 @@ export default function TokenDetailScreen() {
         borderDownColor: '#ef4444',
         wickUpColor:   '#22c55e',
         wickDownColor: '#ef4444',
+        priceFormat: {
+          type: 'custom',
+          formatter: (price: number) => {
+            if (!price) return '0';
+            if (price < 0.000001)  return price.toExponential(2);
+            if (price < 0.0001)    return price.toFixed(8);
+            if (price < 0.01)      return price.toFixed(6);
+            if (price < 1)         return price.toFixed(4);
+            return price.toFixed(2);
+          },
+          minMove: 0.00000001,
+        } as any,
       });
     }
 
@@ -163,16 +175,6 @@ export default function TokenDetailScreen() {
       seriesRef.current.setData([]);
     }
   }, [candles]);
-
-  // Resize observer
-  useEffect(() => {
-    if (!chartContainerRef.current || !chartRef.current) return;
-    const ro = new ResizeObserver(() => {
-      chartRef.current?.applyOptions({ width: chartContainerRef.current!.clientWidth });
-    });
-    ro.observe(chartContainerRef.current);
-    return () => ro.disconnect();
-  }, []);
 
   // Cleanup chart on unmount
   useEffect(() => {
@@ -274,12 +276,14 @@ export default function TokenDetailScreen() {
               ))}
             </div>
 
-            {candles.length === 0
-              ? <div style={{ height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
-                  No chart data yet — run cat-backfill then cat-ohlcv to populate
+            <div style={{ position: 'relative' }}>
+              <div ref={chartContainerRef} style={{ width: '100%', height: 360 }} />
+              {candles.length === 0 && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: 13, pointerEvents: 'none' }}>
+                  No chart data yet
                 </div>
-              : <div ref={chartContainerRef} style={{ width: '100%' }} />
-            }
+              )}
+            </div>
           </div>
         )}
 
