@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { createChart, CandlestickSeries } from 'lightweight-charts';
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import TopNav from '../components/TopNav';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3002';
@@ -42,13 +42,91 @@ interface Trade {
   source: string;
 }
 
+interface Legend { o: number; h: number; l: number; c: number; v: number }
+
 const TIMEFRAMES = ['1h', '4h', '1d', '1w', '1m'] as const;
 type TF = typeof TIMEFRAMES[number];
+type SeriesRef = ReturnType<ReturnType<typeof createChart>['addSeries']> | null;
+
+// ── Indicator math ────────────────────────────────────────────────────────────
+
+function computeSMA(candles: OhlcvRow[], period: number) {
+  return candles
+    .map((c, i) => {
+      if (i < period - 1) return null;
+      const slice = candles.slice(i - period + 1, i + 1);
+      const avg = slice.reduce((s, x) => s + Number(x.close), 0) / period;
+      return { time: Math.floor(new Date(c.bucket_start).getTime() / 1000) as any, value: avg };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+}
+
+function computeEMA(values: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const out: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    if (i < period - 1) { out.push(NaN); continue; }
+    if (i === period - 1) {
+      out.push(values.slice(0, period).reduce((a, b) => a + b, 0) / period);
+      continue;
+    }
+    out.push(values[i] * k + out[i - 1] * (1 - k));
+  }
+  return out;
+}
+
+function computeMACD(candles: OhlcvRow[]) {
+  const closes = candles.map(c => Number(c.close));
+  const ema12  = computeEMA(closes, 12);
+  const ema26  = computeEMA(closes, 26);
+  const tv     = (i: number) => Math.floor(new Date(candles[i].bucket_start).getTime() / 1000) as any;
+
+  // MACD line defined from index 25 (first valid EMA26)
+  const macdRaw: number[]  = [];
+  const macdIdx: number[]  = [];
+  for (let i = 25; i < closes.length; i++) {
+    macdRaw.push(ema12[i] - ema26[i]);
+    macdIdx.push(i);
+  }
+  if (macdRaw.length < 9) return { histData: [], lineData: [], signalData: [] };
+
+  const sigRaw = computeEMA(macdRaw, 9);
+
+  const histData:   any[] = [];
+  const lineData:   any[] = [];
+  const signalData: any[] = [];
+
+  for (let i = 8; i < macdRaw.length; i++) {
+    if (isNaN(sigRaw[i])) continue;
+    const t    = tv(macdIdx[i]);
+    const macd = macdRaw[i];
+    const sig  = sigRaw[i];
+    const hist = macd - sig;
+    lineData.push({ time: t, value: macd });
+    signalData.push({ time: t, value: sig });
+    histData.push({
+      time: t, value: hist,
+      color: hist >= 0 ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
+    });
+  }
+  return { histData, lineData, signalData };
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 function fmtXch(v: number | null | undefined, digits = 8): string {
   if (v == null) return '—';
   if (Math.abs(v) < 1e-8) return '< 0.00000001';
   return v.toFixed(digits).replace(/\.?0+$/, '');
+}
+
+function fmtPrice(v: number): string {
+  if (!v) return '0';
+  if (Math.abs(v) < 0.000001) return v.toExponential(2);
+  if (Math.abs(v) < 0.0001)   return v.toFixed(8);
+  if (Math.abs(v) < 0.01)     return v.toFixed(6);
+  if (Math.abs(v) < 1)        return v.toFixed(4);
+  return v.toFixed(2);
 }
 
 function timeAgo(iso: string): string {
@@ -65,6 +143,8 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function TokenDetailScreen() {
   const { assetId } = useParams<{ assetId: string }>();
   const nav = useNavigate();
@@ -77,10 +157,21 @@ export default function TokenDetailScreen() {
   const [trades, setTrades]       = useState<Trade[]>([]);
   const [xchPrice, setXchPrice]   = useState(0);
   const [tab, setTab]             = useState<'chart' | 'trades'>('chart');
+  const [ma20On, setMa20On]       = useState(true);
+  const [ma50On, setMa50On]       = useState(false);
+  const [macdOn, setMacdOn]       = useState(false);
+  const [legend, setLegend]       = useState<Legend | null>(null);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef          = useRef<ReturnType<typeof createChart> | null>(null);
-  const seriesRef         = useRef<ReturnType<ReturnType<typeof createChart>['addSeries']> | null>(null);
+  const seriesRef         = useRef<SeriesRef>(null);
+  const volSeriesRef      = useRef<SeriesRef>(null);
+  const ma20Ref           = useRef<SeriesRef>(null);
+  const ma50Ref           = useRef<SeriesRef>(null);
+  const macdHistRef       = useRef<SeriesRef>(null);
+  const macdLineRef       = useRef<SeriesRef>(null);
+  const macdSignalRef     = useRef<SeriesRef>(null);
+  const macdPaneExists    = useRef(false);
   const roRef             = useRef<ResizeObserver | null>(null);
 
   // Fetch XCH price
@@ -120,11 +211,7 @@ export default function TokenDetailScreen() {
       .catch(() => setTrades([]));
   }, [assetId]);
 
-  // Single effect handles both chart creation and data updates.
-  // Deps include both `loading` and `candles` to avoid the race where candles
-  // arrive before loading=false — if they were separate effects, the candles
-  // effect would fire with seriesRef=null, then the creation effect would run
-  // but candles wouldn't change again so data would never be applied.
+  // Chart creation + data updates (single effect to avoid race conditions)
   useEffect(() => {
     if (loading || !chartContainerRef.current) return;
 
@@ -132,9 +219,9 @@ export default function TokenDetailScreen() {
       const container = chartContainerRef.current;
       const w = container.clientWidth || container.offsetWidth || 900;
 
-      chartRef.current = createChart(container, {
+      const chart = createChart(container, {
         width: w,
-        height: 360,
+        height: 380,
         layout: {
           background: { color: 'var(--bg-card, #18181b)' } as any,
           textColor: '#a1a1aa',
@@ -144,64 +231,130 @@ export default function TokenDetailScreen() {
           horzLines: { color: 'rgba(255,255,255,0.05)' },
         },
         crosshair: { mode: 1 },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+        rightPriceScale: {
+          borderColor: 'rgba(255,255,255,0.1)',
+          scaleMargins: { top: 0.05, bottom: 0.22 },
+        },
         timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
       });
+      chartRef.current = chart;
 
-      seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
-        upColor:   '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor:   '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor:   '#22c55e',
-        wickDownColor: '#ef4444',
-        priceFormat: {
-          type: 'custom',
-          formatter: (price: number) => {
-            if (!price) return '0';
-            if (price < 0.000001)  return price.toExponential(2);
-            if (price < 0.0001)    return price.toFixed(8);
-            if (price < 0.01)      return price.toFixed(6);
-            if (price < 1)         return price.toFixed(4);
-            return price.toFixed(2);
-          },
-          minMove: 0.00000001,
-        } as any,
+      seriesRef.current = chart.addSeries(CandlestickSeries, {
+        upColor: '#22c55e', downColor: '#ef4444',
+        borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+        wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+        priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
+      });
+
+      volSeriesRef.current = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'vol',
+        color: 'rgba(34,197,94,0.35)',
+      } as any);
+      chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+      ma20Ref.current = chart.addSeries(LineSeries, {
+        color: '#f59e0b', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      } as any);
+      ma50Ref.current = chart.addSeries(LineSeries, {
+        color: '#8b5cf6', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      } as any);
+
+      chart.subscribeCrosshairMove(param => {
+        if (!param.time || !param.seriesData.size) { setLegend(null); return; }
+        const cd = param.seriesData.get(seriesRef.current as any) as any;
+        const vd = param.seriesData.get(volSeriesRef.current as any) as any;
+        if (cd) setLegend({ o: cd.open, h: cd.high, l: cd.low, c: cd.close, v: vd?.value ?? 0 });
+        else setLegend(null);
       });
 
       roRef.current = new ResizeObserver(() => {
-        if (chartRef.current && chartContainerRef.current) {
+        if (chartRef.current && chartContainerRef.current)
           chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
-        }
       });
       roRef.current.observe(container);
     }
 
-    if (seriesRef.current) {
-      if (candles.length) {
-        const data = candles.map(c => ({
-          time: Math.floor(new Date(c.bucket_start).getTime() / 1000) as any,
-          open:  Number(c.open),
-          high:  Number(c.high),
-          low:   Number(c.low),
-          close: Number(c.close),
-        }));
-        seriesRef.current.setData(data);
-        chartRef.current?.timeScale().fitContent();
-      } else {
-        seriesRef.current.setData([]);
+    // ── MACD pane lifecycle ────────────────────────────────────────────────────
+    const chart = chartRef.current!;
+
+    if (macdOn && !macdPaneExists.current) {
+      chart.addPane();
+      macdHistRef.current = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
+        priceScaleId: 'right',
+      }, 1);
+      macdLineRef.current = chart.addSeries(LineSeries, {
+        color: '#06b6d4', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
+      } as any, 1);
+      macdSignalRef.current = chart.addSeries(LineSeries, {
+        color: '#f97316', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
+      } as any, 1);
+      macdPaneExists.current = true;
+    } else if (!macdOn && macdPaneExists.current) {
+      chart.removePane(1);
+      macdHistRef.current = null;
+      macdLineRef.current = null;
+      macdSignalRef.current = null;
+      macdPaneExists.current = false;
+    }
+
+    // ── Update all series data ─────────────────────────────────────────────────
+    if (candles.length) {
+      const tv = (c: OhlcvRow) => Math.floor(new Date(c.bucket_start).getTime() / 1000) as any;
+
+      seriesRef.current?.setData(candles.map(c => ({
+        time: tv(c), open: Number(c.open), high: Number(c.high),
+        low: Number(c.low), close: Number(c.close),
+      })));
+      volSeriesRef.current?.setData(candles.map(c => ({
+        time: tv(c),
+        value: Number(c.volume_xch),
+        color: Number(c.close) >= Number(c.open) ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)',
+      })));
+      ma20Ref.current?.setData(ma20On ? computeSMA(candles, 20) : []);
+      ma50Ref.current?.setData(ma50On ? computeSMA(candles, 50) : []);
+
+      if (macdOn && macdPaneExists.current) {
+        const { histData, lineData, signalData } = computeMACD(candles);
+        macdHistRef.current?.setData(histData);
+        macdLineRef.current?.setData(lineData);
+        macdSignalRef.current?.setData(signalData);
       }
+
+      chart.timeScale().fitContent();
+    } else {
+      seriesRef.current?.setData([]);
+      volSeriesRef.current?.setData([]);
+      ma20Ref.current?.setData([]);
+      ma50Ref.current?.setData([]);
+      macdHistRef.current?.setData([]);
+      macdLineRef.current?.setData([]);
+      macdSignalRef.current?.setData([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, candles]);
+  }, [loading, candles, ma20On, ma50On, macdOn]);
 
-  // Destroy chart only on unmount, not on every candles update
+  // Destroy chart only on unmount
   useEffect(() => {
     return () => {
       roRef.current?.disconnect();
       chartRef.current?.remove();
-      chartRef.current = null;
-      seriesRef.current = null;
+      chartRef.current   = null;
+      seriesRef.current  = null;
+      volSeriesRef.current = null;
+      ma20Ref.current    = null;
+      ma50Ref.current    = null;
+      macdHistRef.current   = null;
+      macdLineRef.current   = null;
+      macdSignalRef.current = null;
+      macdPaneExists.current = false;
     };
   }, []);
 
@@ -219,11 +372,10 @@ export default function TokenDetailScreen() {
     </div>
   );
 
-  const displayName  = token.name || token.short_name || token.asset_id.slice(0, 12);
-  // Header shows last Dexie trade price to match the chart; AMM price shown as stat chip
-  const headerPrice  = token.last_price_xch ?? token.current_price_xch;
-  const priceUsd     = headerPrice && xchPrice ? headerPrice * xchPrice : null;
-  const tvlXch       = token.xch_reserve ? Number(token.xch_reserve) / 1e12 * 2 : null;
+  const displayName = token.name || token.short_name || token.asset_id.slice(0, 12);
+  const headerPrice = token.last_price_xch ?? token.current_price_xch;
+  const priceUsd    = headerPrice && xchPrice ? headerPrice * xchPrice : null;
+  const tvlXch      = token.xch_reserve ? Number(token.xch_reserve) / 1e12 * 2 : null;
   const tvlUsd      = tvlXch && xchPrice ? tvlXch * xchPrice : null;
 
   return (
@@ -232,7 +384,6 @@ export default function TokenDetailScreen() {
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
 
-        {/* Back + header */}
         <button onClick={() => nav('/tokens')}
           style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13, marginBottom: 16, padding: 0 }}>
           ← All Tokens
@@ -248,9 +399,7 @@ export default function TokenDetailScreen() {
             {token.short_name && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{token.short_name}</div>}
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {fmtXch(headerPrice, 8)} XCH
-            </div>
+            <div style={{ fontSize: 28, fontWeight: 700 }}>{fmtXch(headerPrice, 8)} XCH</div>
             {priceUsd != null && (
               <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
                 ≈ ${priceUsd.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })}
@@ -264,12 +413,12 @@ export default function TokenDetailScreen() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
           {[
             { label: 'AMM Price',  value: fmtXch(token.current_price_xch, 8) + ' XCH' },
-            { label: '24h High', value: fmtXch(token.high_24h_xch, 8) + ' XCH' },
-            { label: '24h Low',  value: fmtXch(token.low_24h_xch,  8) + ' XCH' },
+            { label: '24h High',   value: fmtXch(token.high_24h_xch, 8)      + ' XCH' },
+            { label: '24h Low',    value: fmtXch(token.low_24h_xch,  8)      + ' XCH' },
             { label: '24h Volume', value: token.volume_24h_xch > 0 ? `${fmtXch(token.volume_24h_xch, 2)} XCH` : '—' },
             { label: '7d Volume',  value: token.volume_7d_xch  > 0 ? `${fmtXch(token.volume_7d_xch,  2)} XCH` : '—' },
-            { label: 'TVL', value: tvlUsd ? `$${tvlUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : (tvlXch ? `${fmtXch(tvlXch, 2)} XCH` : '—') },
-            { label: 'Fee Rate', value: token.fee_rate != null ? `${(Number(token.fee_rate) * 100).toFixed(2)}%` : '—' },
+            { label: 'TVL',        value: tvlUsd ? `$${tvlUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : (tvlXch ? `${fmtXch(tvlXch, 2)} XCH` : '—') },
+            { label: 'Fee Rate',   value: token.fee_rate != null ? `${(Number(token.fee_rate) * 100).toFixed(2)}%` : '—' },
             { label: 'Last Trade', value: token.last_trade_at ? timeAgo(token.last_trade_at) : '—' },
           ].map(s => (
             <div key={s.label} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 16px', minWidth: 120 }}>
@@ -292,7 +441,9 @@ export default function TokenDetailScreen() {
 
         {/* Chart tab — always in DOM so clientWidth is valid on first render */}
         <div style={{ display: tab === 'chart' ? 'block' : 'none', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '0 0 var(--radius) var(--radius)', padding: 16 }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+
+          {/* Toolbar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
             {TIMEFRAMES.map(tf => (
               <button key={tf} onClick={() => setTimeframe(tf)}
                 style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
@@ -301,10 +452,53 @@ export default function TokenDetailScreen() {
                 {tf.toUpperCase()}
               </button>
             ))}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
+            <button onClick={() => setMa20On(v => !v)}
+              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${ma20On ? '#f59e0b' : 'transparent'}`,
+                background: ma20On ? 'rgba(245,158,11,0.15)' : 'var(--bg-input)',
+                color: ma20On ? '#f59e0b' : 'var(--text-secondary)' }}>
+              MA 20
+            </button>
+            <button onClick={() => setMa50On(v => !v)}
+              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${ma50On ? '#8b5cf6' : 'transparent'}`,
+                background: ma50On ? 'rgba(139,92,246,0.15)' : 'var(--bg-input)',
+                color: ma50On ? '#8b5cf6' : 'var(--text-secondary)' }}>
+              MA 50
+            </button>
+            <button onClick={() => setMacdOn(v => !v)}
+              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${macdOn ? '#06b6d4' : 'transparent'}`,
+                background: macdOn ? 'rgba(6,182,212,0.15)' : 'var(--bg-input)',
+                color: macdOn ? '#06b6d4' : 'var(--text-secondary)' }}>
+              MACD
+            </button>
           </div>
 
           <div style={{ position: 'relative' }}>
-            <div ref={chartContainerRef} style={{ width: '100%', height: 360 }} />
+            {/* OHLCV crosshair legend */}
+            {legend && (
+              <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 10, display: 'flex', gap: 10, fontSize: 11,
+                fontFamily: 'var(--font-mono)', pointerEvents: 'none',
+                background: 'rgba(24,24,27,0.85)', padding: '4px 8px', borderRadius: 4, backdropFilter: 'blur(4px)' }}>
+                <span><span style={{ color: '#71717a' }}>O </span><span>{fmtPrice(legend.o)}</span></span>
+                <span><span style={{ color: '#71717a' }}>H </span><span style={{ color: '#22c55e' }}>{fmtPrice(legend.h)}</span></span>
+                <span><span style={{ color: '#71717a' }}>L </span><span style={{ color: '#ef4444' }}>{fmtPrice(legend.l)}</span></span>
+                <span><span style={{ color: '#71717a' }}>C </span><span>{fmtPrice(legend.c)}</span></span>
+                <span><span style={{ color: '#71717a' }}>V </span><span style={{ color: '#a1a1aa' }}>{legend.v.toFixed(2)}</span></span>
+              </div>
+            )}
+            {/* MACD legend row */}
+            {macdOn && (
+              <div style={{ position: 'absolute', bottom: 8, left: 8, zIndex: 10, display: 'flex', gap: 14, fontSize: 11, pointerEvents: 'none' }}>
+                <span style={{ color: '#06b6d4', fontWeight: 600 }}>MACD</span>
+                <span style={{ color: '#f97316' }}>Signal</span>
+                <span style={{ color: '#22c55e' }}>▲ Hist</span>
+                <span style={{ color: '#ef4444' }}>▼ Hist</span>
+              </div>
+            )}
+            <div ref={chartContainerRef} style={{ width: '100%', height: 380 }} />
             {candles.length === 0 && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: 13, pointerEvents: 'none' }}>
                 No chart data yet
