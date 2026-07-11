@@ -2211,18 +2211,20 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const assetId   = req.params.assetId.toLowerCase();
     const timeframe = ['1h','4h','1d','1w','1m'].includes(req.query.timeframe)
       ? req.query.timeframe : '1d';
-    const limit  = Math.min(500, parseInt(req.query.limit) || 200);
+    const limit  = Math.min(1000, parseInt(req.query.limit) || 500);
 
+    // Fetch newest-first so the limit window is the most recent N candles,
+    // then reverse to give the chart ascending time order.
     const { data, error } = await supabase
       .from('cat_ohlcv')
       .select('bucket_start, open, high, low, close, volume_xch, trade_count')
       .eq('asset_id', assetId)
       .eq('timeframe', timeframe)
-      .order('bucket_start', { ascending: true })
+      .order('bucket_start', { ascending: false })
       .limit(limit);
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data || []);
+    res.json((data || []).reverse());
   });
 
   // ── Token recent trades ───────────────────────────────────────────────────────
