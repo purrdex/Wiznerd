@@ -47,6 +47,7 @@ interface Legend { o: number; h: number; l: number; c: number; v: number }
 const TIMEFRAMES = ['1h', '4h', '1d', '1w', '1m'] as const;
 type TF = typeof TIMEFRAMES[number];
 type SeriesRef = ReturnType<ReturnType<typeof createChart>['addSeries']> | null;
+type IndicatorKey = 'macd' | 'rsi' | 'cv';
 
 // ── Indicator math ────────────────────────────────────────────────────────────
 
@@ -81,9 +82,8 @@ function computeMACD(candles: OhlcvRow[]) {
   const ema26  = computeEMA(closes, 26);
   const tv     = (i: number) => Math.floor(new Date(candles[i].bucket_start).getTime() / 1000) as any;
 
-  // MACD line defined from index 25 (first valid EMA26)
-  const macdRaw: number[]  = [];
-  const macdIdx: number[]  = [];
+  const macdRaw: number[] = [];
+  const macdIdx: number[] = [];
   for (let i = 25; i < closes.length; i++) {
     macdRaw.push(ema12[i] - ema26[i]);
     macdIdx.push(i);
@@ -91,25 +91,65 @@ function computeMACD(candles: OhlcvRow[]) {
   if (macdRaw.length < 9) return { histData: [], lineData: [], signalData: [] };
 
   const sigRaw = computeEMA(macdRaw, 9);
-
-  const histData:   any[] = [];
-  const lineData:   any[] = [];
-  const signalData: any[] = [];
+  const histData: any[] = [], lineData: any[] = [], signalData: any[] = [];
 
   for (let i = 8; i < macdRaw.length; i++) {
     if (isNaN(sigRaw[i])) continue;
-    const t    = tv(macdIdx[i]);
-    const macd = macdRaw[i];
-    const sig  = sigRaw[i];
-    const hist = macd - sig;
+    const t = tv(macdIdx[i]);
+    const macd = macdRaw[i], sig = sigRaw[i], hist = macd - sig;
     lineData.push({ time: t, value: macd });
     signalData.push({ time: t, value: sig });
-    histData.push({
-      time: t, value: hist,
-      color: hist >= 0 ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
-    });
+    histData.push({ time: t, value: hist, color: hist >= 0 ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)' });
   }
   return { histData, lineData, signalData };
+}
+
+function computeRSI(candles: OhlcvRow[], period = 14) {
+  const closes = candles.map(c => Number(c.close));
+  if (closes.length < period + 1) return [];
+
+  const result: { time: any; value: number }[] = [];
+  let avgGain = 0, avgLoss = 0;
+
+  for (let i = 1; i <= period; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) avgGain += d; else avgLoss += Math.abs(d);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  const push = (i: number) => {
+    const rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+    result.push({ time: Math.floor(new Date(candles[i].bucket_start).getTime() / 1000) as any, value: rsi });
+  };
+  push(period);
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + (d > 0 ? d : 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + (d < 0 ? Math.abs(d) : 0)) / period;
+    push(i);
+  }
+  return result;
+}
+
+// Chaikin Volatility: rate-of-change of EMA(High-Low, period) over period bars
+function computeChaikinVol(candles: OhlcvRow[], period = 10) {
+  if (candles.length < period * 2) return [];
+  const hl    = candles.map(c => Number(c.high) - Number(c.low));
+  const emaHl = computeEMA(hl, period);
+  const result: any[] = [];
+
+  for (let i = period; i < candles.length; i++) {
+    if (isNaN(emaHl[i]) || isNaN(emaHl[i - period]) || emaHl[i - period] === 0) continue;
+    const cv = ((emaHl[i] - emaHl[i - period]) / emaHl[i - period]) * 100;
+    result.push({
+      time: Math.floor(new Date(candles[i].bucket_start).getTime() / 1000) as any,
+      value: cv,
+      color: cv >= 0 ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)',
+    });
+  }
+  return result;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -160,6 +200,8 @@ export default function TokenDetailScreen() {
   const [ma20On, setMa20On]       = useState(true);
   const [ma50On, setMa50On]       = useState(false);
   const [macdOn, setMacdOn]       = useState(false);
+  const [rsiOn,  setRsiOn]        = useState(false);
+  const [cvOn,   setCvOn]         = useState(false);
   const [legend, setLegend]       = useState<Legend | null>(null);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -171,8 +213,11 @@ export default function TokenDetailScreen() {
   const macdHistRef       = useRef<SeriesRef>(null);
   const macdLineRef       = useRef<SeriesRef>(null);
   const macdSignalRef     = useRef<SeriesRef>(null);
-  const macdPaneExists    = useRef(false);
+  const rsiSeriesRef      = useRef<SeriesRef>(null);
+  const cvSeriesRef       = useRef<SeriesRef>(null);
   const roRef             = useRef<ResizeObserver | null>(null);
+  // Tracks pane index for each sub-indicator so removePane can shift correctly
+  const panesRef          = useRef<Map<IndicatorKey, number>>(new Map());
 
   // Fetch XCH price
   useEffect(() => {
@@ -211,7 +256,7 @@ export default function TokenDetailScreen() {
       .catch(() => setTrades([]));
   }, [assetId]);
 
-  // Chart creation + data updates (single effect to avoid race conditions)
+  // Chart creation + all series data (single effect to avoid race conditions)
   useEffect(() => {
     if (loading || !chartContainerRef.current) return;
 
@@ -220,21 +265,11 @@ export default function TokenDetailScreen() {
       const w = container.clientWidth || container.offsetWidth || 900;
 
       const chart = createChart(container, {
-        width: w,
-        height: 380,
-        layout: {
-          background: { color: 'var(--bg-card, #18181b)' } as any,
-          textColor: '#a1a1aa',
-        },
-        grid: {
-          vertLines: { color: 'rgba(255,255,255,0.05)' },
-          horzLines: { color: 'rgba(255,255,255,0.05)' },
-        },
+        width: w, height: 380,
+        layout: { background: { color: 'var(--bg-card, #18181b)' } as any, textColor: '#a1a1aa' },
+        grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
         crosshair: { mode: 1 },
-        rightPriceScale: {
-          borderColor: 'rgba(255,255,255,0.1)',
-          scaleMargins: { top: 0.05, bottom: 0.22 },
-        },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)', scaleMargins: { top: 0.05, bottom: 0.22 } },
         timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
       });
       chartRef.current = chart;
@@ -247,9 +282,7 @@ export default function TokenDetailScreen() {
       });
 
       volSeriesRef.current = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: 'volume' },
-        priceScaleId: 'vol',
-        color: 'rgba(34,197,94,0.35)',
+        priceFormat: { type: 'volume' }, priceScaleId: 'vol', color: 'rgba(34,197,94,0.35)',
       } as any);
       chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
@@ -277,32 +310,76 @@ export default function TokenDetailScreen() {
       roRef.current.observe(container);
     }
 
-    // ── MACD pane lifecycle ────────────────────────────────────────────────────
     const chart = chartRef.current!;
 
-    if (macdOn && !macdPaneExists.current) {
+    // ── Sub-pane lifecycle helper ──────────────────────────────────────────────
+    // Adds a new pane and returns its index; updates panesRef.
+    const openPane = (key: IndicatorKey): number => {
       chart.addPane();
+      const idx = chart.panes().length - 1;
+      panesRef.current.set(key, idx);
+      return idx;
+    };
+    // Removes the pane and shifts tracked indices for remaining panes.
+    const closePane = (key: IndicatorKey) => {
+      const idx = panesRef.current.get(key);
+      if (idx == null) return;
+      chart.removePane(idx);
+      panesRef.current.delete(key);
+      for (const [k, v] of panesRef.current.entries()) {
+        if (v > idx) panesRef.current.set(k, v - 1);
+      }
+    };
+
+    // ── MACD ──────────────────────────────────────────────────────────────────
+    if (macdOn && !panesRef.current.has('macd')) {
+      const pi = openPane('macd');
       macdHistRef.current = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
-        priceScaleId: 'right',
-      }, 1);
+      }, pi);
       macdLineRef.current = chart.addSeries(LineSeries, {
         color: '#06b6d4', lineWidth: 1,
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
-      } as any, 1);
+      } as any, pi);
       macdSignalRef.current = chart.addSeries(LineSeries, {
         color: '#f97316', lineWidth: 1,
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         priceFormat: { type: 'custom', formatter: fmtPrice, minMove: 0.00000001 } as any,
-      } as any, 1);
-      macdPaneExists.current = true;
-    } else if (!macdOn && macdPaneExists.current) {
-      chart.removePane(1);
-      macdHistRef.current = null;
-      macdLineRef.current = null;
-      macdSignalRef.current = null;
-      macdPaneExists.current = false;
+      } as any, pi);
+    } else if (!macdOn && panesRef.current.has('macd')) {
+      closePane('macd');
+      macdHistRef.current = macdLineRef.current = macdSignalRef.current = null;
+    }
+
+    // ── RSI ───────────────────────────────────────────────────────────────────
+    if (rsiOn && !panesRef.current.has('rsi')) {
+      const pi = openPane('rsi');
+      const rsiSeries = chart.addSeries(LineSeries, {
+        color: '#a78bfa', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 } as any,
+      } as any, pi);
+      // Reference lines at 70 / 50 / 30
+      rsiSeries.createPriceLine({ price: 70, color: 'rgba(239,68,68,0.5)',   lineWidth: 1, lineStyle: 2 as any, axisLabelVisible: false });
+      rsiSeries.createPriceLine({ price: 50, color: 'rgba(255,255,255,0.15)', lineWidth: 1, lineStyle: 2 as any, axisLabelVisible: false });
+      rsiSeries.createPriceLine({ price: 30, color: 'rgba(34,197,94,0.5)',   lineWidth: 1, lineStyle: 2 as any, axisLabelVisible: false });
+      rsiSeriesRef.current = rsiSeries;
+    } else if (!rsiOn && panesRef.current.has('rsi')) {
+      closePane('rsi');
+      rsiSeriesRef.current = null;
+    }
+
+    // ── Chaikin Volatility ────────────────────────────────────────────────────
+    if (cvOn && !panesRef.current.has('cv')) {
+      const pi = openPane('cv');
+      cvSeriesRef.current = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 } as any,
+        color: 'rgba(34,197,94,0.8)',
+      } as any, pi);
+    } else if (!cvOn && panesRef.current.has('cv')) {
+      closePane('cv');
+      cvSeriesRef.current = null;
     }
 
     // ── Update all series data ─────────────────────────────────────────────────
@@ -314,19 +391,20 @@ export default function TokenDetailScreen() {
         low: Number(c.low), close: Number(c.close),
       })));
       volSeriesRef.current?.setData(candles.map(c => ({
-        time: tv(c),
-        value: Number(c.volume_xch),
+        time: tv(c), value: Number(c.volume_xch),
         color: Number(c.close) >= Number(c.open) ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)',
       })));
       ma20Ref.current?.setData(ma20On ? computeSMA(candles, 20) : []);
       ma50Ref.current?.setData(ma50On ? computeSMA(candles, 50) : []);
 
-      if (macdOn && macdPaneExists.current) {
+      if (macdOn) {
         const { histData, lineData, signalData } = computeMACD(candles);
         macdHistRef.current?.setData(histData);
         macdLineRef.current?.setData(lineData);
         macdSignalRef.current?.setData(signalData);
       }
+      if (rsiOn)  rsiSeriesRef.current?.setData(computeRSI(candles));
+      if (cvOn)   cvSeriesRef.current?.setData(computeChaikinVol(candles));
 
       chart.timeScale().fitContent();
     } else {
@@ -337,24 +415,23 @@ export default function TokenDetailScreen() {
       macdHistRef.current?.setData([]);
       macdLineRef.current?.setData([]);
       macdSignalRef.current?.setData([]);
+      rsiSeriesRef.current?.setData([]);
+      cvSeriesRef.current?.setData([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, candles, ma20On, ma50On, macdOn]);
+  }, [loading, candles, ma20On, ma50On, macdOn, rsiOn, cvOn]);
 
   // Destroy chart only on unmount
   useEffect(() => {
     return () => {
       roRef.current?.disconnect();
       chartRef.current?.remove();
-      chartRef.current   = null;
-      seriesRef.current  = null;
-      volSeriesRef.current = null;
-      ma20Ref.current    = null;
-      ma50Ref.current    = null;
-      macdHistRef.current   = null;
-      macdLineRef.current   = null;
-      macdSignalRef.current = null;
-      macdPaneExists.current = false;
+      chartRef.current = null;
+      seriesRef.current = volSeriesRef.current = null;
+      ma20Ref.current = ma50Ref.current = null;
+      macdHistRef.current = macdLineRef.current = macdSignalRef.current = null;
+      rsiSeriesRef.current = cvSeriesRef.current = null;
+      panesRef.current.clear();
     };
   }, []);
 
@@ -377,6 +454,16 @@ export default function TokenDetailScreen() {
   const priceUsd    = headerPrice && xchPrice ? headerPrice * xchPrice : null;
   const tvlXch      = token.xch_reserve ? Number(token.xch_reserve) / 1e12 * 2 : null;
   const tvlUsd      = tvlXch && xchPrice ? tvlXch * xchPrice : null;
+
+  const indicatorBtn = (label: string, on: boolean, toggle: () => void, color: string, bg: string) => (
+    <button onClick={toggle}
+      style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+        border: `1px solid ${on ? color : 'transparent'}`,
+        background: on ? bg : 'var(--bg-input)',
+        color: on ? color : 'var(--text-secondary)' }}>
+      {label}
+    </button>
+  );
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -453,27 +540,11 @@ export default function TokenDetailScreen() {
               </button>
             ))}
             <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />
-            <button onClick={() => setMa20On(v => !v)}
-              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                border: `1px solid ${ma20On ? '#f59e0b' : 'transparent'}`,
-                background: ma20On ? 'rgba(245,158,11,0.15)' : 'var(--bg-input)',
-                color: ma20On ? '#f59e0b' : 'var(--text-secondary)' }}>
-              MA 20
-            </button>
-            <button onClick={() => setMa50On(v => !v)}
-              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                border: `1px solid ${ma50On ? '#8b5cf6' : 'transparent'}`,
-                background: ma50On ? 'rgba(139,92,246,0.15)' : 'var(--bg-input)',
-                color: ma50On ? '#8b5cf6' : 'var(--text-secondary)' }}>
-              MA 50
-            </button>
-            <button onClick={() => setMacdOn(v => !v)}
-              style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                border: `1px solid ${macdOn ? '#06b6d4' : 'transparent'}`,
-                background: macdOn ? 'rgba(6,182,212,0.15)' : 'var(--bg-input)',
-                color: macdOn ? '#06b6d4' : 'var(--text-secondary)' }}>
-              MACD
-            </button>
+            {indicatorBtn('MA 20', ma20On, () => setMa20On(v => !v), '#f59e0b', 'rgba(245,158,11,0.15)')}
+            {indicatorBtn('MA 50', ma50On, () => setMa50On(v => !v), '#8b5cf6', 'rgba(139,92,246,0.15)')}
+            {indicatorBtn('MACD',  macdOn, () => setMacdOn(v => !v), '#06b6d4', 'rgba(6,182,212,0.15)')}
+            {indicatorBtn('RSI',   rsiOn,  () => setRsiOn(v => !v),  '#a78bfa', 'rgba(167,139,250,0.15)')}
+            {indicatorBtn('CV',    cvOn,   () => setCvOn(v => !v),   '#2dd4bf', 'rgba(45,212,191,0.15)')}
           </div>
 
           <div style={{ position: 'relative' }}>
@@ -487,15 +558,6 @@ export default function TokenDetailScreen() {
                 <span><span style={{ color: '#71717a' }}>L </span><span style={{ color: '#ef4444' }}>{fmtPrice(legend.l)}</span></span>
                 <span><span style={{ color: '#71717a' }}>C </span><span>{fmtPrice(legend.c)}</span></span>
                 <span><span style={{ color: '#71717a' }}>V </span><span style={{ color: '#a1a1aa' }}>{legend.v.toFixed(2)}</span></span>
-              </div>
-            )}
-            {/* MACD legend row */}
-            {macdOn && (
-              <div style={{ position: 'absolute', bottom: 8, left: 8, zIndex: 10, display: 'flex', gap: 14, fontSize: 11, pointerEvents: 'none' }}>
-                <span style={{ color: '#06b6d4', fontWeight: 600 }}>MACD</span>
-                <span style={{ color: '#f97316' }}>Signal</span>
-                <span style={{ color: '#22c55e' }}>▲ Hist</span>
-                <span style={{ color: '#ef4444' }}>▼ Hist</span>
               </div>
             )}
             <div ref={chartContainerRef} style={{ width: '100%', height: 380 }} />
