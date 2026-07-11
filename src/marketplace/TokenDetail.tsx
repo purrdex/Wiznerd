@@ -120,81 +120,90 @@ export default function TokenDetailScreen() {
       .catch(() => setTrades([]));
   }, [assetId]);
 
-  // Create chart after token load so the container has a real clientWidth
+  // Single effect handles both chart creation and data updates.
+  // Deps include both `loading` and `candles` to avoid the race where candles
+  // arrive before loading=false — if they were separate effects, the candles
+  // effect would fire with seriesRef=null, then the creation effect would run
+  // but candles wouldn't change again so data would never be applied.
   useEffect(() => {
-    if (loading || !chartContainerRef.current || chartRef.current) return;
-    const container = chartContainerRef.current;
-    const w = container.clientWidth || container.offsetWidth || 900;
+    if (loading || !chartContainerRef.current) return;
 
-    chartRef.current = createChart(container, {
-      width: w,
-      height: 360,
-      layout: {
-        background: { color: 'var(--bg-card, #18181b)' } as any,
-        textColor: '#a1a1aa',
-      },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,0.05)' },
-        horzLines: { color: 'rgba(255,255,255,0.05)' },
-      },
-      crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
-      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
-    });
+    if (!chartRef.current) {
+      const container = chartContainerRef.current;
+      const w = container.clientWidth || container.offsetWidth || 900;
 
-    seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
-      upColor:   '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor:   '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor:   '#22c55e',
-      wickDownColor: '#ef4444',
-      priceFormat: {
-        type: 'custom',
-        formatter: (price: number) => {
-          if (!price) return '0';
-          if (price < 0.000001)  return price.toExponential(2);
-          if (price < 0.0001)    return price.toFixed(8);
-          if (price < 0.01)      return price.toFixed(6);
-          if (price < 1)         return price.toFixed(4);
-          return price.toFixed(2);
+      chartRef.current = createChart(container, {
+        width: w,
+        height: 360,
+        layout: {
+          background: { color: 'var(--bg-card, #18181b)' } as any,
+          textColor: '#a1a1aa',
         },
-        minMove: 0.00000001,
-      } as any,
-    });
+        grid: {
+          vertLines: { color: 'rgba(255,255,255,0.05)' },
+          horzLines: { color: 'rgba(255,255,255,0.05)' },
+        },
+        crosshair: { mode: 1 },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
+      });
 
-    roRef.current = new ResizeObserver(() => {
-      if (chartRef.current && chartContainerRef.current) {
-        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+      seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
+        upColor:   '#22c55e',
+        downColor: '#ef4444',
+        borderUpColor:   '#22c55e',
+        borderDownColor: '#ef4444',
+        wickUpColor:   '#22c55e',
+        wickDownColor: '#ef4444',
+        priceFormat: {
+          type: 'custom',
+          formatter: (price: number) => {
+            if (!price) return '0';
+            if (price < 0.000001)  return price.toExponential(2);
+            if (price < 0.0001)    return price.toFixed(8);
+            if (price < 0.01)      return price.toFixed(6);
+            if (price < 1)         return price.toFixed(4);
+            return price.toFixed(2);
+          },
+          minMove: 0.00000001,
+        } as any,
+      });
+
+      roRef.current = new ResizeObserver(() => {
+        if (chartRef.current && chartContainerRef.current) {
+          chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+        }
+      });
+      roRef.current.observe(container);
+    }
+
+    if (seriesRef.current) {
+      if (candles.length) {
+        const data = candles.map(c => ({
+          time: Math.floor(new Date(c.bucket_start).getTime() / 1000) as any,
+          open:  Number(c.open),
+          high:  Number(c.high),
+          low:   Number(c.low),
+          close: Number(c.close),
+        }));
+        seriesRef.current.setData(data);
+        chartRef.current?.timeScale().fitContent();
+      } else {
+        seriesRef.current.setData([]);
       }
-    });
-    roRef.current.observe(container);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, candles]);
 
+  // Destroy chart only on unmount, not on every candles update
+  useEffect(() => {
     return () => {
       roRef.current?.disconnect();
       chartRef.current?.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [loading]);
-
-  // Update candle data whenever it changes
-  useEffect(() => {
-    if (!seriesRef.current) return;
-    if (candles.length) {
-      const data = candles.map(c => ({
-        time: Math.floor(new Date(c.bucket_start).getTime() / 1000) as any,
-        open:  Number(c.open),
-        high:  Number(c.high),
-        low:   Number(c.low),
-        close: Number(c.close),
-      }));
-      seriesRef.current.setData(data);
-      chartRef.current?.timeScale().fitContent();
-    } else {
-      seriesRef.current.setData([]);
-    }
-  }, [candles]);
+  }, []);
 
   if (loading) return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -210,9 +219,11 @@ export default function TokenDetailScreen() {
     </div>
   );
 
-  const displayName = token.name || token.short_name || token.asset_id.slice(0, 12);
-  const priceUsd    = token.current_price_xch && xchPrice ? token.current_price_xch * xchPrice : null;
-  const tvlXch      = token.xch_reserve ? Number(token.xch_reserve) / 1e12 * 2 : null;
+  const displayName  = token.name || token.short_name || token.asset_id.slice(0, 12);
+  // Header shows last Dexie trade price to match the chart; AMM price shown as stat chip
+  const headerPrice  = token.last_price_xch ?? token.current_price_xch;
+  const priceUsd     = headerPrice && xchPrice ? headerPrice * xchPrice : null;
+  const tvlXch       = token.xch_reserve ? Number(token.xch_reserve) / 1e12 * 2 : null;
   const tvlUsd      = tvlXch && xchPrice ? tvlXch * xchPrice : null;
 
   return (
@@ -238,20 +249,21 @@ export default function TokenDetailScreen() {
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
             <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {fmtXch(token.current_price_xch, 8)} XCH
+              {fmtXch(headerPrice, 8)} XCH
             </div>
             {priceUsd != null && (
               <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
                 ≈ ${priceUsd.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })}
               </div>
             )}
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Tibet AMM price</div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Last trade price</div>
           </div>
         </div>
 
         {/* Stat chips */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
           {[
+            { label: 'AMM Price',  value: fmtXch(token.current_price_xch, 8) + ' XCH' },
             { label: '24h High', value: fmtXch(token.high_24h_xch, 8) + ' XCH' },
             { label: '24h Low',  value: fmtXch(token.low_24h_xch,  8) + ' XCH' },
             { label: '24h Volume', value: token.volume_24h_xch > 0 ? `${fmtXch(token.volume_24h_xch, 2)} XCH` : '—' },
