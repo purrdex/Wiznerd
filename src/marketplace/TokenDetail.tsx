@@ -105,7 +105,7 @@ export default function TokenDetailScreen() {
   // Fetch OHLCV candles when timeframe changes
   useEffect(() => {
     if (!assetId) return;
-    fetch(`${API_URL}/api/tokens/${assetId}/ohlcv?timeframe=${timeframe}&limit=500`, { signal: AbortSignal.timeout(10000) })
+    fetch(`${API_URL}/api/tokens/${assetId}/ohlcv?timeframe=${timeframe}&limit=1000`, { signal: AbortSignal.timeout(10000) })
       .then(r => r.json())
       .then(setCandles)
       .catch(() => setCandles([]));
