@@ -244,7 +244,7 @@ export default function TokenDetailScreen() {
             : <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: 'var(--text-secondary)' }}>{displayName[0]}</div>
           }
           <div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>{displayName}</h1>
+            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, color: 'var(--accent)' }}>{displayName}</h1>
             {token.short_name && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{token.short_name}</div>}
           </div>
           <div style={{ marginLeft: 'auto', textAlign: 'right' }}>

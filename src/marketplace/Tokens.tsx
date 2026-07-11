@@ -78,7 +78,7 @@ export default function TokensScreen() {
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>CAT Tokens</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: 'var(--accent)' }}>CAT Tokens</h1>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
               type="text"
