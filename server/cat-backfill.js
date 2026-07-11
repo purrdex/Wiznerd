@@ -40,23 +40,27 @@ function parseOffer(offer, assetId) {
   const reqId = (req.id || '').toLowerCase();
   const assetLow = assetId.toLowerCase();
 
-  let xchAmount    = null; // in XCH (not mojos)
-  let tokenAmount  = null; // in token units (mojos / 1000 for most CATs)
-  let priceXch     = null; // XCH per token
+  // Dexie compact=true returns amounts in human-readable units (XCH, not mojos;
+  // tokens, not token-mojos). The `price` field means:
+  //   sell side (CAT→XCH): XCH per token  ← use directly
+  //   buy  side (XCH→CAT): tokens per XCH ← invert to get XCH per token
+  let xchAmount    = null;
+  let tokenAmount  = null;
+  let priceXch     = null;
 
   // CAT sold for XCH: offered=CAT, requested=XCH
   if (offId === assetLow && reqId === 'xch') {
-    // amount in token mojos; Dexie `price` is XCH per unit offered
-    tokenAmount  = off.amount != null ? Number(off.amount) / 1000 : null;
-    xchAmount    = req.amount != null ? Number(req.amount) / 1e12  : null;
-    priceXch     = offer.price != null ? Number(offer.price)       : null;
+    tokenAmount = off.amount != null ? Number(off.amount) : null;
+    xchAmount   = req.amount != null ? Number(req.amount) : null;
+    priceXch    = offer.price != null ? Number(offer.price) : null;
 
   // XCH paid for CAT: offered=XCH, requested=CAT
   } else if (offId === 'xch' && reqId === assetLow) {
-    tokenAmount  = req.amount != null ? Number(req.amount) / 1000 : null;
-    xchAmount    = off.amount != null ? Number(off.amount) / 1e12  : null;
-    // Dexie price for bid side is XCH/token too
-    priceXch     = offer.price != null ? Number(offer.price)       : null;
+    tokenAmount = req.amount != null ? Number(req.amount) : null;
+    xchAmount   = off.amount != null ? Number(off.amount) : null;
+    // price = tokens per XCH on buy side — invert to get XCH per token
+    const rawPrice = offer.price != null ? Number(offer.price) : null;
+    priceXch    = rawPrice != null && rawPrice > 0 ? 1 / rawPrice : null;
 
   } else {
     return null; // CAT-CAT swap or unrelated
