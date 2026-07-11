@@ -71,18 +71,20 @@ CREATE TABLE IF NOT EXISTS cat_transfers (
   id              bigserial   PRIMARY KEY,
   asset_id        text        NOT NULL REFERENCES cat_tokens(asset_id) ON DELETE CASCADE,
   offer_id        text,                    -- Dexie offer ID for dedup
-  price_xch       numeric(20,12),          -- XCH paid per token (null = NFT-NFT or CAT swap)
-  amount_tokens   numeric(30,3),           -- how many tokens changed hands
-  volume_xch      numeric(20,12),          -- price_xch * amount_tokens (total XCH value)
+  price_xch       numeric,                 -- XCH paid per token (null = NFT-NFT or CAT swap)
+  amount_tokens   numeric,                 -- how many tokens changed hands
+  volume_xch      numeric,                 -- price_xch * amount_tokens (total XCH value)
   block_height    bigint,
   transferred_at  timestamptz NOT NULL,
   source          text        NOT NULL DEFAULT 'dexie',
   created_at      timestamptz DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cat_transfers_offer
-  ON cat_transfers (offer_id)
-  WHERE offer_id IS NOT NULL;
+-- NULLs are distinct in PostgreSQL unique constraints, so multiple null offer_ids are fine.
+-- Named constraint (not partial index) so PostgREST can use ON CONFLICT on offer_id.
+DO $$ BEGIN
+  ALTER TABLE cat_transfers ADD CONSTRAINT cat_transfers_offer_id_key UNIQUE (offer_id);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_cat_transfers_asset_time
   ON cat_transfers (asset_id, transferred_at DESC);
@@ -116,11 +118,11 @@ CREATE TABLE IF NOT EXISTS cat_ohlcv (
   asset_id     text        NOT NULL REFERENCES cat_tokens(asset_id) ON DELETE CASCADE,
   timeframe    text        NOT NULL CHECK (timeframe IN ('1h','4h','1d','1w','1m')),
   bucket_start timestamptz NOT NULL,
-  open         numeric(20,12) NOT NULL,
-  high         numeric(20,12) NOT NULL,
-  low          numeric(20,12) NOT NULL,
-  close        numeric(20,12) NOT NULL,
-  volume_xch   numeric(20,12) NOT NULL DEFAULT 0,
+  open         numeric NOT NULL,
+  high         numeric NOT NULL,
+  low          numeric NOT NULL,
+  close        numeric NOT NULL,
+  volume_xch   numeric NOT NULL DEFAULT 0,
   trade_count  integer        NOT NULL DEFAULT 0,
   updated_at   timestamptz DEFAULT now(),
   UNIQUE (asset_id, timeframe, bucket_start)
@@ -154,7 +156,7 @@ CREATE TABLE IF NOT EXISTS tibet_pairs (
   token_reserve  bigint      DEFAULT 0,    -- token mojos
   liquidity      bigint      DEFAULT 0,    -- LP tokens outstanding
   fee_rate       numeric(6,4) DEFAULT 0.003,
-  current_price_xch numeric(20,12),       -- derived: xch_reserve / token_reserve (normalized)
+  current_price_xch numeric,              -- derived: xch_reserve / token_reserve (normalized)
   updated_at     timestamptz DEFAULT now()
 );
 
@@ -183,7 +185,7 @@ CREATE TABLE IF NOT EXISTS lp_snapshots (
   launcher_id   text        NOT NULL REFERENCES tibet_pairs(launcher_id) ON DELETE CASCADE,
   xch_reserve   bigint      NOT NULL,
   token_reserve bigint      NOT NULL,
-  price_xch     numeric(20,12),
+  price_xch     numeric,
   snapped_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (launcher_id, snapped_at)
 );

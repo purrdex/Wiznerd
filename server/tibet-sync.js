@@ -11,6 +11,8 @@ const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
 const TIBET_API  = 'https://api.v2.tibetswap.io';
+const DEXIE_API  = 'https://api.dexie.space';
+const DEXIE_ICON = 'https://icons.dexie.space';
 const PAGE_LIMIT = 100;
 
 const supabase = createClient(
@@ -57,6 +59,55 @@ function computePrice(xchReserve, tokenReserve) {
   const tokens = Number(tokenReserve) / 1000;
   if (!tokens) return null;
   return xch / tokens;
+}
+
+async function fetchDexieTokenMap() {
+  try {
+    const res = await fetch(`${DEXIE_API}/v1/tokens`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const list = data.tokens || data || [];
+    const map = {};
+    for (const t of list) {
+      const id = (t.id || t.asset_id || '').toLowerCase();
+      if (id) map[id] = t;
+    }
+    return map;
+  } catch (e) {
+    console.warn('[tibet-sync] Dexie token list failed:', e.message);
+    return {};
+  }
+}
+
+async function enrichTokens(supabase) {
+  console.log('[tibet-sync] enriching cat_tokens from Dexie…');
+  const dexieMap = await fetchDexieTokenMap();
+  const total = Object.keys(dexieMap).length;
+  if (!total) { console.log('[tibet-sync] no Dexie tokens to enrich from'); return; }
+
+  const { data: tokens } = await supabase.from('cat_tokens').select('asset_id, name');
+  if (!tokens?.length) return;
+
+  let updated = 0;
+  for (const token of tokens) {
+    const d = dexieMap[token.asset_id.toLowerCase()];
+    if (!d) continue;
+    const name      = d.name || d.asset_name || null;
+    const shortName = d.code || d.symbol || d.ticker || null;
+    const imageUrl  = `${DEXIE_ICON}/${token.asset_id}.webp`;
+    if (!name && !shortName) continue;
+    const { error } = await supabase.from('cat_tokens').update({
+      name:       name      || token.name,
+      short_name: shortName || null,
+      image_url:  imageUrl,
+      updated_at: new Date().toISOString(),
+    }).eq('asset_id', token.asset_id);
+    if (!error) updated++;
+  }
+  console.log(`[tibet-sync] ✓ enriched ${updated}/${tokens.length} tokens from Dexie`);
 }
 
 async function main() {
@@ -136,6 +187,8 @@ async function main() {
 
   process.stdout.write('\n');
   console.log(`[tibet-sync] ✓ ${upsertedTokens} tokens, ${upsertedPairs} pairs, ${snapshots} snapshots`);
+
+  if (!pairsOnly) await enrichTokens(supabase);
 }
 
 main().catch(e => { console.error('[tibet-sync] fatal:', e); process.exit(1); });

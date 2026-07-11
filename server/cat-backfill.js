@@ -110,14 +110,18 @@ async function backfillToken(assetId, shortName, sinceDate) {
 
     for (let i = 0; i < rows.length; i += 500) {
       const batch = rows.slice(i, i + 500);
-      const { error } = await supabase.from('cat_transfers').upsert(
-        batch,
-        { onConflict: 'offer_id', ignoreDuplicates: true }
-      );
-      if (error && !error.message.includes('duplicate')) {
-        console.error(`  insert error: ${error.message}`);
-      } else {
+      const { error } = await supabase.from('cat_transfers').insert(batch);
+      if (!error) {
         totalInserted += batch.length;
+      } else if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate')) {
+        // Unique violation — insert one by one, skip already-present rows
+        for (const row of batch) {
+          const { error: e2 } = await supabase.from('cat_transfers').insert(row);
+          if (!e2) totalInserted++;
+          // ignore individual duplicate errors silently
+        }
+      } else {
+        console.error(`  insert error: ${error.message}`);
       }
     }
   }
