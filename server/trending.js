@@ -12,7 +12,7 @@
 //   the live indexer sets updated_at when it processes a new/transferred NFT,
 //   so this captures newly minted items as well as active transfers.
 
-const RECALC_MS = 15 * 60 * 1000;
+const RECALC_MS = 60 * 60 * 1000; // hourly — 15 min was too frequent and caused Supabase statement timeouts
 
 function computeScore(vol24h, vol7d, sales24h, sales7d, mint24h, floorMojo) {
   // mint_24h excluded: indexed_nfts.updated_at fires on every re-index, not just new mints,

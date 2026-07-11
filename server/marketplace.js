@@ -23,7 +23,7 @@ async function getNextAddress() {
 // ── External collection cache (indexed_collections table, 2 min TTL) ─────────
 let externalCache = null;
 let externalCacheTime = 0;
-const EXTERNAL_TTL = 2 * 60 * 1000;
+const EXTERNAL_TTL = 10 * 60 * 1000;
 
 function iqrFilter(prices) {
   if (prices.length < 6) return prices;
@@ -2260,4 +2260,44 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     res.json(data || []);
   });
+
+  // Pre-warm the external collections cache on startup so first browser request
+  // doesn't hit a cold DB query that may time out under load.
+  setTimeout(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('indexed_collections')
+        .select('collection_id,name,description,thumbnail_url,total_supply,minted_count,floor_price_mojo,source,external_url,verified,trending_score,volume_24h_mojo,volume_7d_mojo,sales_24h,sales_7d,mint_24h,listed_count')
+        .order('minted_count', { ascending: false })
+        .limit(200);
+      if (!error && data?.length) {
+        externalCache = data.map(col => ({
+          id:                 col.collection_id,
+          name:               col.name,
+          total_supply:       col.total_supply     || 0,
+          marketplace_status: 'live',
+          mint_price_mojo:    col.floor_price_mojo || 0,
+          launch_at:          null,
+          minted_count:       col.minted_count     || 0,
+          indexed_count:      col.minted_count     || 0,
+          thumbnail_url:      col.thumbnail_url    || '',
+          description:        col.description      || '',
+          source:             'external',
+          verified:           col.verified         || false,
+          external_url:       col.external_url     || `https://mintgarden.io/collections/${col.collection_id}`,
+          trending_score:     col.trending_score   || 0,
+          volume_24h_mojo:    col.volume_24h_mojo  || 0,
+          volume_7d_mojo:     col.volume_7d_mojo   || 0,
+          sales_24h:          col.sales_24h        || 0,
+          sales_7d:           col.sales_7d         || 0,
+          mint_24h:           col.mint_24h         || 0,
+          listed_count:       col.listed_count     || 0,
+        }));
+        externalCacheTime = Date.now();
+        console.log(`[marketplace] cache warmed: ${externalCache.length} external collections`);
+      }
+    } catch (e) {
+      console.warn('[marketplace] cache warm-up failed:', e.message);
+    }
+  }, 5000); // 5 s after startup, before the trending job fires
 };
