@@ -72,24 +72,39 @@ function rejectOutliers(trades) {
 // ── Build candles for one token + timeframe ───────────────────────────────────
 
 async function buildCandles(assetId, timeframe, sinceDate) {
-  // Fetch all qualifying trades, newest first for close price detection
-  let query = supabase
-    .from('cat_transfers')
-    .select('price_xch, volume_xch, transferred_at')
-    .eq('asset_id', assetId)
-    .not('price_xch', 'is', null)
-    .order('transferred_at', { ascending: true });
+  // Paginate — Supabase caps at 1000 rows without explicit range; active tokens
+  // can have thousands of trades so we must fetch all pages.
+  const allTrades = [];
+  const BATCH = 1000;
+  let from = 0;
 
+  let sinceIso = null;
   if (sinceDate) {
-    // Rebuild candles from a few buckets before sinceDate for clean edges
     const pad = new Date(sinceDate);
     pad.setUTCDate(pad.getUTCDate() - 7);
-    query = query.gte('transferred_at', pad.toISOString());
+    sinceIso = pad.toISOString();
   }
 
-  const { data: trades, error } = await query;
-  if (error) throw error;
-  if (!trades?.length) return 0;
+  while (true) {
+    let q = supabase
+      .from('cat_transfers')
+      .select('price_xch, volume_xch, transferred_at')
+      .eq('asset_id', assetId)
+      .not('price_xch', 'is', null)
+      .order('transferred_at', { ascending: true })
+      .range(from, from + BATCH - 1);
+    if (sinceIso) q = q.gte('transferred_at', sinceIso);
+
+    const { data: batch, error } = await q;
+    if (error) throw error;
+    if (!batch?.length) break;
+    allTrades.push(...batch);
+    if (batch.length < BATCH) break;
+    from += BATCH;
+  }
+
+  const trades = allTrades;
+  if (!trades.length) return 0;
 
   // Reject statistical outliers before building candles
   const allPoints = trades.map(t => ({ ...t, price: Number(t.price_xch) }));
