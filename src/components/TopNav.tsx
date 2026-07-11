@@ -138,6 +138,7 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
     { href: '/marketplace',            label: 'Marketplace', match: (p: string) => p === '/marketplace' },
     { href: '/marketplace/rankings',   label: 'Rankings',    match: (p: string) => p === '/marketplace/rankings' },
     { href: '/marketplace/activity',   label: 'Activity',    match: (p: string) => p === '/marketplace/activity' },
+    { href: '/tokens',                 label: 'Tokens',      match: (p: string) => p.startsWith('/tokens') },
     { href: '/marketplace/offers',     label: 'Offer Board', match: (p: string) => p === '/marketplace/offers' },
     { href: '/marketplace/watchlist',  label: 'Watchlist',   match: (p: string) => p === '/marketplace/watchlist' },
     { href: '/create',                 label: 'Create',      match: (p: string) => p.startsWith('/create') },

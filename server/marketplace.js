@@ -2084,6 +2084,150 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     res.json({ ok: true });
   });
 
+  // ── Token list ────────────────────────────────────────────────────────────────
+
+  app.get('/api/tokens', async (req, res) => {
+    const limit  = Math.min(200, parseInt(req.query.limit) || 100);
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+    const search = (req.query.q || '').trim().toLowerCase();
+
+    // Join cat_tokens with tibet_pairs for price + reserves
+    let q = supabase
+      .from('cat_tokens')
+      .select(`
+        asset_id, name, short_name, image_url, tibet_pair_id, updated_at,
+        tibet_pairs ( xch_reserve, token_reserve, current_price_xch, fee_rate )
+      `)
+      .order('asset_id');
+
+    if (search) {
+      q = q.or(`name.ilike.%${search}%,short_name.ilike.%${search}%,asset_id.ilike.%${search}%`);
+    }
+
+    const { data: tokens, error } = await q.range(offset, offset + limit - 1);
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Compute 24h volume from cat_transfers
+    const since24h = new Date(Date.now() - 86_400_000).toISOString();
+    const assetIds = (tokens || []).map(t => t.asset_id);
+
+    let vol24h = {};
+    if (assetIds.length) {
+      const { data: vols } = await supabase
+        .from('cat_transfers')
+        .select('asset_id, volume_xch')
+        .in('asset_id', assetIds)
+        .gte('transferred_at', since24h)
+        .not('volume_xch', 'is', null);
+
+      for (const v of (vols || [])) {
+        vol24h[v.asset_id] = (vol24h[v.asset_id] || 0) + Number(v.volume_xch);
+      }
+    }
+
+    res.json((tokens || []).map(t => ({
+      asset_id:          t.asset_id,
+      name:              t.name,
+      short_name:        t.short_name,
+      image_url:         t.image_url,
+      tibet_pair_id:     t.tibet_pair_id,
+      current_price_xch: t.tibet_pairs?.current_price_xch ?? null,
+      xch_reserve:       t.tibet_pairs?.xch_reserve ?? null,
+      token_reserve:     t.tibet_pairs?.token_reserve ?? null,
+      volume_24h_xch:    vol24h[t.asset_id] || 0,
+    })));
+  });
+
+  // ── Token detail ──────────────────────────────────────────────────────────────
+
+  app.get('/api/tokens/:assetId', async (req, res) => {
+    const assetId = req.params.assetId.toLowerCase();
+
+    const [{ data: token }, { data: pair }] = await Promise.all([
+      supabase.from('cat_tokens').select('*').eq('asset_id', assetId).maybeSingle(),
+      supabase.from('tibet_pairs').select('*').eq('asset_id', assetId).maybeSingle(),
+    ]);
+
+    if (!token) return res.status(404).json({ error: 'Token not found' });
+
+    // 24h stats
+    const since24h = new Date(Date.now() - 86_400_000).toISOString();
+    const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+    const [{ data: stats24h }, { data: stats7d }, { data: lastTrade }] = await Promise.all([
+      supabase.from('cat_transfers').select('price_xch, volume_xch')
+        .eq('asset_id', assetId).gte('transferred_at', since24h).not('price_xch', 'is', null),
+      supabase.from('cat_transfers').select('volume_xch')
+        .eq('asset_id', assetId).gte('transferred_at', since7d).not('volume_xch', 'is', null),
+      supabase.from('cat_transfers').select('price_xch, transferred_at')
+        .eq('asset_id', assetId).not('price_xch', 'is', null)
+        .order('transferred_at', { ascending: false }).limit(1),
+    ]);
+
+    const prices24h    = (stats24h || []).map(r => Number(r.price_xch));
+    const volume24hXch = (stats24h || []).reduce((s, r) => s + Number(r.volume_xch || 0), 0);
+    const volume7dXch  = (stats7d  || []).reduce((s, r) => s + Number(r.volume_xch || 0), 0);
+    const high24h      = prices24h.length ? Math.max(...prices24h) : null;
+    const low24h       = prices24h.length ? Math.min(...prices24h) : null;
+
+    res.json({
+      asset_id:          token.asset_id,
+      name:              token.name,
+      short_name:        token.short_name,
+      image_url:         token.image_url,
+      tibet_pair_id:     token.tibet_pair_id,
+      current_price_xch: pair?.current_price_xch ?? null,
+      xch_reserve:       pair?.xch_reserve ?? null,
+      token_reserve:     pair?.token_reserve ?? null,
+      fee_rate:          pair?.fee_rate ?? null,
+      last_trade_at:     lastTrade?.[0]?.transferred_at ?? null,
+      last_price_xch:    lastTrade?.[0]?.price_xch ?? null,
+      high_24h_xch:      high24h,
+      low_24h_xch:       low24h,
+      volume_24h_xch:    volume24hXch,
+      volume_7d_xch:     volume7dXch,
+    });
+  });
+
+  // ── Token OHLCV ───────────────────────────────────────────────────────────────
+
+  app.get('/api/tokens/:assetId/ohlcv', async (req, res) => {
+    const assetId   = req.params.assetId.toLowerCase();
+    const timeframe = ['1h','4h','1d','1w','1m'].includes(req.query.timeframe)
+      ? req.query.timeframe : '1d';
+    const limit  = Math.min(500, parseInt(req.query.limit) || 200);
+
+    const { data, error } = await supabase
+      .from('cat_ohlcv')
+      .select('bucket_start, open, high, low, close, volume_xch, trade_count')
+      .eq('asset_id', assetId)
+      .eq('timeframe', timeframe)
+      .order('bucket_start', { ascending: true })
+      .limit(limit);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  });
+
+  // ── Token recent trades ───────────────────────────────────────────────────────
+
+  app.get('/api/tokens/:assetId/trades', async (req, res) => {
+    const assetId = req.params.assetId.toLowerCase();
+    const limit   = Math.min(100, parseInt(req.query.limit) || 50);
+    const offset  = Math.max(0, parseInt(req.query.offset) || 0);
+
+    const { data, error } = await supabase
+      .from('cat_transfers')
+      .select('price_xch, amount_tokens, volume_xch, block_height, transferred_at, source')
+      .eq('asset_id', assetId)
+      .not('price_xch', 'is', null)
+      .order('transferred_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+  });
+
   // ── Floor price history (for collection chart) ────────────────────────────────
 
   app.get('/api/marketplace/:id/floor-history', async (req, res) => {

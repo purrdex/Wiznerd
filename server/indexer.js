@@ -179,6 +179,7 @@ async function processCoin(id, blockHeight, blockAdditions = []) {
 
   const prevOwner = existing?.owner_puzzle_hash || null;
   const isTransfer = prevOwner && ownerPuzzleHash && prevOwner !== ownerPuzzleHash;
+  const isMint     = !prevOwner && ownerPuzzleHash;
 
   // Upsert NFT record
   await db.from('indexed_nfts').upsert({
@@ -197,8 +198,21 @@ async function processCoin(id, blockHeight, blockAdditions = []) {
     updated_at:        new Date().toISOString(),
   }, { onConflict: 'nft_id' });
 
-  // Record transfer if ownership changed; attempt on-chain price extraction
-  if (isTransfer) {
+  // Record mint or transfer
+  if (isMint) {
+    await db.from('nft_transfers').insert({
+      nft_id:           nftId,
+      collection_id:    collectionId,
+      from_puzzle_hash: null,
+      to_puzzle_hash:   ownerPuzzleHash,
+      price_mojo:       null,
+      block_height:     blockHeight,
+      transferred_at:   new Date().toISOString(),
+      source:           'onchain',
+      event_type:       'mint',
+    }).select();
+    console.log(`[indexer] mint    ${nftId.slice(0, 20)}… → ${(ownerPuzzleHash || '').slice(0, 8)} | block ${blockHeight}`);
+  } else if (isTransfer) {
     const priceMojo = extractSalePrice(blockAdditions, prevOwner);
     await db.from('nft_transfers').insert({
       nft_id:           nftId,
@@ -209,36 +223,48 @@ async function processCoin(id, blockHeight, blockAdditions = []) {
       block_height:     blockHeight,
       transferred_at:   new Date().toISOString(),
       source:           'onchain',
-    });
-    const priceXch = priceMojo ? `${(priceMojo / 1e12).toFixed(4)} XCH` : 'price unknown';
-    console.log(`[indexer] transfer ${nftId.slice(0, 20)}… ${prevOwner.slice(0, 8)}→${(ownerPuzzleHash || '').slice(0, 8)} · ${priceXch}`);
+      event_type:       priceMojo ? 'sale' : 'transfer',
+    }).select();
+    const priceXch = priceMojo ? `${(priceMojo / 1e12).toFixed(4)} XCH` : 'no price';
+    console.log(`[indexer] ${priceMojo ? 'sale    ' : 'transfer'} ${nftId.slice(0, 20)}… ${prevOwner.slice(0, 8)}→${(ownerPuzzleHash || '').slice(0, 8)} · ${priceXch} | block ${blockHeight}`);
   }
 
-  console.log(`[indexer] NFT ${nftId.slice(0, 20)}… | collection: ${collectionId?.slice(0, 16) || 'none'} | block ${blockHeight}`);
+  return true; // signal: this coin was an NFT
 }
 
 // ── Process one block ─────────────────────────────────────────────────────────
 
 async function processBlock(height) {
+  const db = getSupabase();
   const record = await nodeRpc('get_block_record_by_height', { height });
   if (!record.block_record) return;
 
   const { additions } = await nodeRpc('get_additions_and_removals', {
     header_hash: record.block_record.header_hash,
   });
-  if (!additions?.length) return;
+  if (!additions?.length) {
+    await db.from('indexed_blocks').upsert({ block_height: height, nft_events: 0, cat_events: 0 }, { onConflict: 'block_height' });
+    return;
+  }
 
   // Singletons (NFTs, DIDs) always have amount = 1 mojo
   const candidates = additions.filter(r => BigInt(r.coin.amount) === 1n);
-  if (!candidates.length) return;
+  if (!candidates.length) {
+    await db.from('indexed_blocks').upsert({ block_height: height, nft_events: 0, cat_events: 0 }, { onConflict: 'block_height' });
+    return;
+  }
 
   console.log(`[indexer] block ${height}: ${additions.length} additions, ${candidates.length} singleton candidates`);
 
-  for (const record of candidates) {
-    const id = coinId(record.coin);
-    await processCoin(id, height, additions); // pass full additions for price extraction
+  let nftEvents = 0;
+  for (const candidate of candidates) {
+    const id = coinId(candidate.coin);
+    const found = await processCoin(id, height, additions);
+    if (found) nftEvents++;
     await new Promise(r => setTimeout(r, COIN_DELAY));
   }
+
+  await db.from('indexed_blocks').upsert({ block_height: height, nft_events: nftEvents, cat_events: 0 }, { onConflict: 'block_height' });
 }
 
 // ── Indexer state ─────────────────────────────────────────────────────────────

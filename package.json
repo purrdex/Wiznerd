@@ -16,6 +16,7 @@
     "@scure/bip39": "^2.2.0",
     "@supabase/supabase-js": "^2.108.2",
     "bech32": "^2.0.0",
+    "lightweight-charts": "^5.2.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

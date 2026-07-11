@@ -14,6 +14,8 @@ import ActivityScreen from './marketplace/Activity'
 import CreatorScreen from './marketplace/Creator'
 import WatchlistScreen from './marketplace/Watchlist'
 import UserProfileScreen from './marketplace/UserProfile'
+import TokensScreen from './marketplace/Tokens'
+import TokenDetailScreen from './marketplace/TokenDetail'
 import { CartProvider } from './marketplace/CartContext'
 import { ToastProvider } from './components/ToastContext'
 
@@ -28,6 +30,8 @@ const router = createBrowserRouter([
   { path: '/marketplace/profile', element: <ProfileScreen /> },
   { path: '/marketplace/profile/:address', element: <UserProfileScreen /> },
   { path: '/marketplace/creator/:address', element: <CreatorScreen /> },
+  { path: '/tokens', element: <TokensScreen /> },
+  { path: '/tokens/:assetId', element: <TokenDetailScreen /> },
   { path: '/marketplace/:id', element: <CollectionScreen /> },
   { path: '/marketplace/:id/manage', element: <ManageScreen /> },
 ])
