@@ -54,6 +54,21 @@ function toBucket(date, timeframe) {
   }
 }
 
+// ── Outlier rejection using IQR ───────────────────────────────────────────────
+// Removes prices more than 5 IQRs from Q1/Q3. Handles sparse data gracefully.
+
+function rejectOutliers(trades) {
+  if (trades.length < 6) return trades; // too few points to filter meaningfully
+  const sorted = [...trades].map(t => t.price).sort((a, b) => a - b);
+  const q1  = sorted[Math.floor(sorted.length * 0.25)];
+  const q3  = sorted[Math.floor(sorted.length * 0.75)];
+  const iqr = q3 - q1;
+  if (iqr === 0) return trades; // all same price — nothing to filter
+  const lo = q1 - 5 * iqr;
+  const hi = q3 + 5 * iqr;
+  return trades.filter(t => t.price >= lo && t.price <= hi);
+}
+
 // ── Build candles for one token + timeframe ───────────────────────────────────
 
 async function buildCandles(assetId, timeframe, sinceDate) {
@@ -76,16 +91,20 @@ async function buildCandles(assetId, timeframe, sinceDate) {
   if (error) throw error;
   if (!trades?.length) return 0;
 
+  // Reject statistical outliers before building candles
+  const allPoints = trades.map(t => ({ ...t, price: Number(t.price_xch) }));
+  const filtered  = rejectOutliers(allPoints);
+
   // Group by bucket
   const bucketMap = new Map();
-  for (const trade of trades) {
+  for (const trade of filtered) {
     const bucket = toBucket(trade.transferred_at, timeframe);
     const key = bucket.toISOString();
     if (!bucketMap.has(key)) {
       bucketMap.set(key, { bucket, prices: [], volume: 0, count: 0 });
     }
     const entry = bucketMap.get(key);
-    entry.prices.push(Number(trade.price_xch));
+    entry.prices.push(trade.price);
     entry.volume += Number(trade.volume_xch || 0);
     entry.count++;
   }

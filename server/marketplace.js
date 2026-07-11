@@ -25,6 +25,18 @@ let externalCache = null;
 let externalCacheTime = 0;
 const EXTERNAL_TTL = 2 * 60 * 1000;
 
+function iqrFilter(prices) {
+  if (prices.length < 6) return prices;
+  const sorted = [...prices].sort((a, b) => a - b);
+  const q1  = sorted[Math.floor(sorted.length * 0.25)];
+  const q3  = sorted[Math.floor(sorted.length * 0.75)];
+  const iqr = q3 - q1;
+  if (iqr === 0) return prices;
+  const lo = q1 - 5 * iqr;
+  const hi = q3 + 5 * iqr;
+  return prices.filter(p => p >= lo && p <= hi);
+}
+
 module.exports = function registerMarketplaceRoutes(app, supabase) {
 
   // ── Browse ────────────────────────────────────────────────────────────────────
@@ -2125,17 +2137,20 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       }
     }
 
-    res.json((tokens || []).map(t => ({
-      asset_id:          t.asset_id,
-      name:              t.name,
-      short_name:        t.short_name,
-      image_url:         t.image_url,
-      tibet_pair_id:     t.tibet_pair_id,
-      current_price_xch: t.tibet_pairs?.current_price_xch ?? null,
-      xch_reserve:       t.tibet_pairs?.xch_reserve ?? null,
-      token_reserve:     t.tibet_pairs?.token_reserve ?? null,
-      volume_24h_xch:    vol24h[t.asset_id] || 0,
-    })));
+    res.json((tokens || []).map(t => {
+      const pair = Array.isArray(t.tibet_pairs) ? t.tibet_pairs[0] : t.tibet_pairs;
+      return {
+        asset_id:          t.asset_id,
+        name:              t.name,
+        short_name:        t.short_name,
+        image_url:         t.image_url,
+        tibet_pair_id:     t.tibet_pair_id,
+        current_price_xch: pair?.current_price_xch ?? null,
+        xch_reserve:       pair?.xch_reserve ?? null,
+        token_reserve:     pair?.token_reserve ?? null,
+        volume_24h_xch:    vol24h[t.asset_id] || 0,
+      };
+    }));
   });
 
   // ── Token detail ──────────────────────────────────────────────────────────────
@@ -2164,7 +2179,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         .order('transferred_at', { ascending: false }).limit(1),
     ]);
 
-    const prices24h    = (stats24h || []).map(r => Number(r.price_xch));
+    const rawPrices24h = (stats24h || []).map(r => Number(r.price_xch));
+    const prices24h    = iqrFilter(rawPrices24h);
     const volume24hXch = (stats24h || []).reduce((s, r) => s + Number(r.volume_xch || 0), 0);
     const volume7dXch  = (stats7d  || []).reduce((s, r) => s + Number(r.volume_xch || 0), 0);
     const high24h      = prices24h.length ? Math.max(...prices24h) : null;
