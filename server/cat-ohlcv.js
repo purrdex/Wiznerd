@@ -106,29 +106,29 @@ async function buildCandles(assetId, timeframe, sinceDate) {
   const trades = allTrades;
   if (!trades.length) return 0;
 
-  // Reject statistical outliers before building candles
-  const allPoints = trades.map(t => ({ ...t, price: Number(t.price_xch) }));
-  const filtered  = rejectOutliers(allPoints);
-
-  // Group by bucket
+  // Group by bucket first, then reject outliers within each bucket.
+  // Global outlier rejection incorrectly removes legitimate recent trades
+  // when a token has appreciated significantly over time.
   const bucketMap = new Map();
-  for (const trade of filtered) {
+  for (const trade of trades) {
     const bucket = toBucket(trade.transferred_at, timeframe);
     const key = bucket.toISOString();
     if (!bucketMap.has(key)) {
       bucketMap.set(key, { bucket, prices: [], volume: 0, count: 0 });
     }
     const entry = bucketMap.get(key);
-    entry.prices.push(trade.price);
+    entry.prices.push(Number(trade.price_xch));
     entry.volume += Number(trade.volume_xch || 0);
     entry.count++;
   }
 
-  // Build OHLCV rows
+  // Build OHLCV rows — apply outlier filter within each bucket
   const rows = [];
   const sortedKeys = [...bucketMap.keys()].sort();
   for (const key of sortedKeys) {
-    const { bucket, prices, volume, count } = bucketMap.get(key);
+    const { bucket, prices: rawPrices, volume, count } = bucketMap.get(key);
+    const prices = rejectOutliers(rawPrices.map(p => ({ price: p }))).map(t => t.price);
+    if (!prices.length) continue;
     rows.push({
       asset_id:     assetId,
       timeframe,
