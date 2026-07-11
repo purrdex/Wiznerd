@@ -44,8 +44,13 @@ interface Trade {
 
 interface Legend { o: number; h: number; l: number; c: number; v: number }
 
-const TIMEFRAMES = ['1h', '4h', '1d', '1w', '1m'] as const;
+const TIMEFRAMES = ['1min', '15min', '1h', '4h', '1d', '1w', '1m', '3mo'] as const;
 type TF = typeof TIMEFRAMES[number];
+
+const TF_LABEL: Record<TF, string> = {
+  '1min': '1m', '15min': '15m', '1h': '1H', '4h': '4H',
+  '1d': '1D', '1w': '1W', '1m': '1Mo', '3mo': '3Mo',
+};
 type SeriesRef = ReturnType<ReturnType<typeof createChart>['addSeries']> | null;
 type IndicatorKey = 'macd' | 'rsi' | 'cv';
 
@@ -536,7 +541,7 @@ export default function TokenDetailScreen() {
                 style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                   background: timeframe === tf ? 'var(--accent)' : 'var(--bg-input)',
                   color: timeframe === tf ? '#fff' : 'var(--text-secondary)' }}>
-                {tf.toUpperCase()}
+                {TF_LABEL[tf]}
               </button>
             ))}
             <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 2px' }} />

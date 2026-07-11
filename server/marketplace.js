@@ -2209,7 +2209,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
   app.get('/api/tokens/:assetId/ohlcv', async (req, res) => {
     const assetId   = req.params.assetId.toLowerCase();
-    const timeframe = ['1h','4h','1d','1w','1m'].includes(req.query.timeframe)
+    const timeframe = ['1min','15min','1h','4h','1d','1w','1m','3mo'].includes(req.query.timeframe)
       ? req.query.timeframe : '1d';
     const limit = Math.min(2000, parseInt(req.query.limit) || 1000);
 

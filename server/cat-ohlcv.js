@@ -18,13 +18,28 @@ const supabase = createClient(
   { realtime: { transport: ws } }
 );
 
-const TIMEFRAMES = ['1h', '4h', '1d', '1w', '1m'];
+const TIMEFRAMES = ['1min', '15min', '1h', '4h', '1d', '1w', '1m', '3mo'];
 
 // ── Bucket helpers ────────────────────────────────────────────────────────────
 
 function toBucket(date, timeframe) {
   const d = new Date(date);
   switch (timeframe) {
+    case '1min': {
+      d.setUTCSeconds(0, 0);
+      return d;
+    }
+    case '15min': {
+      d.setUTCSeconds(0, 0);
+      d.setUTCMinutes(Math.floor(d.getUTCMinutes() / 15) * 15);
+      return d;
+    }
+    case '3mo': {
+      d.setUTCDate(1);
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCMonth(Math.floor(d.getUTCMonth() / 3) * 3);
+      return d;
+    }
     case '1h': {
       d.setUTCMinutes(0, 0, 0);
       return d;
