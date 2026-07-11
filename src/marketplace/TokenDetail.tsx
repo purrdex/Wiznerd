@@ -81,6 +81,7 @@ export default function TokenDetailScreen() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef          = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef         = useRef<ReturnType<ReturnType<typeof createChart>['addSeries']> | null>(null);
+  const roRef             = useRef<ResizeObserver | null>(null);
 
   // Fetch XCH price
   useEffect(() => {
@@ -119,49 +120,68 @@ export default function TokenDetailScreen() {
       .catch(() => setTrades([]));
   }, [assetId]);
 
-  // Build/update chart — container is always mounted so clientWidth is valid
+  // Create chart after token load so the container has a real clientWidth
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (loading || !chartContainerRef.current || chartRef.current) return;
+    const container = chartContainerRef.current;
+    const w = container.clientWidth || container.offsetWidth || 900;
 
-    if (!chartRef.current) {
-      chartRef.current = createChart(chartContainerRef.current, {
-        autoSize: true,
-        height: 360,
-        layout: {
-          background: { color: 'var(--bg-card, #18181b)' } as any,
-          textColor: '#a1a1aa',
-        },
-        grid: {
-          vertLines: { color: 'rgba(255,255,255,0.05)' },
-          horzLines: { color: 'rgba(255,255,255,0.05)' },
-        },
-        crosshair: { mode: 1 },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
-        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
-      });
-      seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
-        upColor:   '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor:   '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor:   '#22c55e',
-        wickDownColor: '#ef4444',
-        priceFormat: {
-          type: 'custom',
-          formatter: (price: number) => {
-            if (!price) return '0';
-            if (price < 0.000001)  return price.toExponential(2);
-            if (price < 0.0001)    return price.toFixed(8);
-            if (price < 0.01)      return price.toFixed(6);
-            if (price < 1)         return price.toFixed(4);
-            return price.toFixed(2);
-          },
-          minMove: 0.00000001,
-        } as any,
-      });
-    }
+    chartRef.current = createChart(container, {
+      width: w,
+      height: 360,
+      layout: {
+        background: { color: 'var(--bg-card, #18181b)' } as any,
+        textColor: '#a1a1aa',
+      },
+      grid: {
+        vertLines: { color: 'rgba(255,255,255,0.05)' },
+        horzLines: { color: 'rgba(255,255,255,0.05)' },
+      },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
+    });
 
-    if (candles.length && seriesRef.current) {
+    seriesRef.current = chartRef.current.addSeries(CandlestickSeries, {
+      upColor:   '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor:   '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor:   '#22c55e',
+      wickDownColor: '#ef4444',
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => {
+          if (!price) return '0';
+          if (price < 0.000001)  return price.toExponential(2);
+          if (price < 0.0001)    return price.toFixed(8);
+          if (price < 0.01)      return price.toFixed(6);
+          if (price < 1)         return price.toFixed(4);
+          return price.toFixed(2);
+        },
+        minMove: 0.00000001,
+      } as any,
+    });
+
+    roRef.current = new ResizeObserver(() => {
+      if (chartRef.current && chartContainerRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
+    });
+    roRef.current.observe(container);
+
+    return () => {
+      roRef.current?.disconnect();
+      chartRef.current?.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, [loading]);
+
+  // Update candle data whenever it changes
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    if (candles.length) {
       const data = candles.map(c => ({
         time: Math.floor(new Date(c.bucket_start).getTime() / 1000) as any,
         open:  Number(c.open),
@@ -171,15 +191,10 @@ export default function TokenDetailScreen() {
       }));
       seriesRef.current.setData(data);
       chartRef.current?.timeScale().fitContent();
-    } else if (seriesRef.current) {
+    } else {
       seriesRef.current.setData([]);
     }
   }, [candles]);
-
-  // Cleanup chart on unmount
-  useEffect(() => {
-    return () => { chartRef.current?.remove(); chartRef.current = null; seriesRef.current = null; };
-  }, []);
 
   if (loading) return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -230,6 +245,7 @@ export default function TokenDetailScreen() {
                 ≈ ${priceUsd.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })}
               </div>
             )}
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Tibet AMM price</div>
           </div>
         </div>
 
@@ -262,30 +278,28 @@ export default function TokenDetailScreen() {
           ))}
         </div>
 
-        {/* Chart tab */}
-        {tab === 'chart' && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '0 0 var(--radius) var(--radius)', padding: 16 }}>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-              {TIMEFRAMES.map(tf => (
-                <button key={tf} onClick={() => setTimeframe(tf)}
-                  style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                    background: timeframe === tf ? 'var(--accent)' : 'var(--bg-input)',
-                    color: timeframe === tf ? '#fff' : 'var(--text-secondary)' }}>
-                  {tf.toUpperCase()}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ position: 'relative' }}>
-              <div ref={chartContainerRef} style={{ width: '100%', height: 360 }} />
-              {candles.length === 0 && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: 13, pointerEvents: 'none' }}>
-                  No chart data yet
-                </div>
-              )}
-            </div>
+        {/* Chart tab — always in DOM so clientWidth is valid on first render */}
+        <div style={{ display: tab === 'chart' ? 'block' : 'none', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '0 0 var(--radius) var(--radius)', padding: 16 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+            {TIMEFRAMES.map(tf => (
+              <button key={tf} onClick={() => setTimeframe(tf)}
+                style={{ padding: '5px 10px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                  background: timeframe === tf ? 'var(--accent)' : 'var(--bg-input)',
+                  color: timeframe === tf ? '#fff' : 'var(--text-secondary)' }}>
+                {tf.toUpperCase()}
+              </button>
+            ))}
           </div>
-        )}
+
+          <div style={{ position: 'relative' }}>
+            <div ref={chartContainerRef} style={{ width: '100%', height: 360 }} />
+            {candles.length === 0 && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: 13, pointerEvents: 'none' }}>
+                No chart data yet
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Trades tab */}
         {tab === 'trades' && (
