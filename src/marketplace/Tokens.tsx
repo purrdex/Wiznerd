@@ -68,7 +68,7 @@ export default function TokensScreen() {
 
   useEffect(() => {
     setLoading(true);
-    const qs = search ? `?q=${encodeURIComponent(search)}&limit=200` : '?limit=200';
+    const qs = search ? `?q=${encodeURIComponent(search)}&limit=1000` : '?limit=1000';
     fetch(`${API_URL}/api/tokens${qs}`, { signal: AbortSignal.timeout(10000) })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => { setTokens(data); setLoading(false); })

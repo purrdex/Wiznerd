@@ -2099,7 +2099,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
   // ── Token list ────────────────────────────────────────────────────────────────
 
   app.get('/api/tokens', async (req, res) => {
-    const limit  = Math.min(200, parseInt(req.query.limit) || 100);
+    const limit  = Math.min(1000, parseInt(req.query.limit) || 1000);
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
     const search = (req.query.q || '').trim().toLowerCase();
 
