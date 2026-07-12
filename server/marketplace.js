@@ -2126,17 +2126,23 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     let vol24h = {}, vol7d = {};
     if (assetIds.length) {
-      const { data: vols } = await supabase
-        .from('cat_transfers')
-        .select('asset_id, volume_xch, transferred_at')
-        .in('asset_id', assetIds)
-        .gte('transferred_at', since7d)
-        .not('volume_xch', 'is', null);
-
-      for (const v of (vols || [])) {
-        vol7d[v.asset_id]  = (vol7d[v.asset_id]  || 0) + Number(v.volume_xch);
-        if (v.transferred_at >= since24h)
-          vol24h[v.asset_id] = (vol24h[v.asset_id] || 0) + Number(v.volume_xch);
+      let from = 0;
+      while (true) {
+        const { data: batch } = await supabase
+          .from('cat_transfers')
+          .select('asset_id, volume_xch, transferred_at')
+          .in('asset_id', assetIds)
+          .gte('transferred_at', since7d)
+          .not('volume_xch', 'is', null)
+          .range(from, from + 999);
+        if (!batch?.length) break;
+        for (const v of batch) {
+          vol7d[v.asset_id]  = (vol7d[v.asset_id]  || 0) + Number(v.volume_xch);
+          if (v.transferred_at >= since24h)
+            vol24h[v.asset_id] = (vol24h[v.asset_id] || 0) + Number(v.volume_xch);
+        }
+        if (batch.length < 1000) break;
+        from += 1000;
       }
     }
 
