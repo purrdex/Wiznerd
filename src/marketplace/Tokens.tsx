@@ -15,7 +15,15 @@ interface TokenRow {
   xch_reserve: number | null;
   token_reserve: number | null;
   volume_24h_xch: number;
+  volume_7d_xch: number;
 }
+
+const VOL_FILTERS = [
+  { label: 'All',      min: 0 },
+  { label: '>1 XCH',  min: 1 },
+  { label: '>10 XCH', min: 10 },
+  { label: '>100 XCH',min: 100 },
+] as const;
 
 function fmtXch(v: number | null, digits = 6): string {
   if (v == null) return '—';
@@ -46,7 +54,8 @@ export default function TokensScreen() {
   const [error, setError]       = useState('');
   const [search, setSearch]     = useState('');
   const [xchPrice, setXchPrice] = useState(0);
-  const [sort, setSort]         = useState<'price' | 'tvl' | 'vol'>('tvl');
+  const [sort, setSort]         = useState<'price' | 'tvl' | 'vol24h' | 'vol7d'>('tvl');
+  const [minVol7d, setMinVol7d] = useState(0);
 
   useEffect(() => {
     const cached = parseFloat(localStorage.getItem(XCH_USD_KEY) || '0');
@@ -65,21 +74,23 @@ export default function TokensScreen() {
       .catch(e => { setError(e.message); setLoading(false); });
   }, [search]);
 
-  const sorted = [...tokens].sort((a, b) => {
-    if (sort === 'price') return (b.current_price_xch ?? -1) - (a.current_price_xch ?? -1);
-    if (sort === 'vol')   return (b.volume_24h_xch ?? 0)    - (a.volume_24h_xch ?? 0);
-    // tvl: sort by xch_reserve
-    return (Number(b.xch_reserve ?? 0)) - (Number(a.xch_reserve ?? 0));
-  });
+  const sorted = [...tokens]
+    .filter(t => t.volume_7d_xch >= minVol7d)
+    .sort((a, b) => {
+      if (sort === 'price')  return (b.current_price_xch ?? -1) - (a.current_price_xch ?? -1);
+      if (sort === 'vol24h') return (b.volume_24h_xch ?? 0) - (a.volume_24h_xch ?? 0);
+      if (sort === 'vol7d')  return (b.volume_7d_xch  ?? 0) - (a.volume_7d_xch  ?? 0);
+      return (Number(b.xch_reserve ?? 0)) - (Number(a.xch_reserve ?? 0));
+    });
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       <TopNav activePath="/tokens" />
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: 'var(--accent)' }}>CAT Tokens</h1>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: 'var(--accent)' }}>CAT Tokens</h1>
             <input
               type="text"
               placeholder="Search tokens…"
@@ -87,12 +98,25 @@ export default function TokensScreen() {
               onChange={e => setSearch(e.target.value)}
               style={{ padding: '8px 12px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text-primary)', fontSize: 13, width: 200 }}
             />
-            {(['tvl','price','vol'] as const).map(s => (
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginRight: 2 }}>Sort:</span>
+            {([['tvl','TVL'],['price','Price'],['vol24h','24h Vol'],['vol7d','7d Vol']] as const).map(([s, label]) => (
               <button key={s} onClick={() => setSort(s)}
-                style={{ padding: '8px 14px', borderRadius: 'var(--radius)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                style={{ padding: '6px 12px', borderRadius: 'var(--radius)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                   background: sort === s ? 'var(--accent)' : 'var(--bg-card)',
                   color: sort === s ? '#fff' : 'var(--text-secondary)' }}>
-                {s === 'tvl' ? 'TVL' : s === 'price' ? 'Price' : '24h Vol'}
+                {label}
+              </button>
+            ))}
+            <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginRight: 2 }}>7d Vol:</span>
+            {VOL_FILTERS.map(f => (
+              <button key={f.min} onClick={() => setMinVol7d(f.min)}
+                style={{ padding: '6px 12px', borderRadius: 'var(--radius)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                  background: minVol7d === f.min ? 'var(--accent)' : 'var(--bg-card)',
+                  color: minVol7d === f.min ? '#fff' : 'var(--text-secondary)' }}>
+                {f.label}
               </button>
             ))}
           </div>
@@ -120,6 +144,7 @@ export default function TokensScreen() {
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (USD)</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>TVL</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>24h Volume</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'right' }}>7d Volume</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -153,6 +178,9 @@ export default function TokensScreen() {
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-secondary)' }}>
                           {t.volume_24h_xch > 0 ? `${fmtXch(t.volume_24h_xch, 2)} XCH` : '—'}
+                        </td>
+                        <td style={{ padding: '12px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-secondary)' }}>
+                          {t.volume_7d_xch > 0 ? `${fmtXch(t.volume_7d_xch, 2)} XCH` : '—'}
                         </td>
                       </tr>
                     ))}

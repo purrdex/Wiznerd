@@ -2119,21 +2119,24 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const { data: tokens, error } = await q.range(offset, offset + limit - 1);
     if (error) return res.status(500).json({ error: error.message });
 
-    // Compute 24h volume from cat_transfers
-    const since24h = new Date(Date.now() - 86_400_000).toISOString();
+    // Compute 24h and 7d volume from cat_transfers
+    const since24h = new Date(Date.now() -      86_400_000).toISOString();
+    const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const assetIds = (tokens || []).map(t => t.asset_id);
 
-    let vol24h = {};
+    let vol24h = {}, vol7d = {};
     if (assetIds.length) {
       const { data: vols } = await supabase
         .from('cat_transfers')
-        .select('asset_id, volume_xch')
+        .select('asset_id, volume_xch, transferred_at')
         .in('asset_id', assetIds)
-        .gte('transferred_at', since24h)
+        .gte('transferred_at', since7d)
         .not('volume_xch', 'is', null);
 
       for (const v of (vols || [])) {
-        vol24h[v.asset_id] = (vol24h[v.asset_id] || 0) + Number(v.volume_xch);
+        vol7d[v.asset_id]  = (vol7d[v.asset_id]  || 0) + Number(v.volume_xch);
+        if (v.transferred_at >= since24h)
+          vol24h[v.asset_id] = (vol24h[v.asset_id] || 0) + Number(v.volume_xch);
       }
     }
 
@@ -2149,6 +2152,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         xch_reserve:       pair?.xch_reserve ?? null,
         token_reserve:     pair?.token_reserve ?? null,
         volume_24h_xch:    vol24h[t.asset_id] || 0,
+        volume_7d_xch:     vol7d[t.asset_id]  || 0,
       };
     }));
   });
