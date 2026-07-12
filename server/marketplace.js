@@ -2126,21 +2126,16 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     let vol24h = {}, vol7d = {};
     if (assetIds.length) {
-      // Use DB-side aggregation (one row per token returned) to avoid row-cap issues
-      const [r7d, r24h] = await Promise.all([
-        supabase.from('cat_transfers')
-          .select('asset_id, volume_xch.sum()')
-          .in('asset_id', assetIds)
-          .gte('transferred_at', since7d)
-          .not('volume_xch', 'is', null),
-        supabase.from('cat_transfers')
-          .select('asset_id, volume_xch.sum()')
-          .in('asset_id', assetIds)
-          .gte('transferred_at', since24h)
-          .not('volume_xch', 'is', null),
-      ]);
-      vol7d  = Object.fromEntries((r7d.data  || []).map(r => [r.asset_id, Number(r.sum)]));
-      vol24h = Object.fromEntries((r24h.data || []).map(r => [r.asset_id, Number(r.sum)]));
+      const { data: volumes, error: volErr } = await supabase.rpc('get_token_volumes', {
+        asset_ids: assetIds,
+        since_7d:  since7d,
+        since_24h: since24h,
+      });
+      if (volErr) console.error('[tokens] volume rpc error:', volErr.message);
+      for (const v of volumes || []) {
+        vol7d[v.asset_id]  = Number(v.vol_7d);
+        vol24h[v.asset_id] = Number(v.vol_24h);
+      }
     }
 
     res.json((tokens || []).map(t => {
