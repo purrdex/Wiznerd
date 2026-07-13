@@ -20,7 +20,8 @@ const DEXIE_API     = 'https://api.dexie.space/v1';
 const POLL_MS       = 30_000;          // block check interval
 const BLOCK_BATCH   = 5;              // blocks per poll cycle
 const OFFER_POLL_MS = 5 * 60_000;    // Dexie open-offer sync interval
-const INIT_DELAY_MS = 100;            // delay between Tibet API calls during init
+const BFS_BATCH    = 200;             // parent_ids per RPC call during bootstrap
+const BFS_DELAY_MS = 50;              // ms between BFS rounds
 
 // Timeframes matching DB constraint in 026_token_indexer.sql
 const TIMEFRAMES = ['1min', '15min', '1h', '4h', '1d', '1w', '1m', '3mo'];
@@ -93,46 +94,97 @@ async function loadPairs(supabase) {
   return data?.length || 0;
 }
 
-// Try to get the current singleton coin_id for a pair from Tibet API.
-// Tibet v2 may return a 'coin_id' or 'coin' field on the pair detail endpoint.
-async function tryInitPairFromTibet(launcherId) {
-  try {
-    const data = await tibetGet(`/pair/${launcherId}`);
-    // Probe several possible field names in the API response
-    const rawId = data.coin_id || data.current_coin_id || data.coin?.coin_id
-      || data.state?.coin_id || data.latest_coin?.name || null;
-    if (rawId) return hexNorm(rawId);
-  } catch { /* not available, fall through */ }
-  return null;
-}
-
-// For pairs with no pair_coin_id, attempt to seed it from the Tibet API.
-// Runs once on startup in the background; doesn't block the block scanner.
-async function initializeMissingCoinIds(supabase) {
+// BFS bootstrap: walk all singleton chains simultaneously, one generation per round.
+// Each launcher_id is the parent of the first singleton coin. We follow spent coins
+// forward until we find the current unspent tip for each pair.
+//
+// One RPC call per round covers ALL pairs at the same depth → most pairs are found
+// within a few hundred rounds (minutes), not hours.
+async function bfsInitAllPairs(supabase) {
   const untracked = [...pairByLauncher.values()].filter(p => !p.pair_coin_id);
   if (!untracked.length) return;
 
-  console.log(`[token-idx] initializing ${untracked.length} untracked pairs from Tibet API…`);
-  let seeded = 0;
+  // frontier: launcher_id → current frontier coin_id (starts as launcher_id itself)
+  const frontier = new Map();
+  for (const pair of untracked) frontier.set(pair.launcher_id, pair.launcher_id);
 
-  for (const pair of untracked) {
-    const id = await tryInitPairFromTibet(pair.launcher_id);
-    if (id) {
-      pair.pair_coin_id = id;
-      pairByCurrentCoin.set(id, pair);
+  let round = 0;
+  let found = 0;
+  const total = frontier.size;
+  console.log(`[token-idx] BFS bootstrap: walking ${total} pair chains…`);
 
-      await supabase.from('tibet_pairs').update({ pair_coin_id: id })
-        .eq('launcher_id', pair.launcher_id);
-      seeded++;
+  while (frontier.size > 0) {
+    round++;
+
+    // Batch the frontier into chunks to avoid oversized RPC calls
+    const entries = [...frontier.entries()];
+    const byParent = new Map(); // parent_hex → coin_record
+
+    for (let i = 0; i < entries.length; i += BFS_BATCH) {
+      const chunk = entries.slice(i, i + BFS_BATCH);
+      const parentIds = chunk.map(([, p]) => `0x${p}`);
+      try {
+        const { coin_records } = await nodeRpc('get_coin_records_by_parent_ids', {
+          parent_ids: parentIds,
+          include_spent_coins: true,
+        });
+        for (const cr of (coin_records || [])) {
+          if (BigInt(cr.coin.amount) !== 1n) continue; // singletons only
+          const parent = hexNorm(cr.coin.parent_coin_info);
+          byParent.set(parent, cr);
+        }
+      } catch (e) {
+        console.warn(`[token-idx] BFS round ${round} RPC error: ${e.message}`);
+        await sleep(2000);
+      }
     }
-    await sleep(INIT_DELAY_MS);
+
+    const nextFrontier = new Map();
+    const dbUpdates = [];
+
+    for (const [launcherId, currentParent] of frontier) {
+      const cr = byParent.get(currentParent);
+      if (!cr) continue; // pair not yet created, or RPC miss — skip this round
+
+      const cid = coinId(cr.coin);
+      if (!cr.spent) {
+        // Found the unspent tip — register it
+        const pair = pairByLauncher.get(launcherId);
+        pair.pair_coin_id     = cid;
+        pair.pair_coin_height = cr.confirmed_block_index;
+        pairByCurrentCoin.set(cid, pair);
+        frontier.delete(launcherId);
+        found++;
+        dbUpdates.push({ launcher_id: launcherId, cid, height: cr.confirmed_block_index });
+      } else {
+        // Follow to next generation
+        nextFrontier.set(launcherId, cid);
+      }
+    }
+
+    // Persist found coin IDs to DB in batch
+    for (const { launcher_id, cid, height } of dbUpdates) {
+      supabase.from('tibet_pairs')
+        .update({ pair_coin_id: cid, pair_coin_height: height })
+        .eq('launcher_id', launcher_id)
+        .then(() => {}).catch(() => {});
+    }
+
+    // Update frontier in place
+    for (const [k, v] of nextFrontier) frontier.set(k, v);
+    // Remove entries that were found
+    for (const { launcher_id } of dbUpdates) frontier.delete(launcher_id);
+
+    if (found > 0 && (found % 50 === 0 || frontier.size === 0)) {
+      console.log(`[token-idx] bootstrap: ${found}/${total} found after ${round} rounds, ${frontier.size} remaining`);
+    } else if (round % 200 === 0) {
+      console.log(`[token-idx] bootstrap round ${round}: ${found}/${total} found, ${frontier.size} remaining`);
+    }
+
+    if (frontier.size > 0) await sleep(BFS_DELAY_MS);
   }
 
-  if (seeded > 0) console.log(`[token-idx] seeded ${seeded} pair coin IDs from Tibet API`);
-  const remaining = untracked.length - seeded;
-  if (remaining > 0) {
-    console.log(`[token-idx] ${remaining} pairs without coin IDs — will capture on first swap`);
-  }
+  console.log(`[token-idx] bootstrap complete: ${found}/${total} pair coin IDs found in ${round} rounds`);
 }
 
 // ── Event classification ──────────────────────────────────────────────────────
@@ -533,9 +585,9 @@ async function start(supabase) {
   await loadPairs(supabase);
   lastHeight = await loadLastHeight();
 
-  // Seed pair coin IDs from Tibet API in the background
-  initializeMissingCoinIds(supabase).catch(e =>
-    console.warn('[token-idx] init error:', e.message)
+  // Walk all singleton chains to find current pair coin IDs (runs in background)
+  bfsInitAllPairs(supabase).catch(e =>
+    console.warn('[token-idx] BFS bootstrap error:', e.message)
   );
 
   // Start block poll loop
