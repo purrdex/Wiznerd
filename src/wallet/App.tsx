@@ -396,7 +396,6 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
   const hasLoadedRef = React.useRef(false);
 
   const fetchAll = useCallback(async () => {
-    if (!nodeUrl) { setLoading(false); return; }
     setLoading(true);
     try {
       const puzzleHashes = wallet.addresses.map(a => a.puzzleHashHex);
@@ -481,7 +480,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
         <div className="balance-label">Total Balance</div>
         {loading && balance === null ? (
           <div className="balance-loading"><div className="spinner"/>
-            {nodeUrl ? 'Fetching balance…' : 'Set a node in Settings to load balance'}
+            {'Fetching balance…'}
           </div>
         ) : (
           <>
@@ -670,10 +669,7 @@ function ReceiveScreen({ wallet }: { wallet: WalletState }) {
   );
 }
 
-const PUBLIC_NODES = [
-  { label: 'SpeedFarmer', url: 'https://chia-node.speedfarmer.io' },
-  { label: 'Chia Official', url: 'https://node.chia.net' },
-];
+const NODE_URL = 'https://wiznerd.fun/proxy';
 
 function passwordStrength(pw: string): { label: string; color: string } | null {
   if (!pw) return null;
@@ -687,9 +683,8 @@ function passwordStrength(pw: string): { label: string; color: string } | null {
   return { label: 'Strong', color: '#f97316' };
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, currentMnemonic, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
-  { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
-    onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
+function SettingsScreen({ onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, currentMnemonic, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
+  { onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
     walletList: WalletEntry[]; activeWalletId: string|null;
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
@@ -698,9 +693,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
     idleLockMinutes: number; onIdleLockChange:(minutes:number)=>void;
     sessionKey: CryptoKey|null; onChangePassword:(newKey:CryptoKey,updatedWallets:WalletEntry[])=>void;
   }) {
-  const [input, setInput] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<NodeStatus|null>(null);
   const [newLabel, setNewLabel] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [addError, setAddError] = useState('');
@@ -717,10 +709,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
   const [pwError, setPwError] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
   const [pwSuccess, setPwSuccess] = useState(false);
-
-  useEffect(() => {
-    setInput(nodeUrl || '');
-  }, [nodeUrl]);
 
   const handleChangePasswordSubmit = async () => {
     if (!currentPw) { setPwError('Enter your current password'); return; }
@@ -762,17 +750,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
         setPwError(`Failed: ${msg}`);
       }
     } finally { setPwBusy(false); }
-  };
-
-  const handleTest = async () => {
-    setTesting(true); setTestResult(null);
-    try {
-      const result = await checkNodeSync(input, 'Custom node');
-      setTestResult(result);
-    } catch(e: any) {
-      setTestResult({ url: input, label: 'Custom node', peakHeight: 0, synced: false, latencyMs: 0, trusted: false, error: e.message });
-    }
-    setTesting(false);
   };
 
   const handleAddEntry = () => {
@@ -924,52 +901,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
       <button className="btn btn-secondary" style={{marginTop:4}} onClick={onAddWallet}>
         + Add wallet
       </button>
-
-      <div className="section-label mt-16">Node Configuration</div>
-      <div className="node-config">
-        <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-          Quick-select a public node or enter a custom URL.
-        </div>
-        <select
-          value={PUBLIC_NODES.find(n => n.url === input)?.url ?? (input ? '' : '__local__')}
-          onChange={e => {
-            const val = e.target.value;
-            if (val === '__local__') { setInput(''); setTestResult(null); }
-            else if (val) { setInput(val); setTestResult(null); }
-          }}
-          style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
-            borderRadius:'var(--radius)',color:'var(--text-primary)',fontSize:13,width:'100%',cursor:'pointer'}}>
-          <option value="">— Choose a public node —</option>
-          {PUBLIC_NODES.map(n => (
-            <option key={n.url} value={n.url}>{n.label}</option>
-          ))}
-          <option value="__local__">Reset to default</option>
-        </select>
-        <input type="url" value={input} onChange={e=>{setInput(e.target.value);setTestResult(null);}} placeholder="https://node.example.com:8555"/>
-        <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-secondary" style={{flex:1,padding:'10px'}} onClick={handleTest} disabled={testing}>
-            {testing?'Testing…':'Test node'}
-          </button>
-          <button className="btn btn-primary" style={{flex:1,padding:'10px'}} onClick={()=>onNodeChange(input)}>Save</button>
-        </div>
-        {testResult && (
-          <div style={{fontSize:12,color:testResult.trusted?'var(--accent)':'var(--error)'}}>
-            {testResult.trusted
-              ? `✓ Synced — peak #${testResult.peakHeight.toLocaleString()} (${testResult.latencyMs}ms)`
-              : `✗ ${testResult.error}`}
-          </div>
-        )}
-        <div style={{fontSize:12,fontFamily:'var(--font-mono)',color:'var(--text-secondary)',wordBreak:'break-all',marginTop:4}}>
-          Current: {nodeUrl || 'None'}
-        </div>
-        {nodeStatus && (
-          <div style={{fontSize:12,color:nodeStatus.trusted?'var(--accent)':'var(--error)'}}>
-            {nodeStatus.trusted
-              ? `✓ Synced · Block #${nodeStatus.peakHeight.toLocaleString()} · ${nodeStatus.latencyMs}ms`
-              : `✗ ${nodeStatus.error}`}
-          </div>
-        )}
-      </div>
 
       <div className="section-label mt-16">Security</div>
 
@@ -1488,7 +1419,6 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
 
   useEffect(() => {
     setEvents([]); setError(''); setLoading(true);
-    if (!nodeUrl) { setLoading(false); return; }
 
     (async () => {
       try {
@@ -1653,14 +1583,8 @@ function HistoryScreen({ wallet, nodeUrl, catBalances }: {
     <div className="wallet-screen">
       <div className="section-label">Transaction History</div>
       {loading && <div className="balance-loading"><div className="spinner"/>Scanning chain…</div>}
-      {!loading && !nodeUrl && (
-        <div className="empty-state">
-          <div style={{fontSize:36,marginBottom:12}}>🔌</div>
-          Set a node in Settings to load history.
-        </div>
-      )}
-      {!loading && nodeUrl && error && <div className="error-msg">{error}</div>}
-      {!loading && nodeUrl && !error && events.length === 0 && (
+      {!loading && error && <div className="error-msg">{error}</div>}
+      {!loading && !error && events.length === 0 && (
         <div className="empty-state">
           <div style={{fontSize:36,marginBottom:12}}>🧾</div>
           No transactions found.
@@ -2155,8 +2079,7 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
   );
 }
 
-function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
-  nodeUrl: string;
+function SendScreen({ onSendSuccess, addressBook, onTxConfirmed }: {
   onSendSuccess: () => void;
   addressBook: AddressEntry[];
   onTxConfirmed?: (msg: string) => void;
@@ -2221,7 +2144,7 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
   }
 
   async function handleSend() {
-    if (!isValid || !nodeUrl || sendingRef.current) return;
+    if (!isValid || sendingRef.current) return;
     sendingRef.current = true;
     setStatus('sending');
     setMessage('');
@@ -2423,7 +2346,7 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
 
         <button
           onClick={handleSend}
-          disabled={!isValid || isBusy || !nodeUrl}
+          disabled={!isValid || isBusy}
           style={{
             marginTop: 4,
             padding: '14px',
@@ -2455,9 +2378,6 @@ function SendScreen({ nodeUrl, onSendSuccess, addressBook, onTxConfirmed }: {
           <div style={{padding: '12px', background: 'rgba(220,50,50,0.1)', border: '1px solid #dc3232', borderRadius: 8, fontSize: 13, color: '#ff6b6b'}}>
             ✗ {message}
           </div>
-        )}
-        {!nodeUrl && (
-          <div className="empty-state">Set a node in Settings to send.</div>
         )}
       </div>
     </div>
@@ -2869,7 +2789,6 @@ function LockScreen({ mode, walletList, onUnlock, onForgotPassword }: {
     </div>
   );
 }
-const NODE_KEY = 'chia_node_url';
 const ADDRESS_BOOK_KEY = 'chia_address_book';
 const HIDE_SMALL_KEY = 'chia_hide_small';
 const IDLE_LOCK_KEY = 'chia_idle_lock';
@@ -2881,7 +2800,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('setup');
   const [sessionKey, setSessionKey] = useState<CryptoKey|null>(null);
   const [unlockMode, setUnlockMode] = useState<'unlock'|'migrate'|null>(null);
-  const [nodeUrl, setNodeUrl] = useState<string>('');
+  const nodeUrl = NODE_URL;
   const [nodeStatus, setNodeStatus] = useState<NodeStatus|null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [addressBook, setAddressBook] = useState<AddressEntry[]>(() => {
@@ -2908,8 +2827,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const savedNode = localStorage.getItem(NODE_KEY) || '';
-    setNodeUrl(savedNode);
+    try { localStorage.removeItem('chia_node_url'); } catch {}
 
     let wallets: WalletEntry[] = [];
     try { wallets = JSON.parse(localStorage.getItem(WALLETS_KEY) || '[]'); }
@@ -2942,18 +2860,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!nodeUrl) return;
-    setNodeStatus(null);
-    checkNodeSync(nodeUrl, 'Node')
+    checkNodeSync(NODE_URL, 'Node')
       .then(setNodeStatus)
-      .catch(() => setNodeStatus(FAILED_STATUS(nodeUrl)));
+      .catch(() => setNodeStatus(FAILED_STATUS(NODE_URL)));
     const interval = setInterval(() => {
-      checkNodeSync(nodeUrl, 'Node')
+      checkNodeSync(NODE_URL, 'Node')
         .then(setNodeStatus)
-        .catch(() => setNodeStatus(FAILED_STATUS(nodeUrl)));
+        .catch(() => setNodeStatus(FAILED_STATUS(NODE_URL)));
     }, 60_000);
     return () => clearInterval(interval);
-  }, [nodeUrl]);
+  }, []);
 
   // Activity tracking for idle auto-lock
   useEffect(() => {
@@ -3055,10 +2971,6 @@ export default function App() {
     setShowBackupBanner(false);
   };
 
-  const handleNodeChange = (url: string) => {
-    setNodeUrl(url); localStorage.setItem(NODE_KEY, url);
-  };
-
   const handleIdleLockChange = (minutes: number) => {
     setIdleLockMinutes(minutes);
     localStorage.setItem(IDLE_LOCK_KEY, String(minutes));
@@ -3069,14 +2981,12 @@ export default function App() {
     localStorage.removeItem(WALLETS_KEY);
     localStorage.removeItem(ACTIVE_WALLET_KEY);
     localStorage.removeItem(VAULT_SALT_KEY);
-    localStorage.removeItem(NODE_KEY);
     localStorage.removeItem(ADDRESS_BOOK_KEY);
     setWalletList([]);
     setActiveWalletId(null);
     setWallet(null);
     setSessionKey(null);
     setUnlockMode(null);
-    setNodeUrl('');
     setNodeStatus(null);
     setAddressBook([]);
     setScreen('setup');
@@ -3116,7 +3026,6 @@ export default function App() {
     if (next.length === 0) {
       localStorage.removeItem(WALLETS_KEY);
       localStorage.removeItem(ACTIVE_WALLET_KEY);
-      localStorage.removeItem(NODE_KEY);
       localStorage.removeItem(ADDRESS_BOOK_KEY);
       localStorage.removeItem(VAULT_SALT_KEY);
       setWalletList([]);
@@ -3126,7 +3035,6 @@ export default function App() {
       setUnlockMode(null);
       setScreen('setup');
       setNodeStatus(null);
-      setNodeUrl('');
       setAddressBook([]);
     } else {
       localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
@@ -3220,12 +3128,12 @@ export default function App() {
           {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock} onForgotPassword={handleForgotPassword}/>}
           {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
           {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
-          {isWallet && screen==='send'     && <SendScreen nodeUrl={nodeUrl} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
+          {isWallet && screen==='send'     && <SendScreen onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
           {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
           {isWallet && screen==='nfts'     && <NftsScreen/>}
           {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
           {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
-          {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
+          {isWallet && screen==='settings' && <SettingsScreen onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
         </div>
       </div>
 
