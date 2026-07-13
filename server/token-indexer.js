@@ -94,12 +94,59 @@ async function loadPairs(supabase) {
   return data?.length || 0;
 }
 
-// BFS bootstrap: walk all singleton chains simultaneously, one generation per round.
-// Each launcher_id is the parent of the first singleton coin. We follow spent coins
-// forward until we find the current unspent tip for each pair.
-//
-// One RPC call per round covers ALL pairs at the same depth → most pairs are found
-// within a few hundred rounds (minutes), not hours.
+// Initialize pair coin IDs from Tibet API — uses the `last_coin_id_on_chain` field
+// that the /pairs endpoint returns for every pair. Completes in seconds.
+async function initFromTibetApi(supabase) {
+  const untracked = [...pairByLauncher.values()].filter(p => !p.pair_coin_id);
+  if (!untracked.length) return;
+
+  console.log(`[token-idx] seeding ${untracked.length} pair coin IDs from Tibet API…`);
+
+  // Build a map: launcher_id (normalized) → Tibet pair row
+  const tibetMap = new Map();
+  let skip = 0;
+  while (true) {
+    try {
+      const page = await tibetGet(`/pairs?skip=${skip}&limit=100`);
+      const batch = Array.isArray(page) ? page : (page.pairs || []);
+      if (!batch.length) break;
+      for (const p of batch) {
+        const id = hexNorm(p.launcher_id || p.pair_id || '');
+        if (id && p.last_coin_id_on_chain) tibetMap.set(id, p);
+      }
+      if (batch.length < 100) break;
+      skip += 100;
+      await sleep(200);
+    } catch (e) {
+      console.warn(`[token-idx] Tibet API page error: ${e.message}`);
+      break;
+    }
+  }
+
+  let seeded = 0;
+  for (const pair of untracked) {
+    const norm = hexNorm(pair.launcher_id);
+    const tibetPair = tibetMap.get(norm);
+    const coinIdHex = tibetPair ? hexNorm(tibetPair.last_coin_id_on_chain) : null;
+    if (!coinIdHex) continue;
+
+    pair.pair_coin_id = coinIdHex;
+    pairByCurrentCoin.set(coinIdHex, pair);
+    seeded++;
+
+    supabase.from('tibet_pairs')
+      .update({ pair_coin_id: coinIdHex })
+      .eq('launcher_id', pair.launcher_id)
+      .then(() => {}).catch(() => {});
+  }
+
+  const remaining = untracked.length - seeded;
+  console.log(`[token-idx] seeded ${seeded}/${untracked.length} pair coin IDs from Tibet API${remaining ? `, ${remaining} not found (no trades yet)` : ''}`);
+}
+
+// ── BFS fallback (kept for pairs absent from Tibet API) ───────────────────────
+// Walks all singleton chains simultaneously, one generation per round.
+// Only needed for pairs with no last_coin_id_on_chain in Tibet API response.
 async function bfsInitAllPairs(supabase) {
   const untracked = [...pairByLauncher.values()].filter(p => !p.pair_coin_id);
   if (!untracked.length) return;
@@ -613,10 +660,10 @@ async function start(supabase) {
   await loadPairs(supabase);
   lastHeight = await loadLastHeight();
 
-  // Walk all singleton chains to find current pair coin IDs (runs in background)
-  bfsInitAllPairs(supabase).catch(e =>
-    console.warn('[token-idx] BFS bootstrap error:', e.message)
-  );
+  // Seed pair coin IDs: Tibet API first (seconds), BFS fallback for any misses
+  initFromTibetApi(supabase).then(() =>
+    bfsInitAllPairs(supabase)
+  ).catch(e => console.warn('[token-idx] init error:', e.message));
 
   // Start block poll loop
   poll();

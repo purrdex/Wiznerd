@@ -130,15 +130,16 @@ async function main() {
   const now = new Date().toISOString();
 
   for (const pair of pairs) {
-    const launcherId  = pair.launcher_id   || pair.pair_id;
-    const assetId     = pair.asset_id;
-    const name        = pair.name          || pair.token_name || null;
-    const shortName   = pair.short_name    || pair.ticker     || null;
-    const imageUrl    = pair.image_url     || pair.logo_url   || null;
-    const xchReserve  = Number(pair.xch_reserve   || 0);
+    const launcherId   = pair.launcher_id   || pair.pair_id;
+    const assetId      = pair.asset_id;
+    const name         = pair.name          || pair.token_name || null;
+    const shortName    = pair.short_name    || pair.ticker     || null;
+    const imageUrl     = pair.image_url     || pair.logo_url   || null;
+    const xchReserve   = Number(pair.xch_reserve   || 0);
     const tokenReserve = Number(pair.token_reserve || 0);
-    const liquidity   = Number(pair.liquidity      || 0);
-    const feeRate     = pair.fee           != null ? Number(pair.fee) : 0.007;
+    const liquidity    = Number(pair.liquidity      || 0);
+    const feeRate      = pair.fee           != null ? Number(pair.fee) : 0.007;
+    const pairCoinId   = pair.last_coin_id_on_chain || null;
 
     if (!launcherId || !assetId) continue;
 
@@ -157,7 +158,7 @@ async function main() {
     else upsertedTokens++;
 
     // Upsert tibet_pairs
-    const { error: pairErr } = await supabase.from('tibet_pairs').upsert({
+    const pairRow = {
       launcher_id:       launcherId,
       asset_id:          assetId,
       xch_reserve:       xchReserve,
@@ -166,7 +167,9 @@ async function main() {
       fee_rate:          feeRate,
       current_price_xch: currentPrice,
       updated_at:        now,
-    }, { onConflict: 'launcher_id' });
+    };
+    if (pairCoinId) pairRow.pair_coin_id = pairCoinId;
+    const { error: pairErr } = await supabase.from('tibet_pairs').upsert(pairRow, { onConflict: 'launcher_id' });
     if (pairErr) console.error(`  pair upsert ${launcherId.slice(0,8)}: ${pairErr.message}`);
     else upsertedPairs++;
 
