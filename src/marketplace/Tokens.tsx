@@ -16,6 +16,8 @@ interface TokenRow {
   token_reserve: number | null;
   volume_24h_xch: number;
   volume_7d_xch: number;
+  dexie_depth_xch: number;
+  liquidity_xch: number;
 }
 
 const VOL_FILTERS = [
@@ -39,9 +41,9 @@ function fmtUsd(xch: number | null, xchPrice: number): string {
   return `$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function fmtTvl(xchReserve: number | null, xchPrice: number): string {
-  if (!xchReserve || !xchPrice) return '—';
-  const usd = (Number(xchReserve) / 1e12) * xchPrice * 2; // both sides
+function fmtLiquidity(liquidityXch: number | null, xchPrice: number): string {
+  if (!liquidityXch || !xchPrice) return '—';
+  const usd = Number(liquidityXch) * xchPrice;
   if (usd < 1000) return `$${usd.toFixed(0)}`;
   if (usd < 1_000_000) return `$${(usd / 1000).toFixed(1)}K`;
   return `$${(usd / 1_000_000).toFixed(2)}M`;
@@ -54,7 +56,7 @@ export default function TokensScreen() {
   const [error, setError]       = useState('');
   const [search, setSearch]     = useState('');
   const [xchPrice, setXchPrice] = useState(0);
-  const [sort, setSort]         = useState<'price' | 'tvl' | 'vol24h' | 'vol7d'>('tvl');
+  const [sort, setSort]         = useState<'price' | 'liquidity' | 'vol24h' | 'vol7d'>('liquidity');
   const [minVol7d, setMinVol7d] = useState(0);
   const [hideLp, setHideLp]       = useState(true);
   const [hideUsdc, setHideUsdc]   = useState(true);
@@ -81,10 +83,10 @@ export default function TokensScreen() {
     .filter(t => !hideUsdc || !((t.name || t.short_name || '').toLowerCase().includes('usdc')))
     .filter(t => t.volume_7d_xch >= minVol7d)
     .sort((a, b) => {
-      if (sort === 'price')  return (b.current_price_xch ?? -1) - (a.current_price_xch ?? -1);
-      if (sort === 'vol24h') return (b.volume_24h_xch ?? 0) - (a.volume_24h_xch ?? 0);
-      if (sort === 'vol7d')  return (b.volume_7d_xch  ?? 0) - (a.volume_7d_xch  ?? 0);
-      return (Number(b.xch_reserve ?? 0)) - (Number(a.xch_reserve ?? 0));
+      if (sort === 'price')     return (b.current_price_xch ?? -1) - (a.current_price_xch ?? -1);
+      if (sort === 'vol24h')    return (b.volume_24h_xch ?? 0) - (a.volume_24h_xch ?? 0);
+      if (sort === 'vol7d')     return (b.volume_7d_xch  ?? 0) - (a.volume_7d_xch  ?? 0);
+      return (b.liquidity_xch ?? 0) - (a.liquidity_xch ?? 0);
     });
 
   return (
@@ -105,7 +107,7 @@ export default function TokensScreen() {
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginRight: 2 }}>Sort:</span>
-            {([['tvl','TVL'],['price','Price'],['vol24h','24h Vol'],['vol7d','7d Vol']] as const).map(([s, label]) => (
+            {([['liquidity','Liquidity'],['price','Price'],['vol24h','24h Vol'],['vol7d','7d Vol']] as const).map(([s, label]) => (
               <button key={s} onClick={() => setSort(s)}
                 style={{ padding: '6px 12px', borderRadius: 'var(--radius)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                   background: sort === s ? 'var(--accent)' : 'var(--bg-card)',
@@ -157,7 +159,7 @@ export default function TokensScreen() {
                       <th style={{ padding: '10px 12px' }}>Token</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (USD)</th>
-                      <th style={{ padding: '10px 12px', textAlign: 'right' }}>TVL</th>
+                      <th style={{ padding: '10px 12px', textAlign: 'right' }}>Liquidity</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>24h Volume</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>7d Volume</th>
                     </tr>
@@ -189,7 +191,7 @@ export default function TokensScreen() {
                           {fmtUsd(t.current_price_xch, xchPrice)}
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-secondary)' }}>
-                          {fmtTvl(t.xch_reserve, xchPrice)}
+                          {fmtLiquidity(t.liquidity_xch, xchPrice)}
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-secondary)' }}>
                           {t.volume_24h_xch > 0 ? `${fmtXch(t.volume_24h_xch, 2)} XCH` : '—'}

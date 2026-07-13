@@ -2140,22 +2140,34 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const assetIds = (tokens || []).map(t => t.asset_id);
 
-    let vol24h = {}, vol7d = {};
+    let vol24h = {}, vol7d = {}, dexieDepth = {};
     if (assetIds.length) {
-      const { data: volumes, error: volErr } = await supabase.rpc('get_token_volumes', {
-        asset_ids: assetIds,
-        since_7d:  since7d,
-        since_24h: since24h,
-      });
-      if (volErr) console.error('[tokens] volume rpc error:', volErr.message);
-      for (const v of volumes || []) {
+      const [volResult, offersResult] = await Promise.all([
+        supabase.rpc('get_token_volumes', {
+          asset_ids: assetIds,
+          since_7d:  since7d,
+          since_24h: since24h,
+        }),
+        supabase.from('cat_offers')
+          .select('asset_id, volume_xch')
+          .in('asset_id', assetIds)
+          .eq('status', 'open')
+          .not('volume_xch', 'is', null),
+      ]);
+      if (volResult.error) console.error('[tokens] volume rpc error:', volResult.error.message);
+      for (const v of volResult.data || []) {
         vol7d[v.asset_id]  = Number(v.vol_7d);
         vol24h[v.asset_id] = Number(v.vol_24h);
+      }
+      for (const o of offersResult.data || []) {
+        dexieDepth[o.asset_id] = (dexieDepth[o.asset_id] || 0) + Number(o.volume_xch || 0);
       }
     }
 
     const result = (tokens || []).map(t => {
       const pair = Array.isArray(t.tibet_pairs) ? t.tibet_pairs[0] : t.tibet_pairs;
+      const tibetTvl    = pair?.xch_reserve ? (Number(pair.xch_reserve) / 1e12) * 2 : 0;
+      const dexieXch    = dexieDepth[t.asset_id] || 0;
       return {
         asset_id:          t.asset_id,
         name:              t.name,
@@ -2167,6 +2179,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         token_reserve:     pair?.token_reserve ?? null,
         volume_24h_xch:    vol24h[t.asset_id] || 0,
         volume_7d_xch:     vol7d[t.asset_id]  || 0,
+        dexie_depth_xch:   dexieXch,
+        liquidity_xch:     tibetTvl + dexieXch,
       };
     });
     cacheSet(cacheKey, result, 90_000); // 90 seconds
