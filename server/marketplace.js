@@ -1167,11 +1167,11 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     try {
       const requestedAddress = (req.body?.address || '').toLowerCase().trim();
 
-      // If an address is provided and PROFILE_OWNER_ADDRESS is configured,
-      // only return wallet NFTs when the request is for the owner's address.
-      // This prevents a visitor from accidentally loading the operator's wallet
-      // into someone else's profile view.
-      if (requestedAddress && PROFILE_OWNER_ADDRESS && requestedAddress !== PROFILE_OWNER_ADDRESS) {
+      // Only serve wallet-daemon NFTs for the configured operator address.
+      // Without PROFILE_OWNER_ADDRESS, skip sync entirely — returning the operator's
+      // nft_ids to arbitrary visitors caused all users to see the operator's NFTs
+      // (the profile endpoint fetches by nft_id with no ownership check).
+      if (!PROFILE_OWNER_ADDRESS || !requestedAddress || requestedAddress !== PROFILE_OWNER_ADDRESS) {
         return res.json({ synced: 0, total: 0, nft_ids: [] });
       }
 
