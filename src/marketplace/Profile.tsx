@@ -6,7 +6,6 @@ import CartDrawer from './CartDrawer';
 import { useCart } from './CartContext';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
-const PROXY_URL = 'https://wiznerd.fun/proxy';
 
 const EVENT_COLOR: Record<string, string> = {
   sale: '#4ade80', transfer: '#22d3ee', listing: '#f97316',
@@ -76,7 +75,11 @@ function shortAddr(addr: string) {
 }
 
 function formatXch(mojo: number) {
-  return (mojo / 1e12).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const v = mojo / 1e12;
+  if (v === 0) return '0';
+  if (v < 0.0001) return v.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+  if (v < 1) return v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+  return v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 
@@ -175,28 +178,11 @@ export default function ProfilePage() {
           }
         }),
 
-      (() => {
-        // Only show balance for own profile; use stored puzzle hash to avoid bech32 decode
-        try {
-          const ownAddress = localStorage.getItem('chia_primary_address') || '';
-          const ownPuzzleHash = localStorage.getItem('chia_primary_puzzle_hash') || '';
-          if (!ownPuzzleHash || address.toLowerCase() !== ownAddress.toLowerCase()) return Promise.resolve();
-          const ph = ownPuzzleHash.startsWith('0x') ? ownPuzzleHash : `0x${ownPuzzleHash}`;
-          return fetch(`${PROXY_URL}/get_coin_records_by_puzzle_hashes`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ puzzle_hashes: [ph], include_spent_coins: false }),
-            signal: AbortSignal.timeout(8000),
-          }).then(r => r.ok ? r.json() : null)
-            .then(d => {
-              if (!d?.coin_records) return;
-              const total = (d.coin_records as { coin: { amount: number } }[])
-                .reduce((s, c) => s + Number(c.coin.amount), 0);
-              setXchMojo(total);
-            })
-            .catch(() => {});
-        } catch { return Promise.resolve(); }
-      })(),
+      fetch(`${API_URL}/api/xch-balance?address=${encodeURIComponent(address)}`, {
+        signal: AbortSignal.timeout(10000),
+      }).then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.balance_mojo != null) setXchMojo(Number(d.balance_mojo)); })
+        .catch(() => {}),
     ])
       .catch(() => {})
       .finally(() => setLoading(false));

@@ -2299,6 +2299,37 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     res.json(data || []);
   });
 
+  // ── XCH balance by address (full-node coin lookup) ───────────────────────────
+
+  app.get('/api/xch-balance', async (req, res) => {
+    const address = String(req.query.address || '').trim();
+    if (!address) return res.status(400).json({ error: 'address required' });
+
+    let puzzleHex;
+    try {
+      const { bech32m: bm } = require('bech32');
+      const d = bm.decode(address, 90);
+      puzzleHex = Buffer.from(bm.fromWords(d.words)).toString('hex');
+    } catch {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+
+    try {
+      const nodeRes = await fetch(`${PROXY}/get_coin_records_by_puzzle_hashes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ puzzle_hashes: [`0x${puzzleHex}`], include_spent_coins: false }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!nodeRes.ok) return res.status(502).json({ error: 'Node error' });
+      const data = await nodeRes.json();
+      const total = (data.coin_records || []).reduce((s, c) => s + Number(c.coin.amount), 0);
+      res.json({ balance_mojo: total });
+    } catch (e) {
+      res.status(502).json({ error: e.message });
+    }
+  });
+
   // ── Floor price history (for collection chart) ────────────────────────────────
 
   app.get('/api/marketplace/:id/floor-history', async (req, res) => {
