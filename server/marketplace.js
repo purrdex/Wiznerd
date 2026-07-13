@@ -2153,13 +2153,10 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
           .in('asset_id', assetIds)
           .eq('status', 'open')
           .not('volume_xch', 'is', null),
-        supabase.from('cat_ohlcv')
-          .select('asset_id, close')
-          .in('asset_id', assetIds)
-          .eq('timeframe', '1d')
-          .gte('bucket_start', since7d)
-          .order('bucket_start', { ascending: true })
-          .limit(assetIds.length * 8), // max 8 candles per token
+        supabase.rpc('get_token_sparklines', {
+          p_asset_ids: assetIds,
+          p_since:     since7d,
+        }),
       ]);
       if (volResult.error) console.error('[tokens] volume rpc error:', volResult.error.message);
       for (const v of volResult.data || []) {
@@ -2169,9 +2166,9 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       for (const o of offersResult.data || []) {
         dexieDepth[o.asset_id] = (dexieDepth[o.asset_id] || 0) + Number(o.volume_xch || 0);
       }
-      for (const c of sparkResult.data || []) {
-        if (!sparklines[c.asset_id]) sparklines[c.asset_id] = [];
-        sparklines[c.asset_id].push(Number(c.close));
+      for (const r of sparkResult.data || []) {
+        if (!sparklines[r.asset_id]) sparklines[r.asset_id] = [];
+        sparklines[r.asset_id].push(Number(r.close_price));
       }
     }
 

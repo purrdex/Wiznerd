@@ -605,6 +605,104 @@ async function syncAllOffers(supabase) {
   if (total > 0) console.log(`[token-idx] offers: synced ${total} open offers across ${tokens.length} tokens`);
 }
 
+// ── Dexie completed-offer backfill ────────────────────────────────────────────
+// Inserts completed Dexie offers from the past 7 days into cat_transfers so
+// sparklines have data even before on-chain events are detected. Runs once at
+// startup; the UNIQUE(offer_id) constraint prevents duplicates on re-runs.
+
+const BACKFILL_DAYS = 7;
+
+async function backfillCompletedOffersForToken(supabase, assetId) {
+  const since = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
+  let page = 1, inserted = 0;
+
+  while (true) {
+    let data;
+    try {
+      const url = `${DEXIE_API}/offers?offered_or_requested=${assetId}&status=4&page_size=50&page=${page}`;
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) break;
+      data = await res.json();
+    } catch { break; }
+
+    const offers = data.offers || [];
+    if (!offers.length) break;
+
+    const rows = [];
+    let hitOld = false;
+    for (const offer of offers) {
+      const completedAt = offer.date_completed || offer.date_found;
+      if (!completedAt || completedAt < since) { hitOld = true; break; }
+      if (!offer.id) continue;
+
+      const off = offer.offered?.[0];
+      const req = offer.requested?.[0];
+      if (!off || !req) continue;
+
+      const offId = (off.id || '').toLowerCase();
+      const reqId = (req.id || '').toLowerCase();
+      const aLow  = assetId.toLowerCase();
+
+      let priceXch, amountTokens, volumeXch;
+
+      if (offId === 'xch' && reqId === aLow) {
+        amountTokens = Number(req.amount ?? 0);
+        volumeXch    = Number(off.amount ?? 0);
+        priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
+        if (offer.price != null) {
+          const raw = Number(offer.price);
+          priceXch = raw > 0 ? 1 / raw : null;
+        }
+      } else if (offId === aLow && reqId === 'xch') {
+        amountTokens = Number(off.amount ?? 0);
+        volumeXch    = Number(req.amount ?? 0);
+        priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
+        if (offer.price != null) priceXch = Number(offer.price);
+      } else {
+        continue; // not an XCH↔CAT pair
+      }
+
+      if (!priceXch || priceXch <= 0) continue;
+
+      rows.push({
+        offer_id:      offer.id,
+        asset_id:      assetId,
+        price_xch:     priceXch,
+        amount_tokens: amountTokens / 1000,
+        volume_xch:    volumeXch    / 1e12,
+        transferred_at: completedAt,
+        source:        'dexie',
+        event_type:    'trade',
+      });
+    }
+
+    if (rows.length) {
+      const { error } = await supabase.from('cat_transfers')
+        .upsert(rows, { onConflict: 'offer_id', ignoreDuplicates: true });
+      if (!error) inserted += rows.length;
+    }
+
+    if (hitOld || offers.length < 50) break;
+    page++;
+  }
+
+  return inserted;
+}
+
+async function backfillCompletedOffers(supabase) {
+  const { data: tokens } = await supabase.from('cat_tokens').select('asset_id');
+  if (!tokens?.length) return;
+
+  let total = 0;
+  for (const { asset_id } of tokens) {
+    try {
+      total += await backfillCompletedOffersForToken(supabase, asset_id);
+    } catch { /* skip */ }
+    await sleep(300);
+  }
+  if (total > 0) console.log(`[token-idx] backfill: ${total} completed offers → cat_transfers`);
+}
+
 // ── Main poll loop ────────────────────────────────────────────────────────────
 
 let _supabase;
@@ -671,6 +769,9 @@ async function start(supabase) {
 
   // Start Dexie offer sync
   syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers init error:', e.message));
+
+  // Backfill last 7 days of completed Dexie offers → cat_transfers (for sparklines)
+  backfillCompletedOffers(supabase).catch(e => console.warn('[token-idx] backfill error:', e.message));
   const offerTimer = setInterval(() => {
     syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers error:', e.message));
   }, OFFER_POLL_MS);
@@ -678,7 +779,7 @@ async function start(supabase) {
   return { blockTimer, offerTimer };
 }
 
-module.exports = { start, loadPairs, processBlock, syncAllOffers };
+module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers };
 
 // ── Standalone ────────────────────────────────────────────────────────────────
 
