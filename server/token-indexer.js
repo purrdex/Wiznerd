@@ -124,40 +124,40 @@ async function bfsInitAllPairs(supabase) {
   while (frontier.size > 0) {
     round++;
 
-    // Batch the frontier into chunks to avoid oversized RPC calls
+    // Split frontier into chunks and fetch all in parallel
     const entries = [...frontier.entries()];
     const byParent = new Map(); // parent_hex → coin_record
 
+    const chunks = [];
     for (let i = 0; i < entries.length; i += BFS_BATCH) {
-      const chunk = entries.slice(i, i + BFS_BATCH);
-      // parent IDs are already hex-normalized; Chia node accepts with or without 0x
+      chunks.push(entries.slice(i, i + BFS_BATCH));
+    }
+
+    const fetchChunk = async (chunk, chunkIdx) => {
       const parentIds = chunk.map(([, p]) => p);
       try {
         const resp = await nodeRpc('get_coin_records_by_parent_ids', {
           parent_ids: parentIds,
           include_spent_coins: true,
         });
-        if (round === 1 && i === 0) {
-          // Diagnostic: log raw response shape on first call
-          const keys = Object.keys(resp || {});
+        if (round === 1 && chunkIdx === 0) {
           const count = resp?.coin_records?.length ?? 'undefined';
-          console.log(`[token-idx] BFS round 1 response: keys=[${keys}] coin_records=${count}`);
-          if (!resp?.success && resp?.error) console.warn(`[token-idx] node error: ${resp.error}`);
+          console.log(`[token-idx] BFS round 1 response: keys=[${Object.keys(resp || {})}] coin_records=${count}`);
         }
         if (!resp?.success && resp?.error) {
           console.warn(`[token-idx] BFS RPC error (round ${round}): ${resp.error}`);
-          break;
+          return;
         }
         for (const cr of (resp?.coin_records || [])) {
-          if (BigInt(cr.coin.amount) !== 1n) continue; // singletons only
-          const parent = hexNorm(cr.coin.parent_coin_info);
-          byParent.set(parent, cr);
+          if (BigInt(cr.coin.amount) !== 1n) continue;
+          byParent.set(hexNorm(cr.coin.parent_coin_info), cr);
         }
       } catch (e) {
-        console.warn(`[token-idx] BFS round ${round} RPC exception: ${e.message}`);
-        await sleep(2000);
+        console.warn(`[token-idx] BFS round ${round} chunk ${chunkIdx} exception: ${e.message}`);
       }
-    }
+    };
+
+    await Promise.all(chunks.map((chunk, idx) => fetchChunk(chunk, idx)));
 
     const nextFrontier = new Map();
     const dbUpdates = [];
