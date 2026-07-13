@@ -2,6 +2,18 @@
 
 const PROXY = process.env.PROXY_URL || 'http://localhost:3001';
 
+// ── Generic TTL cache ─────────────────────────────────────────────────────────
+const _cache = new Map();
+function cacheGet(key) {
+  const e = _cache.get(key);
+  if (e && Date.now() < e.exp) return e.val;
+  _cache.delete(key);
+  return null;
+}
+function cacheSet(key, val, ttlMs) {
+  _cache.set(key, { val, exp: Date.now() + ttlMs });
+}
+
 // In-memory traits cache (30 min when filterable, 2 min when not — backfill may still be running)
 const traitsCache = new Map();
 const TRAITS_TTL = 30 * 60 * 1000;
@@ -2103,6 +2115,10 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
     const search = (req.query.q || '').trim().toLowerCase();
 
+    const cacheKey = `tokens:${search}:${offset}:${limit}`;
+    const hit = cacheGet(cacheKey);
+    if (hit) return res.json(hit);
+
     // Join cat_tokens with tibet_pairs for price + reserves
     let q = supabase
       .from('cat_tokens')
@@ -2138,7 +2154,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       }
     }
 
-    res.json((tokens || []).map(t => {
+    const result = (tokens || []).map(t => {
       const pair = Array.isArray(t.tibet_pairs) ? t.tibet_pairs[0] : t.tibet_pairs;
       return {
         asset_id:          t.asset_id,
@@ -2152,7 +2168,9 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         volume_24h_xch:    vol24h[t.asset_id] || 0,
         volume_7d_xch:     vol7d[t.asset_id]  || 0,
       };
-    }));
+    });
+    cacheSet(cacheKey, result, 90_000); // 90 seconds
+    res.json(result);
   });
 
   // ── Token detail ──────────────────────────────────────────────────────────────

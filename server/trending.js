@@ -74,7 +74,7 @@ async function recalculate(supabase) {
     const { data, error } = await supabase
       .from('nft_offers')
       .select('nft_id')
-      .eq('status', 'active')
+      .eq('status', 'open')
       .eq('offer_type', 'ask')
       .range(from, from + 999);
     if (error) { console.error('[trending] offers fetch error:', error.message); break; }
@@ -125,21 +125,28 @@ async function recalculate(supabase) {
   }
 
   // ── 5. Compute scores ────────────────────────────────────────────────────────
-  const updates = collections.map(col => {
-    const id   = col.collection_id;
-    const s    = xferStats.get(id) || { vol24h: 0, vol7d: 0, sales24h: 0, sales7d: 0 };
-    const mint = mintCounts.get(id) || 0;
-    return {
-      collection_id:   id,
-      trending_score:  computeScore(s.vol24h, s.vol7d, s.sales24h, s.sales7d, mint, col.floor_price_mojo),
-      volume_24h_mojo: s.vol24h,
-      volume_7d_mojo:  s.vol7d,
-      sales_24h:       s.sales24h,
-      sales_7d:        s.sales7d,
-      mint_24h:        mint,
-      listed_count:    listedCounts.get(id) || 0,
-    };
-  });
+  // Only update collections that have activity in our DB — this prevents zeroing
+  // out volume/sales stats that were populated from external sources (MintGarden etc.)
+  // for collections our nft_transfers table doesn't yet cover.
+  const activeCollectionIds = new Set([...xferStats.keys(), ...mintCounts.keys()]);
+
+  const updates = collections
+    .filter(col => activeCollectionIds.has(col.collection_id) || listedCounts.has(col.collection_id))
+    .map(col => {
+      const id   = col.collection_id;
+      const s    = xferStats.get(id) || { vol24h: 0, vol7d: 0, sales24h: 0, sales7d: 0 };
+      const mint = mintCounts.get(id) || 0;
+      return {
+        collection_id:   id,
+        trending_score:  computeScore(s.vol24h, s.vol7d, s.sales24h, s.sales7d, mint, col.floor_price_mojo),
+        volume_24h_mojo: s.vol24h,
+        volume_7d_mojo:  s.vol7d,
+        sales_24h:       s.sales24h,
+        sales_7d:        s.sales7d,
+        mint_24h:        mint,
+        listed_count:    listedCounts.get(id) || 0,
+      };
+    });
 
   // ── 6. Batch upsert ──────────────────────────────────────────────────────────
   let written = 0;

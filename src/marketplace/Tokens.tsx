@@ -56,7 +56,8 @@ export default function TokensScreen() {
   const [xchPrice, setXchPrice] = useState(0);
   const [sort, setSort]         = useState<'price' | 'tvl' | 'vol24h' | 'vol7d'>('tvl');
   const [minVol7d, setMinVol7d] = useState(0);
-  const [hideLp, setHideLp]     = useState(true);
+  const [hideLp, setHideLp]       = useState(true);
+  const [hideUsdc, setHideUsdc]   = useState(true);
 
   useEffect(() => {
     const cached = parseFloat(localStorage.getItem(XCH_USD_KEY) || '0');
@@ -76,7 +77,8 @@ export default function TokensScreen() {
   }, [search]);
 
   const sorted = [...tokens]
-    .filter(t => !hideLp || !((t.name || t.short_name || '').toLowerCase().includes('tibetswap lp')))
+    .filter(t => !hideLp   || !((t.name || t.short_name || '').toLowerCase().includes('tibetswap lp')))
+    .filter(t => !hideUsdc || !((t.name || t.short_name || '').toLowerCase().includes('usdc')))
     .filter(t => t.volume_7d_xch >= minVol7d)
     .sort((a, b) => {
       if (sort === 'price')  return (b.current_price_xch ?? -1) - (a.current_price_xch ?? -1);
@@ -124,9 +126,13 @@ export default function TokensScreen() {
             <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px' }} />
             <button onClick={() => setHideLp(v => !v)}
               style={{ padding: '6px 12px', borderRadius: 'var(--radius)', border: `1px solid ${hideLp ? 'var(--accent)' : 'transparent'}`, cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                background: hideLp ? 'var(--bg-card)' : 'var(--bg-card)',
-                color: hideLp ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                background: 'var(--bg-card)', color: hideLp ? 'var(--accent)' : 'var(--text-secondary)' }}>
               {hideLp ? 'Hide LP' : 'Show LP'}
+            </button>
+            <button onClick={() => setHideUsdc(v => !v)}
+              style={{ padding: '6px 12px', borderRadius: 'var(--radius)', border: `1px solid ${hideUsdc ? 'var(--accent)' : 'transparent'}`, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                background: 'var(--bg-card)', color: hideUsdc ? 'var(--accent)' : 'var(--text-secondary)' }}>
+              {hideUsdc ? 'Hide USDC' : 'Show USDC'}
             </button>
           </div>
         </div>
