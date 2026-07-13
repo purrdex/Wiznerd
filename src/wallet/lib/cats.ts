@@ -8,11 +8,7 @@ import { bytesToHex, hexToBytes } from './utils';
 export const CAT_MOD_HASH = '37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a';
 // CAT v1 (original, sunset — some legacy tokens may still exist on-chain)
 const CAT1_MOD_HASH = '72dec062874cd4d3aab892a0906688a1ae412b0109982e1797a170add88bdcdc';
-const PROXY_URL_KEY = 'chia_proxy_url';
-const DEFAULT_PROXY = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
-function proxyBase(): string {
-  try { return localStorage.getItem(PROXY_URL_KEY) || DEFAULT_PROXY; } catch { return DEFAULT_PROXY; }
-}
+function proxyBase(): string { return 'https://wiznerd.fun/proxy'; }
 
 export interface CatCoin {
   coinId: string;

@@ -6,7 +6,7 @@ import CartDrawer from './CartDrawer';
 import { useCart } from './CartContext';
 
 const API_URL   = (import.meta.env.VITE_API_URL   as string | undefined) || 'http://localhost:3002';
-const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
+const PROXY_URL = 'https://wiznerd.fun/proxy';
 
 const EVENT_COLOR: Record<string, string> = {
   sale: '#4ade80', transfer: '#22d3ee', listing: '#f97316',

@@ -5,7 +5,7 @@ import './marketplace.css';
 import { supabase } from '../lib/supabase';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3002';
-const PROXY_URL = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
+const PROXY_URL = 'https://wiznerd.fun/proxy';
 
 interface Project {
   id: string; name: string; symbol: string; total_supply: number;

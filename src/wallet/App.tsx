@@ -412,7 +412,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
       setCatBalances(cats);
       onCatBalancesChange(cats);
     } catch (e: any) {
-      if (!hasLoadedRef.current) setProxyError('Cannot reach proxy. Is it running on localhost:3001?');
+      if (!hasLoadedRef.current) setProxyError('Cannot reach proxy server. Check your internet connection.');
     }
     finally { setLoading(false); }
   }, [nodeUrl, wallet.addresses]);
@@ -687,7 +687,7 @@ function passwordStrength(pw: string): { label: string; color: string } | null {
   return { label: 'Strong', color: '#f97316' };
 }
 
-function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, currentMnemonic, proxyUrl, onProxyChange, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
+function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onSwitchWallet, onRenameWallet, onAddWallet, walletList, activeWalletId, addressBook, onAddEntry, onRemoveEntry, hideSmallBalances, onToggleHideSmall, currentMnemonic, idleLockMinutes, onIdleLockChange, sessionKey: _sessionKey, onChangePassword }:
   { nodeUrl: string; nodeStatus: NodeStatus|null; onNodeChange:(url:string)=>void;
     onRemoveWallet:(id:string)=>void; onSwitchWallet:(id:string)=>void;
     onRenameWallet:(id:string,name:string)=>void; onAddWallet:()=>void;
@@ -695,7 +695,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
     addressBook: AddressEntry[]; onAddEntry:(label:string,address:string)=>void; onRemoveEntry:(id:string)=>void;
     hideSmallBalances: boolean; onToggleHideSmall:(v:boolean)=>void;
     currentMnemonic: string;
-    proxyUrl: string; onProxyChange:(url:string)=>void;
     idleLockMinutes: number; onIdleLockChange:(minutes:number)=>void;
     sessionKey: CryptoKey|null; onChangePassword:(newKey:CryptoKey,updatedWallets:WalletEntry[])=>void;
   }) {
@@ -712,17 +711,12 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
   const [newAssetId, setNewAssetId] = useState('');
   const [assetIdError, setAssetIdError] = useState('');
   const [showMnemonic, setShowMnemonic] = useState(false);
-  const [proxyInput, setProxyInput] = useState(proxyUrl);
-  const [proxyTesting, setProxyTesting] = useState(false);
-  const [proxyTestResult, setProxyTestResult] = useState('');
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [pwError, setPwError] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
   const [pwSuccess, setPwSuccess] = useState(false);
-
-  useEffect(() => { setProxyInput(proxyUrl); }, [proxyUrl]);
 
   useEffect(() => {
     setInput(nodeUrl || '');
@@ -768,20 +762,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
         setPwError(`Failed: ${msg}`);
       }
     } finally { setPwBusy(false); }
-  };
-
-  const handleTestProxy = async () => {
-    const url = proxyInput.trim();
-    if (!url) { setProxyTestResult('Enter a proxy URL first'); return; }
-    setProxyTesting(true); setProxyTestResult('');
-    try {
-      const start = Date.now();
-      const res = await fetch(`${url}/price/xch`, { signal: AbortSignal.timeout(5000) });
-      const ms = Date.now() - start;
-      setProxyTestResult(res.ok ? `✓ Reachable (${ms}ms)` : `✗ HTTP ${res.status}`);
-    } catch (e: any) {
-      setProxyTestResult(`✗ ${(e.message || 'Unreachable').slice(0, 60)}`);
-    } finally { setProxyTesting(false); }
   };
 
   const handleTest = async () => {
@@ -954,7 +934,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           value={PUBLIC_NODES.find(n => n.url === input)?.url ?? (input ? '' : '__local__')}
           onChange={e => {
             const val = e.target.value;
-            if (val === '__local__') { setInput(proxyUrl); setTestResult(null); }
+            if (val === '__local__') { setInput(''); setTestResult(null); }
             else if (val) { setInput(val); setTestResult(null); }
           }}
           style={{padding:'9px 12px',background:'var(--bg-input)',border:'1px solid var(--border)',
@@ -963,7 +943,7 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
           {PUBLIC_NODES.map(n => (
             <option key={n.url} value={n.url}>{n.label}</option>
           ))}
-          <option value="__local__">Local proxy (default)</option>
+          <option value="__local__">Reset to default</option>
         </select>
         <input type="url" value={input} onChange={e=>{setInput(e.target.value);setTestResult(null);}} placeholder="https://node.example.com:8555"/>
         <div style={{display:'flex',gap:8}}>
@@ -987,37 +967,6 @@ function SettingsScreen({ nodeUrl, nodeStatus, onNodeChange, onRemoveWallet, onS
             {nodeStatus.trusted
               ? `✓ Synced · Block #${nodeStatus.peakHeight.toLocaleString()} · ${nodeStatus.latencyMs}ms`
               : `✗ ${nodeStatus.error}`}
-          </div>
-        )}
-      </div>
-
-      <div className="section-label mt-16">Proxy</div>
-      <div className="node-config">
-        <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6}}>
-          URL of the Wiznerd proxy server. Change this when deploying to a custom host.
-        </div>
-        {window.location.protocol === 'https:' && proxyInput.startsWith('http:') && (
-          <div style={{fontSize:12,color:'var(--warn)',background:'rgba(224,123,58,0.08)',
-            border:'1px solid rgba(224,123,58,0.4)',borderRadius:'var(--radius-sm)',padding:'8px 12px'}}>
-            ⚠️ Mixed content — your app is on HTTPS but the proxy URL is HTTP. Browsers will block these requests. Use an HTTPS proxy URL.
-          </div>
-        )}
-        <input type="url" value={proxyInput}
-          onChange={e=>{ setProxyInput(e.target.value); setProxyTestResult(''); }}
-          placeholder="http://localhost:3001"/>
-        <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-secondary" style={{flex:1,padding:'10px'}}
-            onClick={handleTestProxy} disabled={proxyTesting}>
-            {proxyTesting ? 'Testing…' : 'Test proxy'}
-          </button>
-          <button className="btn btn-primary" style={{flex:1,padding:'10px'}}
-            onClick={()=>{ onProxyChange(proxyInput); setProxyTestResult(''); }}>
-            Save
-          </button>
-        </div>
-        {proxyTestResult && (
-          <div style={{fontSize:12,color:proxyTestResult.startsWith('✓')?'var(--accent)':'var(--error)'}}>
-            {proxyTestResult}
           </div>
         )}
       </div>
@@ -1166,10 +1115,11 @@ function TokenAvatar({ ticker, logoUrl }: { ticker: string; logoUrl?: string }) 
 }
 
 
-const PROXY_URL_KEY = 'chia_proxy_url';
-const _DEFAULT_PROXY = (import.meta.env.VITE_PROXY_URL as string | undefined) || 'http://localhost:3001';
+const WALLET_PROXY_URL = 'https://wiznerd.fun/proxy';
 let WALLET_PROXY = (() => {
-  try { return localStorage.getItem(PROXY_URL_KEY) || _DEFAULT_PROXY; } catch { return _DEFAULT_PROXY; }
+  // Migrate away from any locally stored proxy URL — always use the hosted proxy.
+  try { localStorage.removeItem('chia_proxy_url'); } catch {}
+  return WALLET_PROXY_URL;
 })();
 
 function serializeJSON(v: unknown): string {
@@ -2940,9 +2890,6 @@ export default function App() {
   });
   const [hideSmallBalances, setHideSmallBalances] = useState(() => localStorage.getItem(HIDE_SMALL_KEY) === '1');
   const [catBalances, setCatBalances] = useState<CatBalance[]>([]);
-  const [proxyUrl, setProxyUrl] = useState(() => {
-    try { return localStorage.getItem(PROXY_URL_KEY) || _DEFAULT_PROXY; } catch { return _DEFAULT_PROXY; }
-  });
   const [idleLockMinutes, setIdleLockMinutes] = useState(() => {
     const saved = localStorage.getItem(IDLE_LOCK_KEY);
     return saved ? Number(saved) : 0;
@@ -3112,13 +3059,6 @@ export default function App() {
     setNodeUrl(url); localStorage.setItem(NODE_KEY, url);
   };
 
-  const handleProxyChange = (url: string) => {
-    const resolved = url.trim() || _DEFAULT_PROXY;
-    WALLET_PROXY = resolved;
-    setProxyUrl(resolved);
-    localStorage.setItem(PROXY_URL_KEY, resolved);
-  };
-
   const handleIdleLockChange = (minutes: number) => {
     setIdleLockMinutes(minutes);
     localStorage.setItem(IDLE_LOCK_KEY, String(minutes));
@@ -3285,7 +3225,7 @@ export default function App() {
           {isWallet && screen==='nfts'     && <NftsScreen/>}
           {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
           {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
-          {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} proxyUrl={proxyUrl} onProxyChange={handleProxyChange} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
+          {isWallet && screen==='settings' && <SettingsScreen nodeUrl={nodeUrl} nodeStatus={nodeStatus} onNodeChange={handleNodeChange} onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}
         </div>
       </div>
 

@@ -64,7 +64,7 @@ export default function TokensScreen() {
   useEffect(() => {
     const cached = parseFloat(localStorage.getItem(XCH_USD_KEY) || '0');
     if (cached) setXchPrice(cached);
-    fetch('/proxy/price/xch', { signal: AbortSignal.timeout(5000) })
+    fetch('https://wiznerd.fun/proxy/price/xch', { signal: AbortSignal.timeout(5000) })
       .then(r => r.json()).then(d => { if (d.price) { setXchPrice(d.price); localStorage.setItem(XCH_USD_KEY, String(d.price)); } })
       .catch(() => {});
   }, []);
