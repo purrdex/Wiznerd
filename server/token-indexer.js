@@ -121,6 +121,13 @@ async function bfsInitAllPairs(supabase) {
   const total = frontier.size;
   console.log(`[token-idx] BFS bootstrap: walking ${total} pair chains…`);
 
+  // Heartbeat: print progress every 30s regardless of round count
+  const heartbeat = setInterval(() => {
+    if (frontier.size > 0) {
+      console.log(`[token-idx] bootstrap heartbeat — round ${round}, ${found}/${total} found, ${frontier.size} remaining`);
+    }
+  }, 30_000);
+
   while (frontier.size > 0) {
     round++;
 
@@ -195,15 +202,16 @@ async function bfsInitAllPairs(supabase) {
     // Remove entries that were found
     for (const { launcher_id } of dbUpdates) frontier.delete(launcher_id);
 
-    if (found > 0 && (found % 50 === 0 || frontier.size === 0)) {
+    if (dbUpdates.length > 0 || frontier.size === 0) {
       console.log(`[token-idx] bootstrap: ${found}/${total} found after ${round} rounds, ${frontier.size} remaining`);
-    } else if (round % 200 === 0) {
+    } else if (round % 100 === 0) {
       console.log(`[token-idx] bootstrap round ${round}: ${found}/${total} found, ${frontier.size} remaining`);
     }
 
     if (frontier.size > 0) await sleep(BFS_DELAY_MS);
   }
 
+  clearInterval(heartbeat);
   console.log(`[token-idx] bootstrap complete: ${found}/${total} pair coin IDs found in ${round} rounds`);
 }
 
