@@ -2140,9 +2140,9 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
     const assetIds = (tokens || []).map(t => t.asset_id);
 
-    let vol24h = {}, vol7d = {}, dexieDepth = {};
+    let vol24h = {}, vol7d = {}, dexieDepth = {}, sparklines = {};
     if (assetIds.length) {
-      const [volResult, offersResult] = await Promise.all([
+      const [volResult, offersResult, sparkResult] = await Promise.all([
         supabase.rpc('get_token_volumes', {
           asset_ids: assetIds,
           since_7d:  since7d,
@@ -2153,6 +2153,13 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
           .in('asset_id', assetIds)
           .eq('status', 'open')
           .not('volume_xch', 'is', null),
+        supabase.from('cat_ohlcv')
+          .select('asset_id, close')
+          .in('asset_id', assetIds)
+          .eq('timeframe', '1d')
+          .gte('bucket_start', since7d)
+          .order('bucket_start', { ascending: true })
+          .limit(assetIds.length * 8), // max 8 candles per token
       ]);
       if (volResult.error) console.error('[tokens] volume rpc error:', volResult.error.message);
       for (const v of volResult.data || []) {
@@ -2161,6 +2168,10 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       }
       for (const o of offersResult.data || []) {
         dexieDepth[o.asset_id] = (dexieDepth[o.asset_id] || 0) + Number(o.volume_xch || 0);
+      }
+      for (const c of sparkResult.data || []) {
+        if (!sparklines[c.asset_id]) sparklines[c.asset_id] = [];
+        sparklines[c.asset_id].push(Number(c.close));
       }
     }
 
@@ -2181,6 +2192,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         volume_7d_xch:     vol7d[t.asset_id]  || 0,
         dexie_depth_xch:   dexieXch,
         liquidity_xch:     tibetTvl + dexieXch,
+        sparkline_7d:      sparklines[t.asset_id] || [],
       };
     });
     cacheSet(cacheKey, result, 90_000); // 90 seconds

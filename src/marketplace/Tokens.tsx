@@ -18,6 +18,7 @@ interface TokenRow {
   volume_7d_xch: number;
   dexie_depth_xch: number;
   liquidity_xch: number;
+  sparkline_7d: number[];
 }
 
 const VOL_FILTERS = [
@@ -47,6 +48,27 @@ function fmtLiquidity(liquidityXch: number | null, xchPrice: number): string {
   if (usd < 1000) return `$${usd.toFixed(0)}`;
   if (usd < 1_000_000) return `$${(usd / 1000).toFixed(1)}K`;
   return `$${(usd / 1_000_000).toFixed(2)}M`;
+}
+
+function Sparkline({ prices }: { prices: number[] }) {
+  if (prices.length < 2) return <span style={{ display: 'inline-block', width: 80, height: 32 }} />;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || min * 0.001 || 1;
+  const W = 80, H = 32, pad = 2;
+  const pts = prices.map((p, i) => {
+    const x = pad + (i / (prices.length - 1)) * (W - pad * 2);
+    const y = pad + ((max - p) / range) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const rising = prices[prices.length - 1] >= prices[0];
+  return (
+    <svg width={W} height={H} style={{ display: 'block', overflow: 'visible' }}>
+      <polyline points={pts} fill="none"
+        stroke={rising ? '#4ade80' : '#f87171'}
+        strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 export default function TokensScreen() {
@@ -159,6 +181,7 @@ export default function TokensScreen() {
                       <th style={{ padding: '10px 12px' }}>Token</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (USD)</th>
+                      <th style={{ padding: '10px 12px' }}>7d</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Liquidity</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>24h Volume</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>7d Volume</th>
@@ -189,6 +212,9 @@ export default function TokensScreen() {
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                           {fmtUsd(t.current_price_xch, xchPrice)}
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <Sparkline prices={t.sparkline_7d} />
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-secondary)' }}>
                           {fmtLiquidity(t.liquidity_xch, xchPrice)}
