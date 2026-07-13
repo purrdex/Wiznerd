@@ -20,7 +20,7 @@ const DEXIE_API     = 'https://api.dexie.space/v1';
 const POLL_MS       = 30_000;          // block check interval
 const BLOCK_BATCH   = 5;              // blocks per poll cycle
 const OFFER_POLL_MS = 5 * 60_000;    // Dexie open-offer sync interval
-const BFS_BATCH    = 200;             // parent_ids per RPC call during bootstrap
+const BFS_BATCH    = 50;              // parent_ids per RPC call during bootstrap
 const BFS_DELAY_MS = 50;              // ms between BFS rounds
 
 // Timeframes matching DB constraint in 026_token_indexer.sql
@@ -105,8 +105,16 @@ async function bfsInitAllPairs(supabase) {
   if (!untracked.length) return;
 
   // frontier: launcher_id → current frontier coin_id (starts as launcher_id itself)
+  // All coin IDs normalized to lowercase hex without 0x prefix.
   const frontier = new Map();
-  for (const pair of untracked) frontier.set(pair.launcher_id, pair.launcher_id);
+  for (const pair of untracked) {
+    const norm = hexNorm(pair.launcher_id); // strip 0x, lowercase
+    frontier.set(pair.launcher_id, norm);
+  }
+
+  // Log a sample to verify format
+  const sample = frontier.values().next().value;
+  console.log(`[token-idx] sample launcher_id (normalized): ${sample?.slice(0, 16)}… length=${sample?.length}`);
 
   let round = 0;
   let found = 0;
@@ -122,19 +130,31 @@ async function bfsInitAllPairs(supabase) {
 
     for (let i = 0; i < entries.length; i += BFS_BATCH) {
       const chunk = entries.slice(i, i + BFS_BATCH);
-      const parentIds = chunk.map(([, p]) => `0x${p}`);
+      // parent IDs are already hex-normalized; Chia node accepts with or without 0x
+      const parentIds = chunk.map(([, p]) => p);
       try {
-        const { coin_records } = await nodeRpc('get_coin_records_by_parent_ids', {
+        const resp = await nodeRpc('get_coin_records_by_parent_ids', {
           parent_ids: parentIds,
           include_spent_coins: true,
         });
-        for (const cr of (coin_records || [])) {
+        if (round === 1 && i === 0) {
+          // Diagnostic: log raw response shape on first call
+          const keys = Object.keys(resp || {});
+          const count = resp?.coin_records?.length ?? 'undefined';
+          console.log(`[token-idx] BFS round 1 response: keys=[${keys}] coin_records=${count}`);
+          if (!resp?.success && resp?.error) console.warn(`[token-idx] node error: ${resp.error}`);
+        }
+        if (!resp?.success && resp?.error) {
+          console.warn(`[token-idx] BFS RPC error (round ${round}): ${resp.error}`);
+          break;
+        }
+        for (const cr of (resp?.coin_records || [])) {
           if (BigInt(cr.coin.amount) !== 1n) continue; // singletons only
           const parent = hexNorm(cr.coin.parent_coin_info);
           byParent.set(parent, cr);
         }
       } catch (e) {
-        console.warn(`[token-idx] BFS round ${round} RPC error: ${e.message}`);
+        console.warn(`[token-idx] BFS round ${round} RPC exception: ${e.message}`);
         await sleep(2000);
       }
     }
@@ -143,7 +163,7 @@ async function bfsInitAllPairs(supabase) {
     const dbUpdates = [];
 
     for (const [launcherId, currentParent] of frontier) {
-      const cr = byParent.get(currentParent);
+      const cr = byParent.get(hexNorm(currentParent)); // normalize before lookup
       if (!cr) continue; // pair not yet created, or RPC miss — skip this round
 
       const cid = coinId(cr.coin);
