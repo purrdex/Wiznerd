@@ -2079,7 +2079,8 @@ function OffersScreen({ catBalances }: { catBalances: CatBalance[] }) {
   );
 }
 
-function SendScreen({ onSendSuccess, addressBook, onTxConfirmed }: {
+function SendScreen({ wallet, onSendSuccess, addressBook, onTxConfirmed }: {
+  wallet: WalletState;
   onSendSuccess: () => void;
   addressBook: AddressEntry[];
   onTxConfirmed?: (msg: string) => void;
@@ -2098,12 +2099,11 @@ function SendScreen({ onSendSuccess, addressBook, onTxConfirmed }: {
   const pollTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    walletRpc('get_wallet_balance', { wallet_id: 1 })
-      .then(d => {
-        if (d.success) { setBalance(BigInt(d.wallet_balance.spendable_balance)); setBalanceError(''); }
-      })
-      .catch(() => { setBalanceError('Cannot reach proxy. Is it running?'); });
-  }, [status]);
+    const puzzleHashes = wallet.addresses.map(a => a.puzzleHashHex);
+    getBalance(NODE_URL, puzzleHashes)
+      .then(r => { setBalance(r.totalMojo); setBalanceError(''); })
+      .catch(() => { setBalanceError('Cannot reach proxy server. Check your internet connection.'); });
+  }, [status, wallet.addresses]);
 
   useEffect(() => {
     return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current); };
@@ -2426,234 +2426,18 @@ function saveClawbacks(entries: ClawbackEntry[]) {
   try { sessionStorage.setItem(CLAWBACK_KEY, JSON.stringify(entries)); } catch {}
 }
 
-// ── NFT screen ────────────────────────────────────────────────────────────────
-
-interface WalletNft {
-  nft_coin_id: string;
-  launcher_id: string;
-  data_uris: string[];
-  metadata_uris: string[];
-  royalty_percentage: number;
-  wallet_id: number;
-  _name?: string;
-}
-
-function nftImageUrl(uris: string[]): string | null {
-  const uri = uris?.[0];
-  if (!uri) return null;
-  if (uri.startsWith('ipfs://')) return `https://gateway.pinata.cloud/ipfs/${uri.slice(7)}`;
-  return uri;
-}
-
-function NftsScreen() {
-  const [nfts, setNfts] = useState<WalletNft[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selected, setSelected] = useState<WalletNft | null>(null);
-  const [toAddress, setToAddress] = useState('');
-  const [fee, setFee] = useState('0.00005');
-  const [sendStatus, setSendStatus] = useState<'idle'|'sending'|'done'|'error'>('idle');
-  const [sendMsg, setSendMsg] = useState('');
+function NftsScreen({ wallet }: { wallet: WalletState }) {
+  const address = wallet.addresses[0]?.address;
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await walletRpc('get_wallets', { include_data: false });
-        if (!res.success) throw new Error(res.error || 'get_wallets failed');
-        const nftWallets: any[] = (res.wallets || []).filter((w: any) => w.type === 10);
-        if (!nftWallets.length) { if (!cancelled) { setNfts([]); setLoading(false); } return; }
-
-        const all: WalletNft[] = [];
-        for (const w of nftWallets) {
-          try {
-            const r = await walletRpc('nft_get_nfts', { wallet_id: w.id });
-            for (const n of (r.nft_list || [])) {
-              all.push({ ...n, wallet_id: w.id });
-            }
-          } catch { /* skip failing wallet */ }
-        }
-
-        if (!cancelled) { setNfts(all); setLoading(false); }
-      } catch (e: any) {
-        if (!cancelled) { setError(e.message); setLoading(false); }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  function openSend(nft: WalletNft) {
-    setSelected(nft);
-    setToAddress('');
-    setFee('0.00005');
-    setSendStatus('idle');
-    setSendMsg('');
-  }
-
-  async function handleSend() {
-    if (!selected) return;
-    if (!isValidXchAddress(toAddress)) { setSendMsg('Invalid address'); return; }
-    const feeMojo = Math.round(parseFloat(fee || '0') * 1e12);
-    setSendStatus('sending');
-    setSendMsg('');
-    try {
-      const res = await walletRpc('nft_transfer_nft', {
-        wallet_id: selected.wallet_id,
-        nft_coin_id: selected.nft_coin_id,
-        target_address: toAddress.trim(),
-        fee: feeMojo,
-      });
-      if (res.success) {
-        setSendStatus('done');
-        setSendMsg('NFT sent! It may take a minute to confirm.');
-        setNfts(prev => prev.filter(n => n.nft_coin_id !== selected.nft_coin_id));
-      } else {
-        setSendStatus('error');
-        setSendMsg(res.error || 'Transfer failed');
-      }
-    } catch (e: any) {
-      setSendStatus('error');
-      setSendMsg(e.message);
-    }
-  }
-
-  const royaltyPct = selected ? (selected.royalty_percentage / 100).toFixed(2) : '0';
-  const imgUrl = selected ? nftImageUrl(selected.data_uris) : null;
+    window.location.href = address
+      ? `/marketplace/profile?address=${encodeURIComponent(address)}`
+      : '/marketplace/profile';
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="wallet-screen">
-      <div className="section-label">My NFTs</div>
-
-      {loading && (
-        <div className="balance-loading"><div className="spinner"/>Loading NFTs…</div>
-      )}
-      {!loading && error && (
-        <div style={{color:'#ff6b6b',fontSize:13,padding:'8px 0'}}>{error}</div>
-      )}
-      {!loading && !error && nfts.length === 0 && (
-        <div style={{color:'var(--text-secondary)',fontSize:13,padding:'24px 0',textAlign:'center'}}>
-          No NFTs found in this wallet.
-        </div>
-      )}
-
-      {nfts.length > 0 && (
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:10,marginBottom:16}}>
-          {nfts.map(nft => {
-            const img = nftImageUrl(nft.data_uris);
-            const lid = nft.launcher_id.replace('0x','');
-            return (
-              <div key={nft.nft_coin_id}
-                onClick={() => openSend(nft)}
-                style={{cursor:'pointer',background:'var(--bg-card)',borderRadius:'var(--radius)',
-                  overflow:'hidden',border:'1px solid var(--border)',transition:'border-color 0.15s'}}
-                onMouseEnter={e=>(e.currentTarget.style.borderColor='var(--accent)')}
-                onMouseLeave={e=>(e.currentTarget.style.borderColor='var(--border)')}>
-                {img
-                  ? <img src={img} alt="" style={{width:'100%',aspectRatio:'1',objectFit:'cover',display:'block'}}
-                      onError={e=>{(e.currentTarget as HTMLImageElement).style.display='none';}}/>
-                  : <div style={{aspectRatio:'1',background:'var(--bg-input)',display:'flex',
-                      alignItems:'center',justifyContent:'center',color:'var(--text-secondary)',fontSize:28}}>🖼</div>
-                }
-                <div style={{padding:'6px 8px',fontSize:11,color:'var(--text-secondary)',
-                  whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                  {nft._name || lid.slice(0,10)+'…'}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Send panel */}
-      {selected && (
-        <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',
-          borderRadius:'var(--radius)',padding:16,marginTop:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-            {imgUrl && (
-              <img src={imgUrl} alt="" style={{width:56,height:56,objectFit:'cover',
-                borderRadius:'var(--radius-sm)',flexShrink:0}}
-                onError={e=>{(e.currentTarget as HTMLImageElement).style.display='none';}}/>
-            )}
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>Send NFT</div>
-              <div style={{fontSize:11,color:'var(--text-secondary)',fontFamily:'var(--font-mono)',
-                overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                {selected.launcher_id.replace('0x','').slice(0,20)}…
-              </div>
-            </div>
-            <button onClick={() => setSelected(null)}
-              style={{background:'none',border:'none',color:'var(--text-secondary)',
-                cursor:'pointer',fontSize:18,padding:'0 4px',lineHeight:1}}>×</button>
-          </div>
-
-          <label style={{fontSize:11,color:'var(--text-secondary)',display:'block',marginBottom:4}}>
-            Recipient address
-          </label>
-          <input
-            type="text"
-            placeholder="xch1…"
-            value={toAddress}
-            onChange={e=>{setToAddress(e.target.value);setSendMsg('');setSendStatus('idle');}}
-            disabled={sendStatus==='done'}
-            style={{width:'100%',boxSizing:'border-box',padding:'9px 12px',background:'var(--bg-input)',
-              border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
-              color:'var(--text-primary)',fontSize:13,marginBottom:10,fontFamily:'var(--font-mono)'}}
-          />
-
-          <div style={{display:'flex',gap:10,alignItems:'flex-end',marginBottom:10}}>
-            <div style={{flex:1}}>
-              <label style={{fontSize:11,color:'var(--text-secondary)',display:'block',marginBottom:4}}>
-                Fee (XCH)
-              </label>
-              <input
-                type="number" min="0" step="0.00001"
-                value={fee}
-                onChange={e=>{setFee(e.target.value);setSendMsg('');setSendStatus('idle');}}
-                disabled={sendStatus==='done'}
-                style={{width:'100%',boxSizing:'border-box',padding:'9px 12px',background:'var(--bg-input)',
-                  border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
-                  color:'var(--text-primary)',fontSize:13}}
-              />
-            </div>
-          </div>
-
-          {selected.royalty_percentage > 0 && (
-            <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:10,
-              padding:'6px 10px',background:'rgba(249,115,22,0.08)',borderRadius:'var(--radius-sm)',
-              border:'1px solid rgba(249,115,22,0.2)'}}>
-              ⚠ This NFT has a {royaltyPct}% creator royalty. Royalties are enforced by the Chia offer system — direct transfers do not pay royalties.
-            </div>
-          )}
-
-          {sendMsg && (
-            <div style={{fontSize:12,marginBottom:10,
-              color:sendStatus==='done'?'var(--accent)':sendStatus==='error'?'#ff6b6b':'var(--text-secondary)'}}>
-              {sendMsg}
-            </div>
-          )}
-
-          {sendStatus !== 'done' && (
-            <div style={{display:'flex',gap:8}}>
-              <button className="btn btn-primary" style={{flex:1,padding:'9px 0',fontSize:13}}
-                disabled={!isValidXchAddress(toAddress) || sendStatus==='sending'}
-                onClick={handleSend}>
-                {sendStatus==='sending' ? 'Sending…' : 'Send NFT'}
-              </button>
-              <button className="btn btn-secondary" style={{flex:1,padding:'9px 0',fontSize:13}}
-                disabled={sendStatus==='sending'}
-                onClick={() => setSelected(null)}>
-                Cancel
-              </button>
-            </div>
-          )}
-          {sendStatus === 'done' && (
-            <button className="btn btn-secondary" style={{width:'100%',padding:'9px 0',fontSize:13}}
-              onClick={() => setSelected(null)}>
-              Close
-            </button>
-          )}
-        </div>
-      )}
+    <div className="wallet-screen" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', padding: 40 }}>
+      Opening NFT profile…
     </div>
   );
 }
@@ -2917,6 +2701,7 @@ export default function App() {
       const addresses = deriveAddresses(mnemonic, 50);
       const primary = addresses[0]?.address || '';
       try { localStorage.setItem('chia_primary_address', primary); } catch {}
+      try { localStorage.setItem('chia_primary_puzzle_hash', addresses[0]?.puzzleHashHex || ''); } catch {}
       // Cache so profile page can switch wallets without decrypting
       if (primary && !active.primaryAddress) {
         const patched = list.map(w => w.id === active.id ? { ...w, primaryAddress: primary } : w);
@@ -2960,6 +2745,7 @@ export default function App() {
     }
     setUnlockMode(null);
     try { localStorage.setItem('chia_primary_address', addresses[0]?.address || ''); } catch {}
+    try { localStorage.setItem('chia_primary_puzzle_hash', addresses[0]?.puzzleHashHex || ''); } catch {}
     setWallet({ mnemonic, addresses });
     const returnUrl = sessionStorage.getItem('chia_return_url');
     if (returnUrl) { sessionStorage.removeItem('chia_return_url'); window.location.replace(returnUrl); return; }
@@ -3014,6 +2800,7 @@ export default function App() {
       localStorage.setItem(WALLETS_KEY, JSON.stringify(updated));
     }
     try { localStorage.setItem('chia_primary_address', primary); } catch {}
+    try { localStorage.setItem('chia_primary_puzzle_hash', addresses[0]?.puzzleHashHex || ''); } catch {}
     setWallet({ mnemonic, addresses });
     setActiveWalletId(id);
     localStorage.setItem(ACTIVE_WALLET_KEY, id);
@@ -3128,9 +2915,9 @@ export default function App() {
           {unlockMode && <LockScreen mode={unlockMode} walletList={walletList} onUnlock={handleUnlock} onForgotPassword={handleForgotPassword}/>}
           {!unlockMode && screen==='setup' && <SetupScreen onWalletReady={handleWalletReady} onCancel={isWallet ? () => setScreen('settings') : undefined} existingKey={sessionKey}/>}
           {isWallet && screen==='wallet'   && <WalletHome wallet={wallet} nodeUrl={nodeUrl} refreshKey={refreshKey} onSendSuccess={()=>setRefreshKey(k=>k+1)} hideSmallBalances={hideSmallBalances} onCatBalancesChange={setCatBalances}/>}
-          {isWallet && screen==='send'     && <SendScreen onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
+          {isWallet && screen==='send'     && <SendScreen wallet={wallet!} onSendSuccess={()=>setRefreshKey(k=>k+1)} addressBook={addressBook} onTxConfirmed={showToast}/>}
           {isWallet && screen==='receive'  && <ReceiveScreen wallet={wallet}/>}
-          {isWallet && screen==='nfts'     && <NftsScreen/>}
+          {isWallet && screen==='nfts'     && <NftsScreen wallet={wallet!}/>}
           {isWallet && screen==='history'  && <HistoryScreen wallet={wallet} nodeUrl={nodeUrl} catBalances={catBalances}/>}
           {isWallet && screen==='offers'   && <OffersScreen catBalances={catBalances}/>}
           {isWallet && screen==='settings' && <SettingsScreen onRemoveWallet={handleRemoveWallet} onSwitchWallet={handleSwitchWallet} onRenameWallet={handleRenameWallet} onAddWallet={() => setScreen('setup')} walletList={walletList} activeWalletId={activeWalletId} addressBook={addressBook} onAddEntry={handleAddBookEntry} onRemoveEntry={handleRemoveBookEntry} hideSmallBalances={hideSmallBalances} onToggleHideSmall={handleToggleHideSmall} currentMnemonic={wallet?.mnemonic ?? ''} idleLockMinutes={idleLockMinutes} onIdleLockChange={handleIdleLockChange} sessionKey={sessionKey} onChangePassword={handleChangePassword}/>}

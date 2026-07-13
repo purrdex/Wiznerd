@@ -175,14 +175,28 @@ export default function ProfilePage() {
           }
         }),
 
-      fetch(`${PROXY_URL}/wallet/get_wallet_balance`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wallet_id: 1 }),
-        signal: AbortSignal.timeout(8000),
-      }).then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.wallet_balance?.confirmed_wallet_balance != null) setXchMojo(d.wallet_balance.confirmed_wallet_balance); })
-        .catch(() => {}),
+      (() => {
+        // Only show balance for own profile; use stored puzzle hash to avoid bech32 decode
+        try {
+          const ownAddress = localStorage.getItem('chia_primary_address') || '';
+          const ownPuzzleHash = localStorage.getItem('chia_primary_puzzle_hash') || '';
+          if (!ownPuzzleHash || address.toLowerCase() !== ownAddress.toLowerCase()) return Promise.resolve();
+          const ph = ownPuzzleHash.startsWith('0x') ? ownPuzzleHash : `0x${ownPuzzleHash}`;
+          return fetch(`${PROXY_URL}/get_coin_records_by_puzzle_hashes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ puzzle_hashes: [ph], include_spent_coins: false }),
+            signal: AbortSignal.timeout(8000),
+          }).then(r => r.ok ? r.json() : null)
+            .then(d => {
+              if (!d?.coin_records) return;
+              const total = (d.coin_records as { coin: { amount: number } }[])
+                .reduce((s, c) => s + Number(c.coin.amount), 0);
+              setXchMojo(total);
+            })
+            .catch(() => {});
+        } catch { return Promise.resolve(); }
+      })(),
     ])
       .catch(() => {})
       .finally(() => setLoading(false));
