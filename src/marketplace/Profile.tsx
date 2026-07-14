@@ -178,11 +178,23 @@ export default function ProfilePage() {
           }
         }),
 
-      fetch(`${API_URL}/api/xch-balance?address=${encodeURIComponent(address)}`, {
-        signal: AbortSignal.timeout(10000),
-      }).then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.balance_mojo != null) setXchMojo(Number(d.balance_mojo)); })
-        .catch(() => {}),
+      (() => {
+        // Own profile: use wallet-app balance (all derived addresses, stays fresh)
+        try {
+          const ownAddress = localStorage.getItem('chia_primary_address') || '';
+          const cached = localStorage.getItem('chia_wallet_balance_mojo');
+          if (cached && ownAddress && address.toLowerCase() === ownAddress.toLowerCase()) {
+            setXchMojo(Number(cached));
+            return Promise.resolve();
+          }
+        } catch { /* ignore */ }
+        // External profile: query node for the single shown address
+        return fetch(`${API_URL}/api/xch-balance?address=${encodeURIComponent(address)}`, {
+          signal: AbortSignal.timeout(10000),
+        }).then(r => r.ok ? r.json() : null)
+          .then(d => { if (d?.balance_mojo != null) setXchMojo(Number(d.balance_mojo)); })
+          .catch(() => {});
+      })(),
     ])
       .catch(() => {})
       .finally(() => setLoading(false));

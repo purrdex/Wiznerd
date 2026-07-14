@@ -703,6 +703,45 @@ async function backfillCompletedOffers(supabase) {
   if (total > 0) console.log(`[token-idx] backfill: ${total} completed offers → cat_transfers`);
 }
 
+// ── Pre-compute token stats into cat_tokens ──────────────────────────────────
+// Runs every 5 minutes so /api/tokens never has to call the heavy RPCs at
+// request time. Users get a single fast JOIN query instead of cold aggregations.
+
+async function refreshTokenStats(supabase) {
+  const since24h = new Date(Date.now() -      86_400_000).toISOString();
+  const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+  const { data: tokens } = await supabase.from('cat_tokens').select('asset_id');
+  if (!tokens?.length) return;
+  const assetIds = tokens.map(t => t.asset_id);
+
+  const [volRes, sparkRes] = await Promise.all([
+    supabase.rpc('get_token_volumes',    { asset_ids: assetIds, since_7d: since7d, since_24h: since24h }),
+    supabase.rpc('get_token_sparklines', { p_asset_ids: assetIds, p_since: since7d }),
+  ]);
+
+  const vol24h = {}, vol7d = {}, sparklines = {};
+  for (const v of volRes.data  || []) { vol24h[v.asset_id] = Number(v.vol_24h); vol7d[v.asset_id] = Number(v.vol_7d); }
+  for (const r of sparkRes.data || []) {
+    if (!sparklines[r.asset_id]) sparklines[r.asset_id] = [];
+    sparklines[r.asset_id].push(Number(r.close_price));
+  }
+
+  // Batch update in groups of 50 to stay under PostgREST limits
+  const BATCH = 50;
+  const rows = assetIds.map(id => ({
+    asset_id:       id,
+    volume_24h_xch: vol24h[id]    ?? 0,
+    volume_7d_xch:  vol7d[id]     ?? 0,
+    sparkline_7d:   sparklines[id] ?? [],
+  }));
+  for (let i = 0; i < rows.length; i += BATCH) {
+    await supabase.from('cat_tokens')
+      .upsert(rows.slice(i, i + BATCH), { onConflict: 'asset_id', ignoreDuplicates: false });
+  }
+  console.log(`[token-idx] stats refreshed for ${rows.length} tokens`);
+}
+
 // ── Main poll loop ────────────────────────────────────────────────────────────
 
 let _supabase;
@@ -776,10 +815,16 @@ async function start(supabase) {
     syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers error:', e.message));
   }, OFFER_POLL_MS);
 
-  return { blockTimer, offerTimer };
+  // Pre-compute volumes + sparklines into cat_tokens every 5 minutes
+  refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
+  const statsTimer = setInterval(() => {
+    refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
+  }, 5 * 60_000);
+
+  return { blockTimer, offerTimer, statsTimer };
 }
 
-module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers };
+module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers, refreshTokenStats };
 
 // ── Standalone ────────────────────────────────────────────────────────────────
 

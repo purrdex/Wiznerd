@@ -1153,6 +1153,62 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     }
   });
 
+  // ── MintGarden profile sync — for non-owner addresses ────────────────────────
+  // Fetches NFTs for any xch address from MintGarden's public API, upserts stubs
+  // into indexed_nfts, and returns their nft_ids so the profile page loads them.
+  async function syncViaMintGarden(address, res) {
+    try {
+      const bm = require('bech32').bech32m;
+      const nftIds = [];
+      let cursor = null;
+      let pages = 0;
+      while (pages < 20) {
+        const mgUrl = new URL(`https://api.mintgarden.io/profile/${encodeURIComponent(address)}/nfts`);
+        mgUrl.searchParams.set('size', '50');
+        if (cursor) mgUrl.searchParams.set('page', cursor);
+        const mgRes = await fetch(mgUrl.toString(), { signal: AbortSignal.timeout(15000) });
+        if (!mgRes.ok) break;
+        const mgData = await mgRes.json();
+        const items = mgData.items || mgData.nfts || mgData.data || [];
+        if (!items.length) break;
+
+        const rows = [];
+        for (const item of items) {
+          // MintGarden uses encoded_id (nft1...) — bech32m launcher ID
+          const encodedId = item.encoded_id || item.id || item.nft_id || item.launcher_id || '';
+          if (!encodedId) continue;
+          let nftId = encodedId;
+          if (nftId.startsWith('nft1')) {
+            try {
+              const d = bm.decode(nftId, 128);
+              nftId = '0x' + Buffer.from(bm.fromWords(d.words)).toString('hex');
+            } catch { continue; }
+          } else if (!nftId.startsWith('0x')) {
+            nftId = `0x${nftId.toLowerCase()}`;
+          }
+          rows.push({
+            nft_id:        nftId,
+            collection_id: item.collection?.id || item.collection_id || null,
+            name:          item.name || null,
+            image_url:     item.thumbnail_uri || item.data_url || item.image_url || null,
+            metadata_uri:  (item.metadata_uris || [])[0] || item.metadata_url || null,
+            updated_at:    new Date().toISOString(),
+          });
+          nftIds.push(nftId);
+        }
+        if (rows.length) {
+          await supabase.from('indexed_nfts').upsert(rows, { onConflict: 'nft_id', ignoreDuplicates: false });
+        }
+        cursor = mgData.next || null;
+        if (!cursor) break;
+        pages++;
+      }
+      return res.json({ synced: nftIds.length, total: nftIds.length, nft_ids: nftIds, source: 'mintgarden' });
+    } catch (e) {
+      return res.json({ synced: 0, total: 0, nft_ids: [], error: e.message });
+    }
+  }
+
   // ── Profile wallet sync — index any owned NFTs not yet in the DB ─────────────
   // Queries the local wallet daemon for all NFTs, fetches IPFS metadata for
   // any not already in indexed_nfts, and upserts them so the profile page shows
@@ -1168,11 +1224,11 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       const requestedAddress = (req.body?.address || '').toLowerCase().trim();
 
       // Only serve wallet-daemon NFTs for the configured operator address.
-      // Without PROFILE_OWNER_ADDRESS, skip sync entirely — returning the operator's
-      // nft_ids to arbitrary visitors caused all users to see the operator's NFTs
-      // (the profile endpoint fetches by nft_id with no ownership check).
+      // For all other addresses, fall back to MintGarden public API so external
+      // users' NFTs show up without a daemon connection.
       if (!PROFILE_OWNER_ADDRESS || !requestedAddress || requestedAddress !== PROFILE_OWNER_ADDRESS) {
-        return res.json({ synced: 0, total: 0, nft_ids: [] });
+        if (!requestedAddress) return res.json({ synced: 0, total: 0, nft_ids: [] });
+        return syncViaMintGarden(requestedAddress, res);
       }
 
       const { wallets } = await walletRpc('get_wallets', { include_data: false });
@@ -2119,12 +2175,13 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const hit = cacheGet(cacheKey);
     if (hit) return res.json(hit);
 
-    // Join cat_tokens with tibet_pairs for price + reserves
+    // Single query — volumes and sparklines are pre-computed by token-indexer
     let q = supabase
       .from('cat_tokens')
       .select(`
-        asset_id, name, short_name, image_url, tibet_pair_id, updated_at,
-        tibet_pairs ( xch_reserve, token_reserve, current_price_xch, fee_rate )
+        asset_id, name, short_name, image_url, tibet_pair_id,
+        volume_24h_xch, volume_7d_xch, sparkline_7d,
+        tibet_pairs ( xch_reserve, token_reserve, current_price_xch )
       `)
       .order('asset_id');
 
@@ -2135,47 +2192,9 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     const { data: tokens, error } = await q.range(offset, offset + limit - 1);
     if (error) return res.status(500).json({ error: error.message });
 
-    // Compute 24h and 7d volume from cat_transfers
-    const since24h = new Date(Date.now() -      86_400_000).toISOString();
-    const since7d  = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const assetIds = (tokens || []).map(t => t.asset_id);
-
-    let vol24h = {}, vol7d = {}, dexieDepth = {}, sparklines = {};
-    if (assetIds.length) {
-      const [volResult, offersResult, sparkResult] = await Promise.all([
-        supabase.rpc('get_token_volumes', {
-          asset_ids: assetIds,
-          since_7d:  since7d,
-          since_24h: since24h,
-        }),
-        supabase.from('cat_offers')
-          .select('asset_id, volume_xch')
-          .in('asset_id', assetIds)
-          .eq('status', 'open')
-          .not('volume_xch', 'is', null),
-        supabase.rpc('get_token_sparklines', {
-          p_asset_ids: assetIds,
-          p_since:     since7d,
-        }),
-      ]);
-      if (volResult.error) console.error('[tokens] volume rpc error:', volResult.error.message);
-      for (const v of volResult.data || []) {
-        vol7d[v.asset_id]  = Number(v.vol_7d);
-        vol24h[v.asset_id] = Number(v.vol_24h);
-      }
-      for (const o of offersResult.data || []) {
-        dexieDepth[o.asset_id] = (dexieDepth[o.asset_id] || 0) + Number(o.volume_xch || 0);
-      }
-      for (const r of sparkResult.data || []) {
-        if (!sparklines[r.asset_id]) sparklines[r.asset_id] = [];
-        sparklines[r.asset_id].push(Number(r.close_price));
-      }
-    }
-
     const result = (tokens || []).map(t => {
-      const pair = Array.isArray(t.tibet_pairs) ? t.tibet_pairs[0] : t.tibet_pairs;
-      const tibetTvl    = pair?.xch_reserve ? (Number(pair.xch_reserve) / 1e12) * 2 : 0;
-      const dexieXch    = dexieDepth[t.asset_id] || 0;
+      const pair     = Array.isArray(t.tibet_pairs) ? t.tibet_pairs[0] : t.tibet_pairs;
+      const tibetTvl = pair?.xch_reserve ? (Number(pair.xch_reserve) / 1e12) * 2 : 0;
       return {
         asset_id:          t.asset_id,
         name:              t.name,
@@ -2185,14 +2204,14 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
         current_price_xch: pair?.current_price_xch ?? null,
         xch_reserve:       pair?.xch_reserve ?? null,
         token_reserve:     pair?.token_reserve ?? null,
-        volume_24h_xch:    vol24h[t.asset_id] || 0,
-        volume_7d_xch:     vol7d[t.asset_id]  || 0,
-        dexie_depth_xch:   dexieXch,
-        liquidity_xch:     tibetTvl + dexieXch,
-        sparkline_7d:      sparklines[t.asset_id] || [],
+        volume_24h_xch:    Number(t.volume_24h_xch) || 0,
+        volume_7d_xch:     Number(t.volume_7d_xch)  || 0,
+        dexie_depth_xch:   0,
+        liquidity_xch:     tibetTvl,
+        sparkline_7d:      t.sparkline_7d || [],
       };
     });
-    cacheSet(cacheKey, result, 90_000); // 90 seconds
+    cacheSet(cacheKey, result, 300_000); // 5 minutes
     res.json(result);
   });
 

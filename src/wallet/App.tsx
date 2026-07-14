@@ -404,6 +404,7 @@ function WalletHome({ wallet, nodeUrl, refreshKey, onSendSuccess, hideSmallBalan
         fetchXchPrice(),
       ]);
       setBalance(result.totalMojo);
+      try { localStorage.setItem('chia_wallet_balance_mojo', result.totalMojo.toString()); } catch {}
       setXchPrice(xch);
       setProxyError('');
       hasLoadedRef.current = true;
