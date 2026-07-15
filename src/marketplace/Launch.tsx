@@ -30,7 +30,7 @@ export default function LaunchPage() {
   const [imageFile, setImageFile]     = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
   const [imageUrl, setImageUrl]       = useState('');
-  const [xchLiquidity, setXchLiquidity] = useState('1');
+  const XCH_LIQUIDITY = 1; // fixed pool seed
   const [recipientAddr, setRecipientAddr] = useState(() => {
     try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; }
   });
@@ -42,8 +42,7 @@ export default function LaunchPage() {
   const fileRef                       = useRef<HTMLInputElement>(null);
 
   const totalFeeXch = WIZNERD_FEE_XCH + TIBET_FEE_XCH;
-  const xchLiqNum   = parseFloat(xchLiquidity) || 0;
-  const totalXch    = totalFeeXch + xchLiqNum;
+  const totalXch    = totalFeeXch + XCH_LIQUIDITY;
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -58,7 +57,6 @@ export default function LaunchPage() {
     if (!name.trim())       return 'Token name required';
     if (!symbol.trim())     return 'Symbol required';
     if (symbol.length > 12) return 'Symbol max 12 characters';
-    if (xchLiqNum <= 0)     return 'XCH liquidity must be > 0';
     if (!recipientAddr.startsWith('xch1')) return 'Valid XCH recipient address required';
     return '';
   }
@@ -91,7 +89,7 @@ export default function LaunchPage() {
           description:      description.trim(),
           image_url:        imgData || imageUrl,
           total_supply:     supplyMojos,
-          xch_liquidity:    Math.floor(xchLiqNum * 1e12),
+          xch_liquidity:    Math.floor(XCH_LIQUIDITY * 1e12),
           cat_liquidity:    supplyMojos, // all tokens go into the pool
           creator_address:  recipientAddr.trim(),
         }),
@@ -196,25 +194,15 @@ export default function LaunchPage() {
             <Field label="Token Name" value={name} onChange={setName} placeholder="e.g. WizCoin" />
             <Field label="Symbol / Ticker" value={symbol} onChange={v => setSymbol(v.toUpperCase())} placeholder="e.g. WIZ" maxLength={12} />
             <Field label="Description" value={description} onChange={setDescription} placeholder="What is this token?" multiline />
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Initial Liquidity
-              </div>
-              <Field label="XCH to Pool" value={xchLiquidity} onChange={setXchLiquidity} placeholder="1" type="number" />
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
-                1,000,000,000 CATs will be minted and seeded into the pool.
-              </div>
-            </div>
-
             <Field label="LP Token Recipient Address" value={recipientAddr} onChange={setRecipientAddr} placeholder="xch1..." />
 
             {/* Fee summary */}
             <div style={{ background: 'var(--bg-card)', borderRadius: 10, padding: '12px 16px', fontSize: 13 }}>
               <Row label="Wiznerd launch fee"  value="0.537 XCH" />
               <Row label="TibetSwap fees"      value="0.463 XCH" />
-              <Row label={`Initial XCH liquidity`} value={`${xchLiqNum || '?'} XCH`} />
+              <Row label="Pool seed (1B CATs)" value="1 XCH" />
               <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
-                <Row label="Total XCH to send" value={`${xchLiqNum > 0 ? totalXch.toFixed(4) : '?'} XCH`} bold />
+                <Row label="Total XCH to send" value={`${totalXch.toFixed(3)} XCH`} bold />
               </div>
             </div>
 
