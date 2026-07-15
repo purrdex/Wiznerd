@@ -644,9 +644,10 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
       const reqId = (req.id || '').toLowerCase();
       const aLow  = assetId.toLowerCase();
 
-      let priceXch, amountTokens, volumeXch;
+      let priceXch, amountTokens, volumeXch, side;
 
       if (offId === 'xch' && reqId === aLow) {
+        side         = 'buy';
         amountTokens = Number(req.amount ?? 0);
         volumeXch    = Number(off.amount ?? 0);
         priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
@@ -655,6 +656,7 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
           priceXch = raw > 0 ? 1 / raw : null;
         }
       } else if (offId === aLow && reqId === 'xch') {
+        side         = 'sell';
         amountTokens = Number(off.amount ?? 0);
         volumeXch    = Number(req.amount ?? 0);
         priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
@@ -674,12 +676,13 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
         transferred_at: completedAt,
         source:        'dexie',
         event_type:    'trade',
+        side,
       });
     }
 
     if (rows.length) {
       const { error } = await supabase.from('cat_transfers')
-        .upsert(rows, { onConflict: 'offer_id', ignoreDuplicates: true });
+        .upsert(rows, { onConflict: 'offer_id', ignoreDuplicates: false });
       if (!error) inserted += rows.length;
     }
 
