@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS launched_tokens (
   status              text        NOT NULL DEFAULT 'pending',
   error_message       text,
   spacescan_submitted boolean     DEFAULT false,
+  dev_buy_mojo        bigint      DEFAULT 0,
+  dev_buy_cat_mojo    bigint,
+  pair_launcher_id    text,
   created_at          timestamptz DEFAULT now(),
   updated_at          timestamptz DEFAULT now()
 );

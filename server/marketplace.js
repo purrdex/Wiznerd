@@ -2124,7 +2124,8 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
   app.post('/api/launch/init', async (req, res) => {
     try {
       const { name, symbol, description, image_url, total_supply,
-              xch_liquidity, cat_liquidity, creator_address } = req.body;
+              xch_liquidity, cat_liquidity, creator_address,
+              dev_buy_mojo = 0 } = req.body;
 
       if (!name || !symbol || !total_supply || !xch_liquidity || !cat_liquidity || !creator_address)
         return res.status(400).json({ error: 'Missing required fields' });
@@ -2139,13 +2140,15 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
       const puzzleHash = Buffer.from(bm.fromWords(decoded.words)).toString('hex');
 
       const xchLiquidityMojo = BigInt(xch_liquidity);
-      const paymentMojo      = TOTAL_FEE_MOJO + xchLiquidityMojo;
+      const devBuyMojo       = BigInt(dev_buy_mojo);
+      const paymentMojo      = TOTAL_FEE_MOJO + xchLiquidityMojo + devBuyMojo;
 
       const { data: launch, error } = await supabase.from('launched_tokens').insert({
         name, symbol, description, image_url,
         total_supply:     Number(total_supply),
         xch_liquidity:    Number(xchLiquidityMojo),
         cat_liquidity:    Number(cat_liquidity),
+        dev_buy_mojo:     Number(devBuyMojo),
         creator_address,
         payment_address:  addrRes.address,
         payment_amount:   Number(paymentMojo),
@@ -2189,7 +2192,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
   // GET /api/launch/:id — poll launch status
   app.get('/api/launch/:id', async (req, res) => {
     const { data, error } = await supabase.from('launched_tokens')
-      .select('id,status,asset_id,pair_coin_id,error_message,payment_address,payment_mojo:payment_amount,name,symbol,created_at')
+      .select('id,status,asset_id,pair_coin_id,error_message,payment_address,payment_mojo:payment_amount,name,symbol,dev_buy_mojo,dev_buy_cat_mojo,created_at')
       .eq('id', req.params.id).single();
     if (error || !data) return res.status(404).json({ error: 'Not found' });
     res.json(data);

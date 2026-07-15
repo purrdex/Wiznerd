@@ -16,6 +16,8 @@ interface LaunchStatus {
   error_message?: string;
   payment_address: string;
   payment_mojo: number;
+  dev_buy_mojo?: number;
+  dev_buy_cat_mojo?: number;
 }
 
 function fmtXch(mojo: number) {
@@ -31,6 +33,7 @@ export default function LaunchPage() {
   const [imagePreview, setImagePreview] = useState('');
   const [imageUrl, setImageUrl]       = useState('');
   const XCH_LIQUIDITY = 1; // fixed pool seed
+  const [devBuy, setDevBuy]               = useState('');
   const [recipientAddr, setRecipientAddr] = useState(() => {
     try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; }
   });
@@ -41,8 +44,9 @@ export default function LaunchPage() {
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef                       = useRef<HTMLInputElement>(null);
 
+  const devBuyNum   = parseFloat(devBuy) || 0;
   const totalFeeXch = WIZNERD_FEE_XCH + TIBET_FEE_XCH;
-  const totalXch    = totalFeeXch + XCH_LIQUIDITY;
+  const totalXch    = totalFeeXch + XCH_LIQUIDITY + devBuyNum;
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -90,7 +94,8 @@ export default function LaunchPage() {
           image_url:        imgData || imageUrl,
           total_supply:     supplyMojos,
           xch_liquidity:    Math.floor(XCH_LIQUIDITY * 1e12),
-          cat_liquidity:    supplyMojos, // all tokens go into the pool
+          cat_liquidity:    supplyMojos,
+          dev_buy_mojo:     Math.floor(devBuyNum * 1e12),
           creator_address:  recipientAddr.trim(),
         }),
         signal: AbortSignal.timeout(15000),
@@ -196,11 +201,35 @@ export default function LaunchPage() {
             <Field label="Description" value={description} onChange={setDescription} placeholder="What is this token?" multiline />
             <Field label="LP Token Recipient Address" value={recipientAddr} onChange={setRecipientAddr} placeholder="xch1..." />
 
+            {/* Dev buy */}
+            <div style={{ background: 'var(--bg-card)', borderRadius: 10, padding: '14px 16px' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Dev Buy <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(optional)</span></div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Buy tokens from your own pool at launch price, before anyone else.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="number" min="0" step="0.1" value={devBuy}
+                  onChange={e => setDevBuy(e.target.value)}
+                  placeholder="0"
+                  style={{ flex: 1, padding: '8px 12px', background: 'var(--bg-input)',
+                    border: '1px solid var(--border)', borderRadius: 8,
+                    color: 'var(--text-primary)', fontSize: 14 }} />
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>XCH</span>
+              </div>
+              {devBuyNum > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 6 }}>
+                  ≈ {((devBuyNum / (1 + devBuyNum)) * DEFAULT_SUPPLY * 0.997).toLocaleString(undefined, { maximumFractionDigits: 0 })} {symbol || 'tokens'} at launch price
+                </div>
+              )}
+            </div>
+
             {/* Fee summary */}
             <div style={{ background: 'var(--bg-card)', borderRadius: 10, padding: '12px 16px', fontSize: 13 }}>
               <Row label="Wiznerd launch fee"  value="0.537 XCH" />
               <Row label="TibetSwap fees"      value="0.463 XCH" />
               <Row label="Pool seed (1B CATs)" value="1 XCH" />
+              {devBuyNum > 0 && <Row label="Dev buy" value={`${devBuyNum.toFixed(3)} XCH`} />}
               <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
                 <Row label="Total XCH to send" value={`${totalXch.toFixed(3)} XCH`} bold />
               </div>
@@ -274,9 +303,20 @@ export default function LaunchPage() {
           <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 24, textAlign: 'center' }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🚀</div>
             <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 8 }}>Token Launched!</div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: launch?.dev_buy_cat_mojo ? 12 : 20 }}>
               {name} ({symbol}) is now live on TibetSwap.
             </div>
+            {launch?.dev_buy_cat_mojo && (
+              <div style={{ background: 'var(--bg-base)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Your dev buy: </span>
+                <span style={{ fontWeight: 700 }}>
+                  {(launch.dev_buy_cat_mojo / 1000).toLocaleString()} {symbol}
+                </span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: 11, display: 'block', marginTop: 2 }}>
+                  sent to {recipientAddr.slice(0, 10)}…
+                </span>
+              </div>
+            )}
             {launch.asset_id && (
               <div style={{ background: 'var(--bg-base)', borderRadius: 8, padding: '10px 14px',
                 fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', marginBottom: 16 }}>

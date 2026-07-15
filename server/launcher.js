@@ -56,6 +56,26 @@ async function waitForPayment(proxy, puzzleHash, expectedMojo, timeoutMs = 30 * 
   return false;
 }
 
+// ── Find our newly-created pair by asset_id ───────────────────────────────────
+// Polls Tibet /pairs (newest first) until the pair appears, up to ~5 minutes.
+
+async function findPairLauncherId(assetId, timeoutMs = 5 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      // New pairs appear at low skip values; 100 should cover any recent burst
+      const r = await fetch(`${TIBET_API}/pairs?skip=0&limit=100`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      const pairs = await r.json();
+      const match = Array.isArray(pairs) && pairs.find(p => p.asset_id === assetId);
+      if (match) return match.pair_id || match.launcher_id;
+    } catch { /* retry */ }
+    await sleep(15000);
+  }
+  return null;
+}
+
 // ── Core launch flow ──────────────────────────────────────────────────────────
 
 async function executeLaunch(supabase, proxy, walletRpc, launchId) {
@@ -154,6 +174,46 @@ async function executeLaunch(supabase, proxy, walletRpc, launchId) {
     if (!tibetRes.success) throw new Error(`Tibet pair creation failed: ${tibetRes.message}`);
 
     await setStatus(supabase, launchId, 'live', { pair_coin_id: tibetRes.coin_id });
+
+    // ── 4. Dev buy (optional) ─────────────────────────────────────────────────
+    if (launch.dev_buy_mojo && BigInt(launch.dev_buy_mojo) > 0n) {
+      try {
+        const launcherId = await findPairLauncherId(assetId);
+        if (!launcherId) throw new Error('pair not found in Tibet API');
+
+        await supabase.from('launched_tokens')
+          .update({ pair_launcher_id: launcherId }).eq('id', launchId);
+
+        const quoteR = await fetch(
+          `${TIBET_API}/quote/${launcherId}?amount_in=${launch.dev_buy_mojo}&xch_is_input=true`,
+          { signal: AbortSignal.timeout(10000) }
+        );
+        const quote = await quoteR.json();
+        const minCatOut = Math.floor(Number(quote.amount_out) * 0.98); // 2% slippage
+
+        const swapOfferRes = await walletRpc('create_offer_for_ids', {
+          offer: {
+            1: -Number(launch.dev_buy_mojo),
+            [catWalletId]: minCatOut,
+          },
+          fee: 0,
+          validate_only: false,
+        });
+        if (!swapOfferRes.success) throw new Error(swapOfferRes.error);
+
+        const swapRes = await tibetPost(`/offer/${launcherId}`, {
+          offer:  swapOfferRes.offer,
+          action: 'SWAP',
+        });
+        if (!swapRes.success) throw new Error(swapRes.message);
+
+        await supabase.from('launched_tokens')
+          .update({ dev_buy_cat_mojo: minCatOut }).eq('id', launchId);
+      } catch (e) {
+        console.warn(`[launcher] dev buy failed for ${launchId}: ${e.message}`);
+      }
+    }
+
     return { asset_id: assetId, coin_id: tibetRes.coin_id };
 
   } catch (e) {
