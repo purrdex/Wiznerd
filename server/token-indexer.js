@@ -124,18 +124,51 @@ async function initFromTibetApi(supabase) {
   }
 
   let seeded = 0;
+  const now = new Date().toISOString();
   for (const pair of untracked) {
     const norm = hexNorm(pair.launcher_id);
     const tibetPair = tibetMap.get(norm);
     const coinIdHex = tibetPair ? hexNorm(tibetPair.last_coin_id_on_chain) : null;
     if (!coinIdHex) continue;
 
+    const newXch   = Number(tibetPair.xch_reserve   || 0);
+    const newToken = Number(tibetPair.token_reserve || 0);
+    const oldXch   = Number(pair.xch_reserve   || 0);
+    const oldToken = Number(pair.token_reserve || 0);
+
+    // Record any volume that accumulated since last known reserves (e.g. during downtime)
+    if (oldXch > 0 && oldToken > 0 && (newXch !== oldXch || newToken !== oldToken)) {
+      const ev = classifyEvent(oldXch, oldToken, newXch, newToken);
+      if (ev) {
+        supabase.from('cat_transfers').insert({
+          asset_id:       pair.asset_id,
+          price_xch:      (ev.type === 'trade' && ev.tokenDelta > 0)
+            ? (ev.xchDelta / 1e12) / (ev.tokenDelta / 1000) : null,
+          amount_tokens:  ev.tokenDelta / 1000,
+          volume_xch:     ev.xchDelta   / 1e12,
+          block_height:   null,
+          transferred_at: now,
+          source:         'tibetapi',
+          event_type:     ev.type,
+          side:           ev.side || null,
+        }).then(() => {}).catch(() => {});
+      }
+    }
+
+    if (newXch) { pair.xch_reserve   = newXch; }
+    if (newToken) { pair.token_reserve = newToken; }
+
     pair.pair_coin_id = coinIdHex;
     pairByCurrentCoin.set(coinIdHex, pair);
     seeded++;
 
     supabase.from('tibet_pairs')
-      .update({ pair_coin_id: coinIdHex })
+      .update({
+        pair_coin_id:  coinIdHex,
+        xch_reserve:   newXch   || undefined,
+        token_reserve: newToken || undefined,
+        updated_at:    now,
+      })
       .eq('launcher_id', pair.launcher_id)
       .then(() => {}).catch(() => {});
   }
@@ -707,6 +740,91 @@ async function backfillCompletedOffers(supabase) {
   if (total > 0) console.log(`[token-idx] backfill: ${total} completed offers → cat_transfers`);
 }
 
+// ── Reserve snapshot poll ─────────────────────────────────────────────────────
+// Fetches current reserves for all pairs from Tibet API every 30 minutes.
+// Compares to last-known in-memory state and records any delta as a volume event.
+// This catches all AMM swaps that the per-block scanner missed (e.g. during downtime).
+// No double-counting: the block scanner updates pair.xch_reserve in memory after
+// each detected advance, so pollPairReserves only picks up undetected residuals.
+
+const RESERVE_POLL_MS = 30 * 60_000;
+
+async function pollPairReserves(supabase) {
+  const tibetPairs = [];
+  let skip = 0;
+  while (true) {
+    try {
+      const page = await tibetGet(`/pairs?skip=${skip}&limit=100`);
+      const batch = Array.isArray(page) ? page : (page.pairs || []);
+      if (!batch.length) break;
+      tibetPairs.push(...batch);
+      if (batch.length < 100) break;
+      skip += 100;
+      await sleep(200);
+    } catch (e) {
+      console.warn(`[token-idx] reserve poll fetch: ${e.message}`);
+      break;
+    }
+  }
+
+  let changed = 0;
+  const now = new Date().toISOString();
+
+  for (const tp of tibetPairs) {
+    const launcherId = hexNorm(tp.launcher_id || tp.pair_id || '');
+    const pair = pairByLauncher.get(launcherId);
+    if (!pair) continue;
+
+    const newXch   = Number(tp.xch_reserve   || 0);
+    const newToken = Number(tp.token_reserve || 0);
+    if (!newXch || !newToken) continue;
+
+    const oldXch   = Number(pair.xch_reserve   || 0);
+    const oldToken = Number(pair.token_reserve || 0);
+    if (!oldXch || !oldToken) {
+      // First seen — just store reserves, no event
+      pair.xch_reserve   = newXch;
+      pair.token_reserve = newToken;
+      continue;
+    }
+
+    const ev = classifyEvent(oldXch, oldToken, newXch, newToken);
+    if (!ev) continue;
+
+    try {
+      // Use 'tibetapi' source so these poll-aggregated events are distinguishable
+      await supabase.from('cat_transfers').insert({
+        asset_id:       pair.asset_id,
+        price_xch:      (ev.type === 'trade' && ev.tokenDelta > 0)
+          ? (ev.xchDelta / 1e12) / (ev.tokenDelta / 1000) : null,
+        amount_tokens:  ev.tokenDelta / 1000,
+        volume_xch:     ev.xchDelta   / 1e12,
+        block_height:   null,
+        transferred_at: now,
+        source:         'tibetapi',
+        event_type:     ev.type,
+        side:           ev.side || null,
+      });
+    } catch (e) {
+      console.warn(`[token-idx] reserve poll insert ${launcherId.slice(0, 8)}: ${e.message}`);
+    }
+
+    pair.xch_reserve   = newXch;
+    pair.token_reserve = newToken;
+
+    supabase.from('tibet_pairs').update({
+      xch_reserve:       newXch,
+      token_reserve:     newToken,
+      current_price_xch: (newXch / 1e12) / (newToken / 1000),
+      updated_at:        now,
+    }).eq('launcher_id', pair.launcher_id).then(() => {}).catch(() => {});
+
+    changed++;
+  }
+
+  if (changed > 0) console.log(`[token-idx] reserve poll: ${changed} pair(s) with new volume`);
+}
+
 // ── Pre-compute token stats into cat_tokens ──────────────────────────────────
 // Runs every 5 minutes so /api/tokens never has to call the heavy RPCs at
 // request time. Users get a single fast JOIN query instead of cold aggregations.
@@ -801,10 +919,12 @@ async function start(supabase) {
   await loadPairs(supabase);
   lastHeight = await loadLastHeight();
 
-  // Seed pair coin IDs: Tibet API first (seconds), BFS fallback for any misses
-  initFromTibetApi(supabase).then(() =>
-    bfsInitAllPairs(supabase)
-  ).catch(e => console.warn('[token-idx] init error:', e.message));
+  // Seed pair coin IDs from Tibet API, BFS fallback, then immediately poll reserves
+  // to record any AMM volume that accumulated since the last run.
+  initFromTibetApi(supabase)
+    .then(() => bfsInitAllPairs(supabase))
+    .then(() => pollPairReserves(supabase))
+    .catch(e => console.warn('[token-idx] init error:', e.message));
 
   // Start block poll loop
   poll();
@@ -818,6 +938,9 @@ async function start(supabase) {
   const offerTimer = setInterval(() => {
     syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers error:', e.message));
   }, OFFER_POLL_MS);
+  const reservePollTimer = setInterval(() => {
+    pollPairReserves(supabase).catch(e => console.warn('[token-idx] reserve poll error:', e.message));
+  }, RESERVE_POLL_MS);
 
   // Pre-compute volumes + sparklines into cat_tokens every 5 minutes
   refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
@@ -825,7 +948,7 @@ async function start(supabase) {
     refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
   }, 5 * 60_000);
 
-  return { blockTimer, offerTimer, statsTimer };
+  return { blockTimer, offerTimer, reservePollTimer, statsTimer };
 }
 
 module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers, refreshTokenStats };

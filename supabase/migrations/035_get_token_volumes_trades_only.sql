@@ -1,10 +1,10 @@
--- Missing RPC used by refreshTokenStats() in token-indexer.js.
--- Aggregates cat_transfers volume for 24h and 7d windows per token.
+-- Fix 24h volume mismatch between token list and token detail page.
+-- Token detail queries cat_transfers WHERE price_xch IS NOT NULL (trades only).
+-- get_token_volumes was counting LP add/remove events (price_xch IS NULL) too.
+-- Align them by adding the same filter here.
 
 DROP FUNCTION IF EXISTS get_token_volumes(text[], timestamptz, timestamptz);
 
--- Aggregate the full 7d window in one pass — no per-asset index scans.
--- asset_ids param kept for API compatibility but ignored.
 CREATE OR REPLACE FUNCTION get_token_volumes(
   asset_ids text[],
   since_7d  timestamptz,
@@ -20,7 +20,8 @@ CREATE OR REPLACE FUNCTION get_token_volumes(
     SUM(volume_xch) FILTER (WHERE transferred_at >= since_7d)  AS vol_7d
   FROM cat_transfers
   WHERE transferred_at >= since_7d
-    AND volume_xch IS NOT NULL
+    AND volume_xch  IS NOT NULL
+    AND price_xch   IS NOT NULL
   GROUP BY asset_id;
 $$;
 
