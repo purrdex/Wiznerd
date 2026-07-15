@@ -179,7 +179,8 @@ export default function TokensScreen() {
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)', textAlign: 'left' }}>
                       <th className="col-rank" style={{ padding: '10px 12px' }}>#</th>
-                      <th className="col-token" style={{ padding: '10px 12px' }}>Token</th>
+                      <th className="col-icon" style={{ padding: '10px 0' }} />
+                      <th style={{ padding: '10px 12px' }}>Token</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (USD)</th>
                       <th style={{ padding: '10px 12px' }}>7d</th>
@@ -194,17 +195,15 @@ export default function TokensScreen() {
                         onClick={() => nav(`/tokens/${t.asset_id}`)}
                         style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}>
                         <td className="col-rank" style={{ padding: '12px 12px', color: 'var(--text-secondary)' }}>{i + 1}</td>
-                        <td className="col-token" style={{ padding: '12px 12px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            {t.image_url
-                              ? <img src={t.image_url} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { e.currentTarget.style.display = 'none'; }} />
-                              : <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>{(t.short_name || t.name || '?')[0]}</div>
-                            }
-                            <div>
-                              <div style={{ fontWeight: 600 }}>{t.name || t.short_name || t.asset_id.slice(0, 8)}</div>
-                              {t.short_name && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{t.short_name}</div>}
-                            </div>
-                          </div>
+                        <td className="col-icon" style={{ padding: '8px 4px 8px 8px' }}>
+                          {t.image_url
+                            ? <img src={t.image_url} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', display: 'block' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                            : <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>{(t.short_name || t.name || '?')[0]}</div>
+                          }
+                        </td>
+                        <td style={{ padding: '12px 12px', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontWeight: 600 }}>{t.name || t.short_name || t.asset_id.slice(0, 8)}</div>
+                          {t.short_name && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{t.short_name}</div>}
                         </td>
                         <td style={{ padding: '12px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                           {fmtXch(t.current_price_xch, 8)}

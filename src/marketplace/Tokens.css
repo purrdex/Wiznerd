@@ -1,4 +1,4 @@
-/* Sticky first two columns — rank + token identity */
+/* Sticky: rank (#) + icon only — name scrolls freely */
 .tok-table th.col-rank,
 .tok-table td.col-rank {
   position: sticky;
@@ -9,22 +9,19 @@
   min-width: 40px;
 }
 
-.tok-table th.col-token,
-.tok-table td.col-token {
+.tok-table th.col-icon,
+.tok-table td.col-icon {
   position: sticky;
   left: 40px;
   z-index: 2;
   background: var(--bg-base);
-  min-width: 160px;
-}
-
-/* Row hover — needs to update sticky cell backgrounds too */
-.tok-table tbody tr:hover td { background: var(--bg-card); }
-.tok-table tbody tr:hover td.col-rank,
-.tok-table tbody tr:hover td.col-token { background: var(--bg-card); }
-
-/* Shadow on token column to signal there's more to the right */
-.tok-table td.col-token,
-.tok-table th.col-token {
+  width: 44px;
+  min-width: 44px;
+  padding-right: 4px;
   box-shadow: 4px 0 6px -2px rgba(0, 0, 0, 0.3);
 }
+
+/* Row hover — keep sticky cells in sync */
+.tok-table tbody tr:hover td { background: var(--bg-card); }
+.tok-table tbody tr:hover td.col-rank,
+.tok-table tbody tr:hover td.col-icon { background: var(--bg-card); }
