@@ -4,7 +4,7 @@
 
 const TIBET_API  = 'https://api.v2.tibetswap.io';
 const SPACESCAN  = 'https://api.spacescan.io/cat/info/updatecat';
-const WIZNERD_FEE_MOJO  = 1_000_000_000_000n;         // 1 XCH
+const WIZNERD_FEE_MOJO  =   537_000_000_000n;          // 0.537 XCH
 const TIBET_FEE_MOJO    =   462_000_000_001n;          // 0.462 XCH + 1 mojo singleton
 const MINT_TX_FEE_MOJO  =     1_000_000_000n;          // 0.001 XCH blockchain fee
 

@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import TopNav from '../components/TopNav';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3002';
-const WIZNERD_FEE_XCH = 1.0;
-const TIBET_FEE_XCH   = 0.463; // 0.462 + 1 mojo
+const WIZNERD_FEE_XCH = 0.537;
+const TIBET_FEE_XCH   = 0.463;
+const DEFAULT_SUPPLY   = 1_000_000_000; // 1 billion CATs
 
 type Step = 'form' | 'review' | 'payment' | 'processing' | 'done' | 'error';
 
@@ -29,9 +30,7 @@ export default function LaunchPage() {
   const [imageFile, setImageFile]     = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
   const [imageUrl, setImageUrl]       = useState('');
-  const [supply, setSupply]           = useState('1000000');
   const [xchLiquidity, setXchLiquidity] = useState('1');
-  const [catLiquidity, setCatLiquidity] = useState('');
   const [recipientAddr, setRecipientAddr] = useState(() => {
     try { return localStorage.getItem('chia_primary_address') || ''; } catch { return ''; }
   });
@@ -42,12 +41,9 @@ export default function LaunchPage() {
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef                       = useRef<HTMLInputElement>(null);
 
-  const totalFeeXch   = WIZNERD_FEE_XCH + TIBET_FEE_XCH;
-  const xchLiqNum     = parseFloat(xchLiquidity) || 0;
-  const totalXch      = totalFeeXch + xchLiqNum;
-  const catLiqNum     = parseFloat(catLiquidity) || 0;
-  const supplyNum     = parseFloat(supply) || 0;
-  const catToCreator  = Math.max(0, supplyNum - catLiqNum);
+  const totalFeeXch = WIZNERD_FEE_XCH + TIBET_FEE_XCH;
+  const xchLiqNum   = parseFloat(xchLiquidity) || 0;
+  const totalXch    = totalFeeXch + xchLiqNum;
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -59,13 +55,10 @@ export default function LaunchPage() {
   }
 
   function validate() {
-    if (!name.trim())        return 'Token name required';
-    if (!symbol.trim())      return 'Symbol required';
-    if (symbol.length > 12)  return 'Symbol max 12 characters';
-    if (!supply || supplyNum <= 0) return 'Total supply required';
-    if (xchLiqNum <= 0)      return 'XCH liquidity must be > 0';
-    if (!catLiquidity || catLiqNum <= 0) return 'CAT liquidity required';
-    if (catLiqNum > supplyNum) return 'CAT liquidity cannot exceed total supply';
+    if (!name.trim())       return 'Token name required';
+    if (!symbol.trim())     return 'Symbol required';
+    if (symbol.length > 12) return 'Symbol max 12 characters';
+    if (xchLiqNum <= 0)     return 'XCH liquidity must be > 0';
     if (!recipientAddr.startsWith('xch1')) return 'Valid XCH recipient address required';
     return '';
   }
@@ -88,6 +81,7 @@ export default function LaunchPage() {
     try {
       const imgData = await uploadImage();
 
+      const supplyMojos = DEFAULT_SUPPLY * 1000; // all 1B CATs in mojos
       const r = await fetch(`${API_URL}/api/launch/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,9 +90,9 @@ export default function LaunchPage() {
           symbol:           symbol.trim().toUpperCase(),
           description:      description.trim(),
           image_url:        imgData || imageUrl,
-          total_supply:     Math.floor(supplyNum * 1000),   // CAT mojos
-          xch_liquidity:    Math.floor(xchLiqNum * 1e12),   // XCH mojos
-          cat_liquidity:    Math.floor(catLiqNum * 1000),    // CAT mojos
+          total_supply:     supplyMojos,
+          xch_liquidity:    Math.floor(xchLiqNum * 1e12),
+          cat_liquidity:    supplyMojos, // all tokens go into the pool
           creator_address:  recipientAddr.trim(),
         }),
         signal: AbortSignal.timeout(15000),
@@ -202,29 +196,22 @@ export default function LaunchPage() {
             <Field label="Token Name" value={name} onChange={setName} placeholder="e.g. WizCoin" />
             <Field label="Symbol / Ticker" value={symbol} onChange={v => setSymbol(v.toUpperCase())} placeholder="e.g. WIZ" maxLength={12} />
             <Field label="Description" value={description} onChange={setDescription} placeholder="What is this token?" multiline />
-            <Field label="Total Supply (CATs)" value={supply} onChange={setSupply} placeholder="1000000" type="number" />
-
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Initial Liquidity
               </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <Field label="XCH to Pool" value={xchLiquidity} onChange={setXchLiquidity} placeholder="1" type="number" />
-                <Field label="CATs to Pool" value={catLiquidity} onChange={setCatLiquidity} placeholder="500000" type="number" />
+              <Field label="XCH to Pool" value={xchLiquidity} onChange={setXchLiquidity} placeholder="1" type="number" />
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+                1,000,000,000 CATs will be minted and seeded into the pool.
               </div>
-              {catLiqNum > 0 && supplyNum > 0 && (
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
-                  {catToCreator.toLocaleString()} CATs sent to your address · {catLiqNum.toLocaleString()} CATs in pool
-                </div>
-              )}
             </div>
 
             <Field label="LP Token Recipient Address" value={recipientAddr} onChange={setRecipientAddr} placeholder="xch1..." />
 
             {/* Fee summary */}
             <div style={{ background: 'var(--bg-card)', borderRadius: 10, padding: '12px 16px', fontSize: 13 }}>
-              <Row label="Wiznerd launch fee"      value="1 XCH" />
-              <Row label="TibetSwap fees"           value="0.463 XCH" />
+              <Row label="Wiznerd launch fee"  value="0.537 XCH" />
+              <Row label="TibetSwap fees"      value="0.463 XCH" />
               <Row label={`Initial XCH liquidity`} value={`${xchLiqNum || '?'} XCH`} />
               <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
                 <Row label="Total XCH to send" value={`${xchLiqNum > 0 ? totalXch.toFixed(4) : '?'} XCH`} bold />
