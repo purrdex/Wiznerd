@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import TopNav from '../components/TopNav';
 import { useNavigate } from 'react-router-dom';
+import './Tokens.css';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3002';
 const XCH_USD_KEY = 'xch_price_usd';
@@ -174,11 +175,11 @@ export default function TokensScreen() {
 
             {sorted.length > 0 && (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <table className="tok-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)', textAlign: 'left' }}>
-                      <th style={{ padding: '10px 12px' }}>#</th>
-                      <th style={{ padding: '10px 12px' }}>Token</th>
+                      <th className="col-rank" style={{ padding: '10px 12px' }}>#</th>
+                      <th className="col-token" style={{ padding: '10px 12px' }}>Token</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 12px', textAlign: 'right' }}>Price (USD)</th>
                       <th style={{ padding: '10px 12px' }}>7d</th>
@@ -191,11 +192,9 @@ export default function TokensScreen() {
                     {sorted.map((t, i) => (
                       <tr key={t.asset_id}
                         onClick={() => nav(`/tokens/${t.asset_id}`)}
-                        style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-card)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                        <td style={{ padding: '12px 12px', color: 'var(--text-secondary)' }}>{i + 1}</td>
-                        <td style={{ padding: '12px 12px' }}>
+                        style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}>
+                        <td className="col-rank" style={{ padding: '12px 12px', color: 'var(--text-secondary)' }}>{i + 1}</td>
+                        <td className="col-token" style={{ padding: '12px 12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             {t.image_url
                               ? <img src={t.image_url} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} onError={e => { e.currentTarget.style.display = 'none'; }} />
