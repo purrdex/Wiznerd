@@ -518,7 +518,7 @@ app.listen(PORT, async () => {
 
   try { const { startWatcher } = require('./watcher'); startWatcher(supabase); } catch (e) { console.warn('[server] watcher failed to start:', e.message); }
   try { const { start } = require('./indexer'); start(); } catch (e) { console.warn('[server] indexer failed to start:', e.message); }
-  try { const { start: startTrending } = require('./trending'); startTrending(supabase); } catch (e) { console.warn('[server] trending job failed to start:', e.message); }
+  // trending job disabled — NFTs hidden, get_collection_mint_counts times out on indexed_nfts scan
   try { const { start: startCatSync } = require('./cat-sync'); startCatSync(supabase); } catch (e) { console.warn('[server] cat-sync failed to start:', e.message); }
   try { const { start: startTokenIdx } = require('./token-indexer'); startTokenIdx(supabase); } catch (e) { console.warn('[server] token-indexer failed to start:', e.message); }
 });
