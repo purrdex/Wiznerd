@@ -133,8 +133,9 @@ export default function TopNav({ activePath, onWalletSwitch, searchValue, onSear
   const activeWallet = wallets.find(w => w.id === activeWalletId);
 
   const links = [
-    { href: '/',       label: 'Wallet', match: (p: string) => p === '/' },
-    { href: '/tokens', label: 'Tokens', match: (p: string) => p.startsWith('/tokens') },
+    { href: '/',        label: 'Wallet', match: (p: string) => p === '/' },
+    { href: '/tokens',  label: 'Tokens', match: (p: string) => p.startsWith('/tokens') },
+    { href: '/launch',  label: 'Launch', match: (p: string) => p.startsWith('/launch') },
   ];
 
   return (

@@ -2116,6 +2116,95 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
     })));
   });
 
+  // ── Token Launcher ────────────────────────────────────────────────────────────
+
+  const { executeLaunch, waitForPayment, TOTAL_FEE_MOJO } = require('./launcher');
+
+  // POST /api/launch/init — create a pending launch, return payment address + amount
+  app.post('/api/launch/init', async (req, res) => {
+    try {
+      const { name, symbol, description, image_url, total_supply,
+              xch_liquidity, cat_liquidity, creator_address } = req.body;
+
+      if (!name || !symbol || !total_supply || !xch_liquidity || !cat_liquidity || !creator_address)
+        return res.status(400).json({ error: 'Missing required fields' });
+
+      // Get a fresh derived address for this payment
+      const addrRes = await walletRpc('get_next_address', { wallet_id: 1, new_address: true });
+      if (!addrRes.address) return res.status(502).json({ error: 'Could not get payment address' });
+
+      // Decode to puzzle hash for polling
+      const { bech32m: bm } = require('bech32');
+      const decoded    = bm.decode(addrRes.address, 90);
+      const puzzleHash = Buffer.from(bm.fromWords(decoded.words)).toString('hex');
+
+      const xchLiquidityMojo = BigInt(xch_liquidity);
+      const paymentMojo      = TOTAL_FEE_MOJO + xchLiquidityMojo;
+
+      const { data: launch, error } = await supabase.from('launched_tokens').insert({
+        name, symbol, description, image_url,
+        total_supply:     Number(total_supply),
+        xch_liquidity:    Number(xchLiquidityMojo),
+        cat_liquidity:    Number(cat_liquidity),
+        creator_address,
+        payment_address:  addrRes.address,
+        payment_amount:   Number(paymentMojo),
+        status:           'pending',
+      }).select().single();
+
+      if (error) return res.status(500).json({ error: error.message });
+
+      // Poll for payment in background — execute launch once confirmed
+      setImmediate(async () => {
+        try {
+          const PROXY = process.env.PROXY_URL || 'http://localhost:3001';
+          const paid = await waitForPayment(PROXY, puzzleHash, Number(paymentMojo));
+          if (!paid) {
+            await supabase.from('launched_tokens')
+              .update({ status: 'expired', updated_at: new Date().toISOString() })
+              .eq('id', launch.id);
+            return;
+          }
+          await supabase.from('launched_tokens')
+            .update({ status: 'paid', updated_at: new Date().toISOString() })
+            .eq('id', launch.id);
+          await executeLaunch(supabase, PROXY, walletRpc, launch.id);
+        } catch (e) {
+          console.error(`[launcher] background error for ${launch.id}:`, e.message);
+        }
+      });
+
+      res.json({
+        id:              launch.id,
+        payment_address: addrRes.address,
+        payment_mojo:    Number(paymentMojo),
+        payment_xch:     Number(paymentMojo) / 1e12,
+        status:          'pending',
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/launch/:id — poll launch status
+  app.get('/api/launch/:id', async (req, res) => {
+    const { data, error } = await supabase.from('launched_tokens')
+      .select('id,status,asset_id,pair_coin_id,error_message,payment_address,payment_mojo:payment_amount,name,symbol,created_at')
+      .eq('id', req.params.id).single();
+    if (error || !data) return res.status(404).json({ error: 'Not found' });
+    res.json(data);
+  });
+
+  // GET /api/launches — recent launches feed
+  app.get('/api/launches', async (req, res) => {
+    const { data } = await supabase.from('launched_tokens')
+      .select('id,asset_id,name,symbol,description,image_url,creator_address,created_at,status')
+      .eq('status', 'live')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    res.json(data || []);
+  });
+
   // ── User profiles ─────────────────────────────────────────────────────────────
 
   app.get('/api/user-profile/:address', async (req, res) => {
