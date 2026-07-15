@@ -1,6 +1,8 @@
 -- Missing RPC used by refreshTokenStats() in token-indexer.js.
 -- Aggregates cat_transfers volume for 24h and 7d windows per token.
 
+DROP FUNCTION IF EXISTS get_token_volumes(text[], timestamptz, timestamptz);
+
 CREATE OR REPLACE FUNCTION get_token_volumes(
   asset_ids text[],
   since_7d  timestamptz,
