@@ -296,6 +296,7 @@ async function recordEvent(supabase, pair, ev, blockHeight, blockTime) {
     transferred_at: blockTime || new Date().toISOString(),
     source:         'onchain',
     event_type:     ev.type,
+    side:           ev.side || null,
   });
 }
 

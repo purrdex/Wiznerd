@@ -2400,7 +2400,7 @@ module.exports = function registerMarketplaceRoutes(app, supabase) {
 
     const { data, error } = await supabase
       .from('cat_transfers')
-      .select('price_xch, amount_tokens, volume_xch, block_height, transferred_at, source')
+      .select('price_xch, amount_tokens, volume_xch, block_height, transferred_at, source, side')
       .eq('asset_id', assetId)
       .not('price_xch', 'is', null)
       .order('transferred_at', { ascending: false })

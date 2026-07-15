@@ -40,6 +40,7 @@ interface Trade {
   block_height: number | null;
   transferred_at: string;
   source: string;
+  side: 'buy' | 'sell' | null;
 }
 
 interface Legend { o: number; h: number; l: number; c: number; v: number }
@@ -584,6 +585,7 @@ export default function TokenDetailScreen() {
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                       <th style={{ padding: '10px 14px', textAlign: 'left' }}>Date</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'right' }}>Type</th>
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Volume (XCH)</th>
@@ -591,21 +593,27 @@ export default function TokenDetailScreen() {
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.map((t, i) => (
+                    {trades.map((t, i) => {
+                      const color = t.side === 'buy' ? '#22c55e' : t.side === 'sell' ? '#ef4444' : 'var(--text-primary)';
+                      return (
                       <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>{fmtDate(t.transferred_at)}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtXch(t.price_xch, 8)}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>
+                        <td style={{ padding: '10px 14px', color: 'var(--text-secondary)', fontSize: 12 }}>{fmtDate(t.transferred_at)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 600, color }}>
+                          {t.side ? t.side.toUpperCase() : '—'}
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)', color }}>{fmtXch(t.price_xch, 8)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)', color }}>
                           {t.amount_tokens != null ? t.amount_tokens.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}
                         </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)', color }}>
                           {t.volume_xch != null ? fmtXch(t.volume_xch, 4) : '—'}
                         </td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', color: 'var(--text-secondary)' }}>
                           {t.block_height?.toLocaleString() ?? '—'}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               )
