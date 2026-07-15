@@ -38,7 +38,6 @@ function timeAgo(iso: string): string {
 interface TopNavProps {
   activePath?: string;
   onWalletSwitch?: (newAddress: string) => void;
-  onCartClick?: () => void;
   searchValue?: string;
   onSearchChange?: (v: string) => void;
   searchPlaceholder?: string;
@@ -46,8 +45,8 @@ interface TopNavProps {
 
 const THEME_KEY = 'chia_site_theme';
 
-export default function TopNav({ activePath, onWalletSwitch, onCartClick, searchValue, onSearchChange, searchPlaceholder }: TopNavProps) {
-  const { items: cartItems } = useCart();
+export default function TopNav({ activePath, onWalletSwitch, searchValue, onSearchChange, searchPlaceholder }: TopNavProps) {
+  useCart();
   const path = activePath ?? window.location.pathname;
   const [menuOpen, setMenuOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
@@ -134,15 +133,8 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
   const activeWallet = wallets.find(w => w.id === activeWalletId);
 
   const links = [
-    { href: '/',                       label: 'Wallet',      match: (p: string) => p === '/' },
-    { href: '/marketplace',            label: 'Marketplace', match: (p: string) => p === '/marketplace' },
-    { href: '/marketplace/rankings',   label: 'Rankings',    match: (p: string) => p === '/marketplace/rankings' },
-    { href: '/marketplace/activity',   label: 'Activity',    match: (p: string) => p === '/marketplace/activity' },
-    { href: '/tokens',                 label: 'Tokens',      match: (p: string) => p.startsWith('/tokens') },
-    { href: '/marketplace/offers',     label: 'Offer Board', match: (p: string) => p === '/marketplace/offers' },
-    { href: '/marketplace/watchlist',  label: 'Watchlist',   match: (p: string) => p === '/marketplace/watchlist' },
-    { href: '/create',                 label: 'Create',      match: (p: string) => p.startsWith('/create') },
-    { href: '/marketplace/profile',    label: 'My NFTs',     match: (p: string) => p === '/marketplace/profile' },
+    { href: '/',       label: 'Wallet', match: (p: string) => p === '/' },
+    { href: '/tokens', label: 'Tokens', match: (p: string) => p.startsWith('/tokens') },
   ];
 
   return (
@@ -266,15 +258,6 @@ export default function TopNav({ activePath, onWalletSwitch, onCartClick, search
         </div>
       )}
 
-      {/* Cart icon */}
-      {onCartClick && (
-        <button className="wiz-cart-btn" onClick={onCartClick} aria-label="Cart">
-          🛒
-          {cartItems.length > 0 && (
-            <span className="wiz-cart-badge">{cartItems.length}</span>
-          )}
-        </button>
-      )}
 
       {/* Theme toggle */}
       <button className="wiz-theme-btn" onClick={toggleTheme} aria-label="Toggle theme" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>

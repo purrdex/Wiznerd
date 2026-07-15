@@ -100,13 +100,6 @@ const IconTrade = () => (
     <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
-const IconNft = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-    <rect x="3" y="3" width="18" height="18" rx="2"/>
-    <circle cx="8.5" cy="8.5" r="1.5"/>
-    <path d="M21 15l-5-5L5 21" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
 
 const FAILED_STATUS = (url: string): NodeStatus => ({
   url, label: 'Node', peakHeight: 0, synced: false,
@@ -2905,7 +2898,6 @@ export default function App() {
             <button className={`sidebar-item ${screen==='wallet'?'active':''}`} onClick={()=>setScreen('wallet')}><IconHome/><span>Home</span></button>
             <button className={`sidebar-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/><span>Send</span></button>
             <button className={`sidebar-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/><span>Receive</span></button>
-            <button className={`sidebar-item ${screen==='nfts'?'active':''}`} onClick={()=>setScreen('nfts')}><IconNft/><span>NFTs</span></button>
             <button className={`sidebar-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/><span>History</span></button>
             <button className={`sidebar-item ${screen==='offers'?'active':''}`} onClick={()=>setScreen('offers')}><IconTrade/><span>Trade</span></button>
             <button className={`sidebar-item ${screen==='settings'?'active':''}`} onClick={()=>setScreen('settings')}><IconSettings/><span>Settings</span></button>
@@ -2934,7 +2926,6 @@ export default function App() {
           <button className={`nav-item ${screen==='wallet'?'active':''}`} onClick={()=>setScreen('wallet')}><IconHome/>Home</button>
           <button className={`nav-item ${screen==='send'?'active':''}`} onClick={()=>setScreen('send')}><IconSend/>Send</button>
           <button className={`nav-item ${screen==='receive'?'active':''}`} onClick={()=>setScreen('receive')}><IconReceive/>Receive</button>
-          <button className={`nav-item ${screen==='nfts'?'active':''}`} onClick={()=>setScreen('nfts')}><IconNft/>NFTs</button>
           <button className={`nav-item ${screen==='history'?'active':''}`} onClick={()=>setScreen('history')}><IconHistory/>History</button>
           <button className={`nav-item ${screen==='offers'?'active':''}`} onClick={()=>setScreen('offers')}><IconTrade/>Trade</button>
           <button className={`nav-item ${screen==='settings'?'active':''}`} onClick={()=>setScreen('settings')}><IconSettings/>Settings</button>

@@ -501,7 +501,7 @@ export default function CollectionScreen() {
 
   return (
     <div className="mp-page">
-      <TopNav onCartClick={() => setCartOpen(true)} />
+      <TopNav />
       {cartOpen && <CartDrawer onClose={() => setCartOpen(false)} />}
       {coll.creator_address === walletAddress && (
         <div style={{ padding: '6px 24px', background: '#0f1016', borderBottom: '1px solid #1e2030' }}>

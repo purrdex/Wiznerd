@@ -232,7 +232,7 @@ export default function ProfilePage() {
   if (!walletAddress) {
     return (
       <div className="mp-page">
-        <TopNav onWalletSwitch={handleSwitch} onCartClick={() => setCartOpen(true)} />
+        <TopNav onWalletSwitch={handleSwitch} />
         {cartOpen && <CartDrawer onClose={() => setCartOpen(false)} />}
         <div style={{ textAlign: 'center', padding: '80px 24px', color: '#4b5563' }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>🔑</div>
@@ -247,7 +247,7 @@ export default function ProfilePage() {
   return (
     <div className="mp-page">
       {/* Nav */}
-      <TopNav onWalletSwitch={handleSwitch} onCartClick={() => setCartOpen(true)} />
+      <TopNav onWalletSwitch={handleSwitch} />
       {cartOpen && <CartDrawer onClose={() => setCartOpen(false)} />}
 
       {/* Profile header */}
