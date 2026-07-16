@@ -235,9 +235,9 @@ async function main() {
     if (typeCounts.extras)    console.log(`  EXTRA     : ${typeCounts.extras} tokens — DB has rows Dexie doesn't (stale offer_id or on-chain P2P)`);
     if (typeCounts.deltaOnly) console.log(`  DELTA ONLY: ${typeCounts.deltaOnly} tokens — vol totals differ despite matching offer_ids (rounding/FP or skipped 0-token offers)`);
     if (typeCounts.extras && !typeCounts.corrupt && !typeCounts.missing) {
-      console.log('\n  EXTRA-only: fix by deleting corrupt near-zero rows in Supabase SQL editor:');
-      console.log('    DELETE FROM cat_transfers WHERE source=\'dexie\' AND volume_xch > 0 AND volume_xch < 0.001;');
-      console.log('  Then re-run: node server/cat-backfill.js');
+      console.log('\n  EXTRA-only: likely legitimate — older Dexie trades outside the audit window,');
+      console.log('  TibetSwap-only tokens with AMM history, or off-Dexie P2P on-chain spends.');
+      console.log('  Run with a wider window to confirm: node server/volume-audit.js --days 30');
     }
   }
 }
