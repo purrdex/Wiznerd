@@ -52,22 +52,19 @@ function parseOffer(offer, assetId) {
   if (offId === assetLow && reqId === 'xch') {
     tokenAmount = off.amount != null ? Number(off.amount) : null;
     xchAmount   = req.amount != null ? Number(req.amount) : null;
-    priceXch    = offer.price != null ? Number(offer.price) : null;
 
   // XCH paid for CAT: offered=XCH, requested=CAT
   } else if (offId === 'xch' && reqId === assetLow) {
-    tokenAmount = req.amount != null ? Number(req.amount) : null;
     xchAmount   = off.amount != null ? Number(off.amount) : null;
-    // price = tokens per XCH on buy side — invert to get XCH per token
-    const rawPrice = offer.price != null ? Number(offer.price) : null;
-    priceXch    = rawPrice != null && rawPrice > 0 ? 1 / rawPrice : null;
+    tokenAmount = req.amount != null ? Number(req.amount) : null;
 
   } else {
     return null; // CAT-CAT swap or unrelated
   }
 
-  if (priceXch == null && tokenAmount && xchAmount) {
-    priceXch = tokenAmount > 0 ? xchAmount / tokenAmount : null;
+  // Always derive price from amounts — offer.price direction is inconsistent across offers
+  if (tokenAmount > 0 && xchAmount != null) {
+    priceXch = xchAmount / tokenAmount;
   }
 
   const volumeXch = xchAmount;

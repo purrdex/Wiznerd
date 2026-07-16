@@ -683,20 +683,16 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
         side         = 'buy';
         amountTokens = Number(req.amount ?? 0);
         volumeXch    = Number(off.amount ?? 0);
-        priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
-        if (offer.price != null) {
-          const raw = Number(offer.price);
-          priceXch = raw > 0 ? 1 / raw : null;
-        }
       } else if (offId === aLow && reqId === 'xch') {
         side         = 'sell';
         amountTokens = Number(off.amount ?? 0);
         volumeXch    = Number(req.amount ?? 0);
-        priceXch     = amountTokens > 0 ? volumeXch / amountTokens : null;
-        if (offer.price != null) priceXch = Number(offer.price);
       } else {
         continue; // not an XCH↔CAT pair
       }
+      // amounts are in mojos (non-compact API): XCH mojos / 1e12 = XCH; token mojos / 1e3 = tokens
+      // price direction in offer.price is inconsistent for buy-side — always derive from amounts
+      priceXch = amountTokens > 0 ? (volumeXch / 1e12) / (amountTokens / 1e3) : null;
 
       if (!priceXch || priceXch <= 0) continue;
 
