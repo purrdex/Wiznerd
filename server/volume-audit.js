@@ -99,6 +99,8 @@ async function auditToken(assetId, shortName, since) {
   const tibeVol    = (db['tibetapi'] || { vol: 0 }).vol;
 
   const apiSet = new Set(api.offers.map(o => o.id));
+  // Map offer_id → Dexie XCH amount for per-row comparison
+  const apiMap = new Map(api.offers.map(o => [o.id, o.xch]));
   const dbSet  = new Set(dexieSrc.rows.map(r => r.offer_id));
 
   const extras  = extraRows(dexieSrc, apiSet);
@@ -108,10 +110,15 @@ async function auditToken(assetId, shortName, since) {
   const extraVol   = extras.reduce((s, r) => s + Number(r.volume_xch || 0), 0);
   const missingVol = missing.reduce((s, o) => s + o.xch, 0);
 
-  // Classify corrupted rows (volume looks like mojo-divided compact amount)
+  // Classify corrupted rows: our stored value is <1% of what Dexie says.
+  // This catches the compact÷1e12 bug (e.g. 500 XCH → 5e-10) without
+  // falsely flagging legitimate micro-trades (<0.001 XCH on cheap tokens).
   const corrupt = dexieSrc.rows.filter(r => {
+    if (!r.offer_id) return false;
+    const apiXch = apiMap.get(r.offer_id);
+    if (!apiXch || apiXch <= 0) return false;
     const v = Number(r.volume_xch);
-    return v > 0 && v < 0.001 && apiSet.has(r.offer_id);
+    return v > 0 && v < apiXch * 0.01; // stored value is <1% of truth
   });
   const corruptVol = corrupt.reduce((s, r) => s + Number(r.volume_xch), 0);
 
@@ -137,10 +144,12 @@ async function auditToken(assetId, shortName, since) {
 
   // Report problems
   if (corrupt.length) {
-    console.log(`  ✗ CORRUPT : ${corrupt.length} rows have near-zero volume (old compact÷1e12 bug)`);
-    console.log(`              true volume missing ≈ ${fmt(corruptVol * 1e12)} XCH`);
+    const trueVol = corrupt.reduce((s, r) => s + (apiMap.get(r.offer_id) || 0), 0);
+    console.log(`  ✗ CORRUPT : ${corrupt.length} rows stored at <1% of true value (compact÷1e12 bug)`);
+    console.log(`              stored ${fmt(corruptVol)} XCH  →  true ${fmt(trueVol)} XCH`);
     for (const r of corrupt.slice(0, 3)) {
-      console.log(`              ${r.offer_id?.slice(0, 32)} vol=${r.volume_xch}`);
+      const api = apiMap.get(r.offer_id) || 0;
+      console.log(`              ${r.offer_id?.slice(0, 32)}  stored=${r.volume_xch}  true=${fmt(api)}`);
     }
     if (corrupt.length > 3) console.log(`              ...and ${corrupt.length - 3} more`);
   }
