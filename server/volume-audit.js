@@ -1,11 +1,11 @@
 'use strict';
-// Volume audit — compares our DB 24h volume vs Dexie API for every token in cat_tokens.
-// Flags tokens where our volume is <50% or >200% of what Dexie reports.
+// Volume audit — compares our DB dexie-source volume vs Dexie API exactly.
+// Any nonzero delta is flagged. AMM/onchain shown separately.
 //
 // Usage:
-//   node server/volume-audit.js              # all tokens
+//   node server/volume-audit.js              # all active tokens
 //   node server/volume-audit.js <asset_id>   # single token
-//   node server/volume-audit.js --days 7     # 7-day window instead of 24h
+//   node server/volume-audit.js --days 7     # 7-day window
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { createClient } = require('@supabase/supabase-js');
@@ -15,55 +15,157 @@ const supabase  = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SE
 const DEXIE_API = 'https://api.dexie.space/v1';
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function fmt(n) { return Number(n).toFixed(4); }
 
-async function dexieVolume(assetId, since) {
-  let vol = 0, page = 1, done = false;
-  while (!done) {
+// Fetch all Dexie completed offers for a token since `since`,
+// return { vol, count, offers: [{id, xch, at}] }
+async function dexieOffers(assetId, since) {
+  let vol = 0, count = 0, offers = [], page = 1;
+  while (true) {
     let data;
     try {
-      const res = await fetch(`${DEXIE_API}/offers?offered_or_requested=${assetId}&status=4&compact=true&page_size=500&page=${page}`, {
-        signal: AbortSignal.timeout(20000),
-      });
+      const res = await fetch(
+        `${DEXIE_API}/offers?offered_or_requested=${assetId}&status=4&compact=true&page_size=500&page=${page}`,
+        { signal: AbortSignal.timeout(20000) }
+      );
       data = await res.json();
-    } catch { break; }
+    } catch (e) { console.error('  Dexie fetch error:', e.message); break; }
 
-    const offers = data.offers || [];
-    if (!offers.length) break;
-
-    for (const o of offers) {
-      if (o.date_completed < since) { done = true; break; }
+    const list = data.offers || [];
+    let hitOld = false;
+    for (const o of list) {
+      if (o.date_completed < since) { hitOld = true; break; }
       const off = o.offered?.[0], req = o.requested?.[0];
       if (!off || !req) continue;
       const offId = (off.id || '').toLowerCase();
       const reqId = (req.id || '').toLowerCase();
       const aLow  = assetId.toLowerCase();
-      if (offId === aLow && reqId === 'xch')      vol += Number(req.amount || 0);
-      else if (offId === 'xch' && reqId === aLow) vol += Number(off.amount || 0);
+      let xch = 0;
+      if (offId === aLow && reqId === 'xch')      xch = Number(req.amount || 0);
+      else if (offId === 'xch' && reqId === aLow) xch = Number(off.amount || 0);
+      else continue;
+      vol += xch; count++; offers.push({ id: o.id, xch, at: o.date_completed });
     }
-
-    if (done || offers.length < 500) break;
+    if (hitOld || list.length < 500) break;
     page++;
     await sleep(200);
   }
-  return vol;
+  return { vol, count, offers };
 }
 
-async function dbVolume(assetId, since) {
-  const { data } = await supabase
+// Fetch our DB rows for a token, return breakdown by source
+async function dbRows(assetId, since) {
+  const { data, error } = await supabase
     .from('cat_transfers')
-    .select('volume_xch, source')
+    .select('offer_id, volume_xch, source, transferred_at')
     .eq('asset_id', assetId)
     .gte('transferred_at', since)
     .not('price_xch', 'is', null);
 
+  if (error) throw new Error(error.message);
+
   const bySrc = {};
-  let total = 0;
   for (const r of data || []) {
     const v = Number(r.volume_xch || 0);
-    bySrc[r.source] = (bySrc[r.source] || 0) + v;
-    total += v;
+    if (!bySrc[r.source]) bySrc[r.source] = { vol: 0, count: 0, rows: [] };
+    bySrc[r.source].vol   += v;
+    bySrc[r.source].count += 1;
+    bySrc[r.source].rows.push(r);
   }
-  return { total, bySrc };
+  return bySrc;
+}
+
+// Find DB dexie rows whose offer_id is NOT in the Dexie API set
+function extraRows(dbDexie, apiSet) {
+  return (dbDexie?.rows || []).filter(r => !apiSet.has(r.offer_id));
+}
+
+// Find Dexie API offers missing from our DB
+function missingOffers(apiOffers, dbSet) {
+  return apiOffers.filter(o => !dbSet.has(o.id));
+}
+
+async function auditToken(assetId, shortName, since) {
+  const label = (shortName || assetId.slice(0, 8)).slice(0, 12);
+
+  const [api, db] = await Promise.all([
+    dexieOffers(assetId, since),
+    dbRows(assetId, since),
+  ]);
+
+  const dexieSrc  = db['dexie']   || { vol: 0, count: 0, rows: [] };
+  const onchainVol = (db['onchain']  || { vol: 0 }).vol;
+  const ammVol     = (db['amm']      || { vol: 0 }).vol;
+  const tibeVol    = (db['tibetapi'] || { vol: 0 }).vol;
+
+  const apiSet = new Set(api.offers.map(o => o.id));
+  const dbSet  = new Set(dexieSrc.rows.map(r => r.offer_id));
+
+  const extras  = extraRows(dexieSrc, apiSet);
+  const missing = missingOffers(api.offers, dbSet);
+
+  const delta = dexieSrc.vol - api.vol;
+  const extraVol   = extras.reduce((s, r) => s + Number(r.volume_xch || 0), 0);
+  const missingVol = missing.reduce((s, o) => s + o.xch, 0);
+
+  // Classify corrupted rows (volume looks like mojo-divided compact amount)
+  const corrupt = dexieSrc.rows.filter(r => {
+    const v = Number(r.volume_xch);
+    return v > 0 && v < 0.001 && apiSet.has(r.offer_id);
+  });
+  const corruptVol = corrupt.reduce((s, r) => s + Number(r.volume_xch), 0);
+
+  const perfect = missing.length === 0 && corrupt.length === 0 && extras.length === 0;
+
+  console.log(`\n${label} (${assetId.slice(0, 8)})`);
+  console.log(`  Dexie API : ${fmt(api.vol)} XCH  (${api.count} offers)`);
+  console.log(`  DB dexie  : ${fmt(dexieSrc.vol)} XCH  (${dexieSrc.count} rows)`);
+
+  if (onchainVol || ammVol || tibeVol) {
+    const extras2 = [
+      onchainVol && `onchain +${fmt(onchainVol)}`,
+      ammVol     && `amm +${fmt(ammVol)}`,
+      tibeVol    && `tibetapi +${fmt(tibeVol)}`,
+    ].filter(Boolean).join('  ');
+    console.log(`  Other     : ${extras2}`);
+  }
+
+  if (perfect) {
+    console.log('  ✓ exact match');
+    return { ok: true };
+  }
+
+  // Report problems
+  if (corrupt.length) {
+    console.log(`  ✗ CORRUPT : ${corrupt.length} rows have near-zero volume (old compact÷1e12 bug)`);
+    console.log(`              true volume missing ≈ ${fmt(corruptVol * 1e12)} XCH`);
+    for (const r of corrupt.slice(0, 3)) {
+      console.log(`              ${r.offer_id?.slice(0, 32)} vol=${r.volume_xch}`);
+    }
+    if (corrupt.length > 3) console.log(`              ...and ${corrupt.length - 3} more`);
+  }
+
+  if (missing.length) {
+    console.log(`  ✗ MISSING : ${missing.length} Dexie offers not in DB (${fmt(missingVol)} XCH)`);
+    for (const o of missing.slice(0, 3)) {
+      console.log(`              ${o.id?.slice(0, 32)}  ${fmt(o.xch)} XCH  ${o.at.slice(0, 16)}`);
+    }
+    if (missing.length > 3) console.log(`              ...and ${missing.length - 3} more`);
+  }
+
+  if (extras.length) {
+    console.log(`  ⚠ EXTRA   : ${extras.length} DB rows not in Dexie API (${fmt(extraVol)} XCH)`);
+    for (const r of extras.slice(0, 3)) {
+      console.log(`              ${r.offer_id?.slice(0, 32)}  vol=${r.volume_xch}`);
+    }
+    if (extras.length > 3) console.log(`              ...and ${extras.length - 3} more`);
+  }
+
+  if (!corrupt.length && !missing.length && !extras.length && Math.abs(delta) > 0.0001) {
+    console.log(`  ✗ DELTA   : DB=${fmt(dexieSrc.vol)}  API=${fmt(api.vol)}  diff=${fmt(delta)}`);
+  }
+
+  return { ok: false };
 }
 
 async function main() {
@@ -74,14 +176,17 @@ async function main() {
   const singleId = args.find((a, i) => !a.startsWith('--') && !skipSet.has(i)) || null;
 
   const since = new Date(Date.now() - days * 86400000).toISOString();
-  console.log(`\nVolume audit — ${days}d window (since ${since.slice(0, 16)})\n`);
+  console.log(`Volume audit — ${days}d window (since ${since.slice(0, 16)} UTC)\n`);
+  console.log('Compares DB dexie-source rows against Dexie API exactly.');
+  console.log('CORRUPT = volume stored as near-zero (compact÷1e12 bug from old indexer)');
+  console.log('MISSING = Dexie has the offer, our DB does not');
+  console.log('EXTRA   = our DB has the row, Dexie API does not (on-chain P2P not via Dexie)');
 
   let tokens;
   if (singleId) {
     const { data } = await supabase.from('cat_tokens').select('asset_id, short_name').eq('asset_id', singleId).maybeSingle();
     tokens = [{ asset_id: singleId, short_name: data?.short_name || singleId.slice(0, 8) }];
   } else {
-    // Only audit tokens with >0 volume so we don't hammer Dexie for dead tokens
     const { data } = await supabase
       .from('cat_tokens')
       .select('asset_id, short_name')
@@ -91,66 +196,22 @@ async function main() {
     tokens = data || [];
   }
 
-  console.log(`Checking ${tokens.length} tokens...\n`);
-  console.log(
-    'Token'.padEnd(14) +
-    'DB total'.padStart(12) +
-    'Dexie API'.padStart(12) +
-    'Ratio'.padStart(8) +
-    '  Status'
-  );
-  console.log('─'.repeat(60));
+  console.log(`\nChecking ${tokens.length} tokens...\n`);
 
-  let okCount = 0, warnCount = 0, missingCount = 0;
-
+  let okCount = 0, problemCount = 0;
   for (const { asset_id, short_name } of tokens) {
-    const label = (short_name || asset_id.slice(0, 8)).slice(0, 12);
-    const [dex, db] = await Promise.all([
-      dexieVolume(asset_id, since),
-      dbVolume(asset_id, since),
-    ]);
-
-    const ratio  = dex > 0 ? db.total / dex : (db.total > 0 ? Infinity : 1);
-    const pct    = dex > 0 ? `${(ratio * 100).toFixed(0)}%` : 'N/A';
-    let status;
-
-    if (dex === 0 && db.total === 0) {
-      status = '  ✓ no activity';
-    } else if (dex === 0 && db.total > 0) {
-      status = '  ℹ DB only (on-chain/AMM)';
-    } else if (db.total === 0 && dex > 0) {
-      status = '  ✗ MISSING — DB has 0, Dexie has ' + dex.toFixed(2);
-      missingCount++;
-    } else if (ratio < 0.5) {
-      status = '  ✗ UNDER by ' + ((1 - ratio) * 100).toFixed(0) + '%';
-      warnCount++;
-    } else if (ratio > 2.5) {
-      status = '  ⚠ OVER by ' + ((ratio - 1) * 100).toFixed(0) + '%';
-      warnCount++;
-    } else {
-      status = '  ✓ ok';
-      okCount++;
-    }
-
-    const srcSummary = Object.entries(db.bySrc)
-      .map(([s, v]) => `${s}=${v.toFixed(1)}`)
-      .join(' ');
-
-    console.log(
-      label.padEnd(14) +
-      db.total.toFixed(2).padStart(12) +
-      dex.toFixed(2).padStart(12) +
-      pct.padStart(8) +
-      status
-    );
-    if (srcSummary) console.log('              ' + srcSummary);
-
-    await sleep(350);
+    const result = await auditToken(asset_id, short_name, since);
+    if (result.ok) okCount++; else problemCount++;
+    await sleep(400);
   }
 
-  console.log('\n' + '─'.repeat(60));
-  console.log(`✓ ok: ${okCount}  ✗ warn/missing: ${warnCount + missingCount}  total: ${tokens.length}`);
+  console.log(`\n${'─'.repeat(50)}`);
+  console.log(`✓ exact: ${okCount}   ✗ problems: ${problemCount}   total: ${tokens.length}`);
   console.log('');
+  if (problemCount) {
+    console.log('To fix CORRUPT rows: git pull on server, pm2 restart, then node server/cat-backfill.js --fresh');
+    console.log('To fix MISSING rows: node server/cat-backfill.js <asset_id>');
+  }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
