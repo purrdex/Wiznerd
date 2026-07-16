@@ -48,13 +48,17 @@ function parseOffer(offer, assetId) {
   let tokenAmount  = null;
   let priceXch     = null;
 
+  let side;
+
   // CAT sold for XCH: offered=CAT, requested=XCH
   if (offId === assetLow && reqId === 'xch') {
+    side        = 'sell';
     tokenAmount = off.amount != null ? Number(off.amount) : null;
     xchAmount   = req.amount != null ? Number(req.amount) : null;
 
   // XCH paid for CAT: offered=XCH, requested=CAT
   } else if (offId === 'xch' && reqId === assetLow) {
+    side        = 'buy';
     xchAmount   = off.amount != null ? Number(off.amount) : null;
     tokenAmount = req.amount != null ? Number(req.amount) : null;
 
@@ -78,6 +82,7 @@ function parseOffer(offer, assetId) {
     block_height:   offer.spent_block_index || null,
     transferred_at: offer.date_completed || new Date().toISOString(),
     source:         'dexie',
+    side,
   };
 }
 
@@ -111,18 +116,12 @@ async function backfillToken(assetId, shortName, sinceDate) {
 
     for (let i = 0; i < rows.length; i += 500) {
       const batch = rows.slice(i, i + 500);
-      const { error } = await supabase.from('cat_transfers').insert(batch);
+      const { error } = await supabase.from('cat_transfers')
+        .upsert(batch, { onConflict: 'offer_id', ignoreDuplicates: false });
       if (!error) {
         totalInserted += batch.length;
-      } else if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate')) {
-        // Unique violation — insert one by one, skip already-present rows
-        for (const row of batch) {
-          const { error: e2 } = await supabase.from('cat_transfers').insert(row);
-          if (!e2) totalInserted++;
-          // ignore individual duplicate errors silently
-        }
       } else {
-        console.error(`  insert error: ${error.message}`);
+        console.error(`  upsert error: ${error.message}`);
       }
     }
   }
