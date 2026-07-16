@@ -165,7 +165,8 @@ async function auditToken(assetId, shortName, since) {
     console.log(`  ✗ DELTA   : DB=${fmt(dexieSrc.vol)}  API=${fmt(api.vol)}  diff=${fmt(delta)}`);
   }
 
-  return { ok: false };
+  const isDeltaOnly = !corrupt.length && !missing.length && !extras.length;
+  return { ok: false, corrupt: corrupt.length, missing: missing.length, extras: extras.length, deltaOnly: isDeltaOnly ? 1 : 0 };
 }
 
 async function main() {
@@ -199,18 +200,36 @@ async function main() {
   console.log(`\nChecking ${tokens.length} tokens...\n`);
 
   let okCount = 0, problemCount = 0;
+  const typeCounts = { corrupt: 0, missing: 0, extras: 0, deltaOnly: 0 };
+
   for (const { asset_id, short_name } of tokens) {
     const result = await auditToken(asset_id, short_name, since);
-    if (result.ok) okCount++; else problemCount++;
+    if (result.ok) {
+      okCount++;
+    } else {
+      problemCount++;
+      if (result.corrupt)   typeCounts.corrupt++;
+      if (result.missing)   typeCounts.missing++;
+      if (result.extras)    typeCounts.extras++;
+      if (result.deltaOnly) typeCounts.deltaOnly++;
+    }
     await sleep(400);
   }
 
   console.log(`\n${'─'.repeat(50)}`);
   console.log(`✓ exact: ${okCount}   ✗ problems: ${problemCount}   total: ${tokens.length}`);
-  console.log('');
+
   if (problemCount) {
-    console.log('To fix CORRUPT rows: git pull on server, pm2 restart, then node server/cat-backfill.js --fresh');
-    console.log('To fix MISSING rows: node server/cat-backfill.js <asset_id>');
+    console.log('\nProblem type breakdown (tokens affected):');
+    if (typeCounts.corrupt)   console.log(`  CORRUPT   : ${typeCounts.corrupt} tokens — run: git pull + pm2 restart + node server/cat-backfill.js --fresh`);
+    if (typeCounts.missing)   console.log(`  MISSING   : ${typeCounts.missing} tokens — run: node server/cat-backfill.js (upserts new/missing rows)`);
+    if (typeCounts.extras)    console.log(`  EXTRA     : ${typeCounts.extras} tokens — DB has rows Dexie doesn't (stale offer_id or on-chain P2P)`);
+    if (typeCounts.deltaOnly) console.log(`  DELTA ONLY: ${typeCounts.deltaOnly} tokens — vol totals differ despite matching offer_ids (rounding/FP or skipped 0-token offers)`);
+    if (typeCounts.extras && !typeCounts.corrupt && !typeCounts.missing) {
+      console.log('\n  EXTRA-only: fix by deleting corrupt near-zero rows in Supabase SQL editor:');
+      console.log('    DELETE FROM cat_transfers WHERE source=\'dexie\' AND volume_xch > 0 AND volume_xch < 0.001;');
+      console.log('  Then re-run: node server/cat-backfill.js');
+    }
   }
 }
 

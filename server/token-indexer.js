@@ -931,6 +931,11 @@ async function start(supabase) {
 
   // Backfill last 7 days of completed Dexie offers → cat_transfers (for sparklines)
   backfillCompletedOffers(supabase).catch(e => console.warn('[token-idx] backfill error:', e.message));
+  // Re-sync every hour so new completed offers are picked up continuously
+  const completedOfferTimer = setInterval(() => {
+    backfillCompletedOffers(supabase).catch(e => console.warn('[token-idx] completed-offer sync error:', e.message));
+  }, 60 * 60_000);
+
   const offerTimer = setInterval(() => {
     syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers error:', e.message));
   }, OFFER_POLL_MS);
@@ -944,7 +949,7 @@ async function start(supabase) {
     refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
   }, 5 * 60_000);
 
-  return { blockTimer, offerTimer, reservePollTimer, statsTimer };
+  return { blockTimer, offerTimer, completedOfferTimer, reservePollTimer, statsTimer };
 }
 
 module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers, refreshTokenStats };
