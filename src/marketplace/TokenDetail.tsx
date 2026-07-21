@@ -37,7 +37,6 @@ interface Trade {
   price_xch: number;
   amount_tokens: number | null;
   volume_xch: number | null;
-  block_height: number | null;
   transferred_at: string;
   source: string;
   side: 'buy' | 'sell' | null;
@@ -589,7 +588,6 @@ export default function TokenDetailScreen() {
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Price (XCH)</th>
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '10px 14px', textAlign: 'right' }}>Volume (XCH)</th>
-                      <th style={{ padding: '10px 14px', textAlign: 'right' }}>Block</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -607,9 +605,6 @@ export default function TokenDetailScreen() {
                         </td>
                         <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'var(--font-mono)', color }}>
                           {t.volume_xch != null ? fmtXch(t.volume_xch, 4) : '—'}
-                        </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                          {t.block_height?.toLocaleString() ?? '—'}
                         </td>
                       </tr>
                       );

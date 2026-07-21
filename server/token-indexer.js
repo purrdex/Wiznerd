@@ -13,6 +13,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const crypto = require('crypto');
+const { buildCandles: buildOhlcvCandles, TIMEFRAMES: OHLCV_TIMEFRAMES } = require('./cat-ohlcv');
 
 const PROXY         = process.env.PROXY_URL || 'http://localhost:3001';
 const TIBET_API     = 'https://api.v2.tibetswap.io';
@@ -23,10 +24,11 @@ const OFFER_POLL_MS = 5 * 60_000;    // Dexie open-offer sync interval
 const BFS_BATCH    = 50;              // parent_ids per RPC call during bootstrap
 const BFS_DELAY_MS = 50;              // ms between BFS rounds
 
-// Timeframes matching DB constraint in 026_token_indexer.sql
-const TIMEFRAMES = ['1min', '15min', '1h', '4h', '1d', '1w', '1m', '3mo'];
-
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function rebuildCandlesForToken(assetId) {
+  for (const tf of OHLCV_TIMEFRAMES) await buildOhlcvCandles(assetId, tf, null);
+}
 
 // ── RPC helpers ───────────────────────────────────────────────────────────────
 
@@ -313,16 +315,17 @@ function classifyEvent(oldXch, oldToken, newXch, newToken) {
 // ── Event recording ───────────────────────────────────────────────────────────
 
 async function recordEvent(supabase, pair, ev, blockHeight, blockTime) {
-  // volume_xch in XCH (from mojos), amount_tokens in human units
+  // Trades are handled exclusively by Dexie backfill (per-offer, deduplicated by offer_id).
+  // The block scanner and reserve poll only record LP events here — they aggregate multiple
+  // trades into one cumulative delta which can't be reliably deduplicated against per-offer records.
+  if (ev.type === 'trade') return;
+
   const volumeXch    = ev.xchDelta   / 1e12;
-  const amountTokens = ev.tokenDelta / 1000;  // most CATs: 1000 mojos per unit
-  const priceXch     = (ev.type === 'trade' && amountTokens > 0)
-    ? volumeXch / amountTokens
-    : null;
+  const amountTokens = ev.tokenDelta / 1000;
 
   await supabase.from('cat_transfers').insert({
     asset_id:       pair.asset_id,
-    price_xch:      priceXch,
+    price_xch:      null,
     amount_tokens:  amountTokens,
     volume_xch:     volumeXch,
     block_height:   blockHeight,
@@ -380,10 +383,8 @@ async function onPairCoinAdvanced(supabase, pair, newCoinId, blockHeight, blockT
     updated_at: new Date().toISOString(),
   }).eq('launcher_id', pair.launcher_id);
 
-  // Rebuild OHLCV candles for trades
   if (ev?.type === 'trade') {
-    const since = new Date(Date.now() - 2 * 86_400_000).toISOString();
-    rebuildCandles(supabase, pair.asset_id, since).catch(() => {});
+    rebuildCandlesForToken(pair.asset_id).catch(() => {});
   }
 
   return ev;
@@ -439,94 +440,6 @@ async function processBlock(supabase, height) {
   }
 
   return events;
-}
-
-// ── OHLCV helpers (mirrors cat-sync.js) ──────────────────────────────────────
-
-function toBucket(date, timeframe) {
-  const d = new Date(date);
-  switch (timeframe) {
-    case '1min':  { d.setUTCSeconds(0, 0); return d; }
-    case '15min': { d.setUTCSeconds(0, 0); d.setUTCMinutes(Math.floor(d.getUTCMinutes() / 15) * 15); return d; }
-    case '1h':    { d.setUTCMinutes(0, 0, 0); return d; }
-    case '4h':    { d.setUTCMinutes(0, 0, 0); d.setUTCHours(Math.floor(d.getUTCHours() / 4) * 4); return d; }
-    case '1d':    { d.setUTCHours(0, 0, 0, 0); return d; }
-    case '1w':    {
-      d.setUTCHours(0, 0, 0, 0);
-      const day = d.getUTCDay();
-      d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
-      return d;
-    }
-    case '1m':    { d.setUTCDate(1); d.setUTCHours(0, 0, 0, 0); return d; }
-    case '3mo':   { d.setUTCDate(1); d.setUTCHours(0, 0, 0, 0); d.setUTCMonth(Math.floor(d.getUTCMonth() / 3) * 3); return d; }
-    default: return d;
-  }
-}
-
-function rejectOutliers(prices) {
-  if (prices.length < 6) return prices;
-  const sorted = [...prices].sort((a, b) => a - b);
-  const q1 = sorted[Math.floor(sorted.length * 0.25)];
-  const q3 = sorted[Math.floor(sorted.length * 0.75)];
-  const iqr = q3 - q1;
-  if (iqr === 0) return prices;
-  const lo = q1 - 5 * iqr, hi = q3 + 5 * iqr;
-  return prices.filter(p => p >= lo && p <= hi);
-}
-
-async function rebuildCandles(supabase, assetId, since) {
-  const pad = new Date(new Date(since).getTime() - 7 * 86_400_000).toISOString();
-  const trades = [];
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from('cat_transfers')
-      .select('price_xch, volume_xch, transferred_at')
-      .eq('asset_id', assetId)
-      .not('price_xch', 'is', null)
-      .gte('transferred_at', pad)
-      .order('transferred_at', { ascending: true })
-      .range(from, from + 999);
-    if (error || !data?.length) break;
-    trades.push(...data);
-    if (data.length < 1000) break;
-    from += 1000;
-  }
-  if (!trades.length) return;
-
-  for (const timeframe of TIMEFRAMES) {
-    const bucketMap = new Map();
-    for (const t of trades) {
-      const key = toBucket(t.transferred_at, timeframe).toISOString();
-      if (!bucketMap.has(key)) bucketMap.set(key, { prices: [], volume: 0, count: 0 });
-      const e = bucketMap.get(key);
-      e.prices.push(Number(t.price_xch));
-      e.volume += Number(t.volume_xch || 0);
-      e.count++;
-    }
-
-    const rows = [];
-    for (const key of [...bucketMap.keys()].sort()) {
-      const { prices: raw, volume, count } = bucketMap.get(key);
-      const prices = rejectOutliers(raw);
-      if (!prices.length) continue;
-      rows.push({
-        asset_id: assetId, timeframe, bucket_start: key,
-        open:        prices[0],
-        high:        Math.max(...prices),
-        low:         Math.min(...prices),
-        close:       prices[prices.length - 1],
-        volume_xch:  volume,
-        trade_count: count,
-        updated_at:  new Date().toISOString(),
-      });
-    }
-
-    for (let i = 0; i < rows.length; i += 500) {
-      await supabase.from('cat_ohlcv')
-        .upsert(rows.slice(i, i + 500), { onConflict: 'asset_id,timeframe,bucket_start' });
-    }
-  }
 }
 
 // ── Dexie open-offer sync ─────────────────────────────────────────────────────
@@ -653,7 +566,7 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
   while (true) {
     let data;
     try {
-      const url = `${DEXIE_API}/offers?offered_or_requested=${assetId}&status=4&page_size=50&page=${page}`;
+      const url = `${DEXIE_API}/offers?offered_or_requested=${assetId}&status=4&compact=true&page_size=50&page=${page}`;
       const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
       if (!res.ok) break;
       data = await res.json();
@@ -690,9 +603,8 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
       } else {
         continue; // not an XCH↔CAT pair
       }
-      // amounts are in mojos (non-compact API): XCH mojos / 1e12 = XCH; token mojos / 1e3 = tokens
-      // price direction in offer.price is inconsistent for buy-side — always derive from amounts
-      priceXch = amountTokens > 0 ? (volumeXch / 1e12) / (amountTokens / 1e3) : null;
+      // compact=true: amounts already in human-readable units (XCH, tokens) — no division needed
+      priceXch = amountTokens > 0 ? volumeXch / amountTokens : null;
 
       if (!priceXch || priceXch <= 0) continue;
 
@@ -700,8 +612,8 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
         offer_id:      offer.id,
         asset_id:      assetId,
         price_xch:     priceXch,
-        amount_tokens: amountTokens / 1000,
-        volume_xch:    volumeXch    / 1e12,
+        amount_tokens: amountTokens,
+        volume_xch:    volumeXch,
         transferred_at: completedAt,
         source:        'dexie',
         event_type:    'trade',
@@ -709,10 +621,33 @@ async function backfillCompletedOffersForToken(supabase, assetId) {
       });
     }
 
+    // Dedup: skip dexie rows that the AMM scanner (tibetapi/onchain) already captured.
+    // TibetSwap v2 trades appear in both Dexie completed offers and AMM reserve changes.
+    // One batch query covers all rows in this page (time window = min..max + 35 min buffer).
+    let dedupedRows = rows;
     if (rows.length) {
+      const times = rows.map(r => new Date(r.transferred_at).getTime());
+      const minT = new Date(Math.min(...times) - 5 * 60_000).toISOString();
+      const maxT = new Date(Math.max(...times) + 35 * 60_000).toISOString();
+      const { data: ammExisting } = await supabase.from('cat_transfers')
+        .select('volume_xch, transferred_at')
+        .eq('asset_id', assetId).in('source', ['tibetapi', 'onchain'])
+        .gte('transferred_at', minT).lte('transferred_at', maxT);
+      if (ammExisting?.length) {
+        dedupedRows = rows.filter(r => {
+          const v = Number(r.volume_xch);
+          return !ammExisting.some(e => {
+            const ev = Number(e.volume_xch);
+            return ev > 0 && Math.abs(ev - v) / ev < 0.01; // within 1%
+          });
+        });
+      }
+    }
+
+    if (dedupedRows.length) {
       const { error } = await supabase.from('cat_transfers')
-        .upsert(rows, { onConflict: 'offer_id', ignoreDuplicates: false });
-      if (!error) inserted += rows.length;
+        .upsert(dedupedRows, { onConflict: 'offer_id', ignoreDuplicates: false });
+      if (!error) inserted += dedupedRows.length;
     }
 
     if (hitOld || offers.length < 50) break;
@@ -727,13 +662,19 @@ async function backfillCompletedOffers(supabase) {
   if (!tokens?.length) return;
 
   let total = 0;
+  const updatedIds = [];
   for (const { asset_id } of tokens) {
     try {
-      total += await backfillCompletedOffersForToken(supabase, asset_id);
+      const n = await backfillCompletedOffersForToken(supabase, asset_id);
+      total += n;
+      if (n > 0) updatedIds.push(asset_id);
     } catch { /* skip */ }
     await sleep(300);
   }
-  if (total > 0) console.log(`[token-idx] backfill: ${total} completed offers → cat_transfers`);
+  if (total > 0) {
+    console.log(`[token-idx] backfill: ${total} completed offers → cat_transfers`);
+    for (const id of updatedIds) rebuildCandlesForToken(id).catch(() => {});
+  }
 }
 
 // ── Reserve snapshot poll ─────────────────────────────────────────────────────
@@ -744,8 +685,12 @@ async function backfillCompletedOffers(supabase) {
 // each detected advance, so pollPairReserves only picks up undetected residuals.
 
 const RESERVE_POLL_MS = 30 * 60_000;
+let reservePollRunning = false;
 
 async function pollPairReserves(supabase) {
+  if (reservePollRunning) return;
+  reservePollRunning = true;
+  try {
   const tibetPairs = [];
   let skip = 0;
   while (true) {
@@ -787,14 +732,24 @@ async function pollPairReserves(supabase) {
     const ev = classifyEvent(oldXch, oldToken, newXch, newToken);
     if (!ev) continue;
 
+    // Update in-memory state before the async insert so a concurrent poll
+    // iteration sees the new reserves and doesn't insert a duplicate.
+    pair.xch_reserve   = newXch;
+    pair.token_reserve = newToken;
+
+    const volumeXch = ev.xchDelta / 1e12;
+
     try {
-      // Use 'tibetapi' source so these poll-aggregated events are distinguishable
+      // Trades come exclusively from Dexie backfill. Only record LP events here —
+      // the reserve poll sees a cumulative delta across N trades, which can't be
+      // matched 1:1 against individual Dexie offer records for deduplication.
+      if (ev.type === 'trade') { changed++; continue; }
+
       await supabase.from('cat_transfers').insert({
         asset_id:       pair.asset_id,
-        price_xch:      (ev.type === 'trade' && ev.tokenDelta > 0)
-          ? (ev.xchDelta / 1e12) / (ev.tokenDelta / 1000) : null,
+        price_xch:      null,
         amount_tokens:  ev.tokenDelta / 1000,
-        volume_xch:     ev.xchDelta   / 1e12,
+        volume_xch:     volumeXch,
         block_height:   null,
         transferred_at: now,
         source:         'tibetapi',
@@ -804,9 +759,6 @@ async function pollPairReserves(supabase) {
     } catch (e) {
       console.warn(`[token-idx] reserve poll insert ${launcherId.slice(0, 8)}: ${e.message}`);
     }
-
-    pair.xch_reserve   = newXch;
-    pair.token_reserve = newToken;
 
     supabase.from('tibet_pairs').update({
       xch_reserve:       newXch,
@@ -819,6 +771,7 @@ async function pollPairReserves(supabase) {
   }
 
   if (changed > 0) console.log(`[token-idx] reserve poll: ${changed} pair(s) with new volume`);
+  } finally { reservePollRunning = false; }
 }
 
 // ── Pre-compute token stats into cat_tokens ──────────────────────────────────
@@ -901,6 +854,7 @@ async function poll() {
     await saveLastHeight(upto);
 
     if (totalEvents > 0) console.log(`[token-idx] blocks ${from + 1}–${upto}: ${totalEvents} event(s)`);
+    else if (Math.floor(upto / 500) > Math.floor(from / 500)) console.log(`[token-idx] catchup: block ${upto} / ${peak} (${peak - upto} behind)`);
   } catch (e) {
     console.warn(`[token-idx] poll error: ${e.message}`);
   }
@@ -929,12 +883,12 @@ async function start(supabase) {
   // Start Dexie offer sync
   syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers init error:', e.message));
 
-  // Backfill last 7 days of completed Dexie offers → cat_transfers (for sparklines)
+  // Dexie completed-offer backfill is the sole source of trade records.
+  // Run at startup (full 7-day history) then every 5 minutes to keep trades near-real-time.
   backfillCompletedOffers(supabase).catch(e => console.warn('[token-idx] backfill error:', e.message));
-  // Re-sync every hour so new completed offers are picked up continuously
   const completedOfferTimer = setInterval(() => {
     backfillCompletedOffers(supabase).catch(e => console.warn('[token-idx] completed-offer sync error:', e.message));
-  }, 60 * 60_000);
+  }, 5 * 60_000);
 
   const offerTimer = setInterval(() => {
     syncAllOffers(supabase).catch(e => console.warn('[token-idx] offers error:', e.message));
@@ -949,7 +903,27 @@ async function start(supabase) {
     refreshTokenStats(supabase).catch(e => console.warn('[token-idx] stats error:', e.message));
   }, 5 * 60_000);
 
-  return { blockTimer, offerTimer, completedOfferTimer, reservePollTimer, statsTimer };
+  // Safety-net: rebuild candles for any token with a trade in the last 6 minutes.
+  // Event-driven rebuilds (block scanner, reserve poll, backfill) cover most cases;
+  // this catches edge cases like RPC errors that silently swallowed a rebuild call.
+  async function refreshActiveCandles() {
+    const since = new Date(Date.now() - 6 * 60_000).toISOString();
+    const { data } = await supabase.from('cat_transfers')
+      .select('asset_id').gte('transferred_at', since).not('price_xch', 'is', null);
+    const ids = [...new Set((data || []).map(r => r.asset_id))];
+    if (!ids.length) return;
+    let built = 0;
+    for (const id of ids) {
+      for (const tf of OHLCV_TIMEFRAMES) built += await buildOhlcvCandles(id, tf, null);
+    }
+    if (built > 0) console.log(`[token-idx] candles: rebuilt ${built} candles for ${ids.length} active token(s)`);
+  }
+  refreshActiveCandles().catch(e => console.warn('[token-idx] candles error:', e.message));
+  const candleTimer = setInterval(() => {
+    refreshActiveCandles().catch(e => console.warn('[token-idx] candles error:', e.message));
+  }, 5 * 60_000);
+
+  return { blockTimer, offerTimer, completedOfferTimer, reservePollTimer, statsTimer, candleTimer };
 }
 
 module.exports = { start, loadPairs, processBlock, syncAllOffers, backfillCompletedOffers, refreshTokenStats };

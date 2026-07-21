@@ -7,6 +7,7 @@
 //   node server/cat-ohlcv.js                  # rebuild all tokens, all timeframes
 //   node server/cat-ohlcv.js <asset_id>       # single token
 //   node server/cat-ohlcv.js --since 2026-01-01  # only rebuild recent candles
+//   node server/cat-ohlcv.js <asset_id> --fresh  # wipe candles first, then rebuild
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { createClient } = require('@supabase/supabase-js');
@@ -69,21 +70,6 @@ function toBucket(date, timeframe) {
   }
 }
 
-// ── Outlier rejection using IQR ───────────────────────────────────────────────
-// Removes prices more than 5 IQRs from Q1/Q3. Handles sparse data gracefully.
-
-function rejectOutliers(trades) {
-  if (trades.length < 6) return trades; // too few points to filter meaningfully
-  const sorted = [...trades].map(t => t.price).sort((a, b) => a - b);
-  const q1  = sorted[Math.floor(sorted.length * 0.25)];
-  const q3  = sorted[Math.floor(sorted.length * 0.75)];
-  const iqr = q3 - q1;
-  if (iqr === 0) return trades; // all same price — nothing to filter
-  const lo = q1 - 5 * iqr;
-  const hi = q3 + 5 * iqr;
-  return trades.filter(t => t.price >= lo && t.price <= hi);
-}
-
 // ── Build candles for one token + timeframe ───────────────────────────────────
 
 async function buildCandles(assetId, timeframe, sinceDate) {
@@ -126,23 +112,26 @@ async function buildCandles(assetId, timeframe, sinceDate) {
   // when a token has appreciated significantly over time.
   const bucketMap = new Map();
   for (const trade of trades) {
+    const price = Number(trade.price_xch);
+    // Skip sub-dust prices — corrupt records from LP events misclassified as trades
+    // or old indexer edge cases. No real Chia token trades below 1e-8 XCH/token.
+    if (price < 1e-8) continue;
     const bucket = toBucket(trade.transferred_at, timeframe);
     const key = bucket.toISOString();
     if (!bucketMap.has(key)) {
       bucketMap.set(key, { bucket, prices: [], volume: 0, count: 0 });
     }
     const entry = bucketMap.get(key);
-    entry.prices.push(Number(trade.price_xch));
+    entry.prices.push(price);
     entry.volume += Number(trade.volume_xch || 0);
     entry.count++;
   }
 
-  // Build OHLCV rows — apply outlier filter within each bucket
+  // Build OHLCV rows
   const rows = [];
   const sortedKeys = [...bucketMap.keys()].sort();
   for (const key of sortedKeys) {
-    const { bucket, prices: rawPrices, volume, count } = bucketMap.get(key);
-    const prices = rejectOutliers(rawPrices.map(p => ({ price: p }))).map(t => t.price);
+    const { bucket, prices, volume, count } = bucketMap.get(key);
     if (!prices.length) continue;
     rows.push({
       asset_id:     assetId,
@@ -177,7 +166,10 @@ async function main() {
   const args      = process.argv.slice(2);
   const sinceIdx  = args.indexOf('--since');
   const sinceDate = sinceIdx !== -1 ? args[sinceIdx + 1] : null;
-  const skipNext  = new Set(sinceIdx !== -1 ? [sinceIdx + 1] : []);
+  const fresh     = args.includes('--fresh');
+  const skipNext  = new Set([
+    ...(sinceIdx !== -1 ? [sinceIdx, sinceIdx + 1] : []),
+  ]);
   const singleId  = args.find((a, i) => !a.startsWith('--') && !skipNext.has(i)) || null;
 
   let tokens;
@@ -188,6 +180,18 @@ async function main() {
       .from('cat_tokens').select('asset_id').order('asset_id');
     if (error) { console.error('Supabase error:', error.message); process.exit(1); }
     tokens = (data || []).map(t => t.asset_id);
+  }
+
+  if (fresh) {
+    if (singleId) {
+      const { error } = await supabase.from('cat_ohlcv').delete().eq('asset_id', singleId);
+      if (error) { console.error('Wipe error:', error.message); process.exit(1); }
+      console.log('--fresh: wiped existing candles for token');
+    } else {
+      const { error } = await supabase.from('cat_ohlcv').delete().neq('asset_id', '');
+      if (error) { console.error('Wipe error:', error.message); process.exit(1); }
+      console.log('--fresh: wiped all existing candles');
+    }
   }
 
   console.log(`\nOHLCV builder — ${tokens.length} token(s) × ${TIMEFRAMES.length} timeframes\n`);
@@ -206,4 +210,6 @@ async function main() {
   console.log(`\n✓ ${totalCandles} candles built/updated.\n`);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
+
+module.exports = { buildCandles, TIMEFRAMES };
